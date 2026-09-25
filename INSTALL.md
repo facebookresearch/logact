@@ -1,4 +1,27 @@
-# Install a preview macOS package
+# Install LogAct on macOS
+
+## Published releases
+
+Install the latest Apple Silicon release:
+
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/facebookresearch/logact/main/scripts/install-release.sh \
+  | sh
+```
+
+Pass installer options after `sh -s --`. For example, to pin a version:
+
+```bash
+curl -fsSL \
+  https://raw.githubusercontent.com/facebookresearch/logact/main/scripts/install-release.sh \
+  | sh -s -- --version 0.1.0
+```
+
+The downloader verifies the release archive against its published SHA-256
+checksum before running the bundled installer.
+
+## Preview workflow artifacts
 
 The `macOS package and release` GitHub Actions workflow builds an Apple Silicon
 archive for local evaluation. It contains:
