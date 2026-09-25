@@ -1,0 +1,56 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+syntax = "proto3";
+
+package rule_based_voter;
+
+enum VoterRuleAction {
+  VOTER_RULE_ACTION_UNSPECIFIED = 0;
+  VOTER_RULE_ALLOW = 1;
+  VOTER_RULE_DENY = 2;
+}
+
+enum VoterRuleMatchType {
+  VOTER_RULE_MATCH_TYPE_UNSPECIFIED = 0;
+  VOTER_RULE_EXACT = 1;
+  VOTER_RULE_SUBSTRING = 2;
+  VOTER_RULE_REGEX = 3;
+}
+
+// Restricts a rule to matching buses.
+message VoterRuleSubject {
+  oneof kind {
+    string exact_bus_id = 1;
+    string bus_id_prefix = 2;
+  }
+}
+
+message VoterRule {
+  string pattern = 1;
+  VoterRuleAction action = 2;
+  VoterRuleMatchType match_type = 3;
+  string reason = 4;
+  // For consumers that support bus targeting, an empty list matches every bus
+  // and otherwise any matching subject applies. Other consumers must reject a
+  // non-empty list rather than silently ignoring it.
+  repeated VoterRuleSubject subjects = 5;
+}
+
+message RuleBasedVoterConfig {
+  // A matching DENY rule takes precedence over every matching ALLOW rule,
+  // regardless of their order in this list.
+  repeated VoterRule rules = 1;
+  // UNSPECIFIED preserves the existing default-deny behavior. Consumers that
+  // do not support configurable defaults must reject ALLOW.
+  VoterRuleAction default_action = 2;
+}
+
+message RuleBasedVoteInfo {
+  string reason = 1;
+  string matched_rule = 2;
+}

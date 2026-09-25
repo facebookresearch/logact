@@ -1,0 +1,383 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+syntax = "proto3";
+
+package agent_bus;
+
+import "google/protobuf/any.proto";
+import "llm_voter_proto/llm_voter.proto";
+import "rule_based_voter_proto/rule_based_voter.proto";
+
+// Notes on AgentBus Design:
+// Each AgentBus is a physical log of BusEntries, which have different types:
+// 1. Intention: a command that an agent wants to (but has not yet) run.
+// 2. Vote: an opinion by an agent on whether a command is safe to run.
+// 3. DeciderPolicy: a policy for how the Decider aggregates votes on a command.
+// 4. Commit: a command that has been committed to run.
+// 5. Abort: a command that has been aborted.
+
+// MB: TODO:
+// 1. Add support for asynchronous upcalls / streaming apply
+// 2. Add support for create/destroy agentbus
+
+// Enum for filtering payload types in poll requests
+enum SelectivePollType {
+  SELECTIVE_POLL_TYPE_UNSPECIFIED = 0;
+  INTENTION = 1;
+  VOTE = 2;
+  DECIDER_POLICY = 3;
+  COMMIT = 4;
+  ABORT = 5;
+  VOTER_POLICY = 6;
+  CONTROL = 7;
+  INFERENCE_INPUT = 8;
+  INFERENCE_OUTPUT = 9;
+  ACTION_OUTPUT = 10;
+  AGENT_INPUT = 11;
+  AGENT_OUTPUT = 12;
+  MAIL = 13;
+}
+
+// Types of entries in the AgentBus
+message Payload {
+  oneof payload {
+    Intention intention = 1; // an intented action that requires votes
+    Vote vote = 2; // a vote on an intention
+    DeciderPolicy decider_policy = 3; // policy for how Decider makes decisions
+    Commit commit = 4; // a commit of an intention
+    Abort abort = 5; // an abort of an intention
+    VoterPolicy voter_policy = 6; // policy for voter customization
+    Control control = 7; // a control signal for the bus
+    InferenceInput inference_input = 8; // LLM inference input
+    InferenceOutput inference_output = 9; // LLM inference output
+    ActionOutput action_output = 10; // output from an action (see intention)
+    AgentInput agent_input = 11; // input to the agent
+    AgentOutput agent_output = 12; // output from the agent
+    Mail mail = 13; // inter-agent mail message
+  }
+}
+
+// A commit of an intention
+message Commit {
+  int64 intention_id = 1; // identifies the intention
+  string reason = 2; // reason for the commit
+}
+
+// An abort of an intention
+message Abort {
+  int64 intention_id = 1; // identifies the intention
+  string reason = 2; // reason for the abort
+}
+
+// Types of Control signals in the AgentBus
+message Control {
+  oneof control {
+    BaseEngineControl base_engine_control = 2; // base-engine control
+  }
+  reserved 1;
+  reserved "agent_input";
+}
+
+// A batch of policy changes applied to the engine as a single, atomic log
+// entry. The structure restricts a batch to policy changes such as voter
+// add/remove and decider switches (no arbitrary bus traffic, such as
+// intentions, votes, etc.) and encodes its invariants directly: at most one
+// decider policy and one operation per voter id.
+message PolicyBatch {
+  optional DeciderPolicy decider_policy =
+      1; // set the decider policy, if present
+  map<string, VoterOp> voter_ops = 2; // operation keyed by voter id
+  // CAS precondition: the policy version the bus must be at for this batch
+  // to apply. Absent means the bus has no versioned policy yet (initial state).
+  // Skipped if the actual persisted version differs.
+  optional int64 expected_current_version = 3;
+  // The version to persist after this batch is successfully applied.
+  // Must be greater than expected_current_version when present.
+  int64 new_version = 4;
+}
+
+// Types of Intentions in the AgentBus
+message Intention {
+  oneof intention {
+    string string_intention = 1; // string-based intention
+  }
+  oneof policy_version_constraint {
+    // Execute only under this exact policy generation.
+    int64 required_policy_version = 2;
+    // Execute under this policy generation or a later one.
+    int64 minimum_policy_version = 3;
+  }
+}
+
+// LLM inference input
+message InferenceInput {
+  oneof inference_input {
+    string string_inference_input = 1; // string-based inference input
+  }
+}
+
+// LLM inference output
+message InferenceOutput {
+  oneof inference_output {
+    string string_inference_output = 1; // string-based inference output
+  }
+}
+
+// Output from an action
+message ActionOutput {
+  int64 intention_id =
+      1; // identifies the intention, which links it to the corresponding action
+  oneof action_output {
+    string string_action_output =
+        2; // serialized string representation of the action output/results
+  }
+}
+
+// Input to the agent (starts an agentic loop)
+message AgentInput {
+  oneof agent_input {
+    string string_agent_input =
+        1; // string-based agent input (e.g., user request)
+  }
+}
+
+// Output from the agent (ends an agentic loop)
+message AgentOutput {
+  oneof agent_output {
+    string string_agent_output =
+        1; // string-based agent output (e.g., final response)
+  }
+}
+
+// A direct message (no reply context).
+message Message {
+  string body = 1; // message body
+  string message_id = 2; // UUID for correlation
+}
+
+// A reply to a previous message. Composes Message for the body + id.
+message Reply {
+  Message message = 1; // the reply body and its own message_id
+  string in_reply_to = 2; // message_id this is responding to
+}
+
+// Inter-agent mail message.
+// Appended to the recipient's bus — the recipient is implicit (it's their bus).
+message Mail {
+  string sender_agent_id = 1; // agent that sent the mail
+  oneof content {
+    Message message = 3; // a direct message
+    Reply reply = 4; // a reply to a previous message
+  }
+}
+
+// A vote on an intention
+message Vote {
+  VoteType abstract_vote = 1; // abstract vote type
+  int64 intention_id = 2; // identifies the intention
+  reserved 3, 4;
+  reserved "info", "config";
+  VoterConfig voter_config = 5; // voter's canonical config
+  string voter_id = 6; // identifies the voter that produced this vote
+  // Human-readable reason for the vote, surfaced generically to the bus so the
+  // decider can carry it into the Commit/Abort.
+  string reason = 7;
+}
+
+// Types of votes in the AgentBus
+message VoteType {
+  oneof vote_type {
+    bool boolean_vote = 1; // boolean
+    double probability_vote = 2; // double in [0,1]
+  }
+}
+
+// Decider Policies for the AgentBus
+// Controls how the Decider aggregates votes to make commit/abort decisions
+enum DeciderPolicy {
+  OFF_BY_DEFAULT = 0;
+  ON_BY_DEFAULT = 1;
+  FIRST_BOOLEAN_WINS = 2;
+}
+
+// Voter Policy for the AgentBus.
+// A runtime config broadcast for one voter kind. Every running voter whose
+// config type matches `config` applies it; all other voters ignore it.
+message VoterPolicy {
+  google.protobuf.Any config = 1; // voter-type-specific config (opaque to bus)
+}
+
+// Canonical voter construction config. Votes carry this alongside the voter ID
+// so they remain self-describing after being detached from their configuration
+// source.
+message VoterConfig {
+  oneof config {
+    llm_voter.LlmVoterConfig llm = 1;
+    rule_based_voter.RuleBasedVoterConfig rule_based = 2;
+    google.protobuf.Any custom = 3;
+  }
+}
+
+// Base engine control directive.
+message BaseEngineControl {
+  oneof control {
+    AddVoter add_voter = 1;
+    RemoveVoter remove_voter = 2;
+    PolicyBatch policy_batch = 3;
+  }
+}
+
+// Legacy standalone add directive retained for wire compatibility. The v1
+// commit-service engine rejects it; add voters through PolicyBatch instead.
+message AddVoter {
+  VoterConfig config = 1;
+}
+
+// Adds the voter identified by its `PolicyBatch.voter_ops` map key.
+message AddVoterOp {
+  VoterConfig config = 1;
+}
+
+message RemoveVoterOp {}
+
+message VoterOp {
+  oneof op {
+    AddVoterOp add = 1;
+    RemoveVoterOp remove = 2;
+  }
+}
+
+// Legacy standalone remove directive retained for wire compatibility. The v1
+// commit-service engine rejects it; remove voters through PolicyBatch instead.
+message RemoveVoter {
+  string voter_id = 1;
+}
+
+// Physical Entry in the Bus
+// Each entry has a header and a payload.
+message BusEntry {
+  Header header = 1;
+  Payload payload = 2;
+}
+
+// Header for a BusEntry
+message Header {
+  int64 log_position = 1; // physical log position in the AgentBus
+  // Wall-clock time when entry was appended (ms since Unix epoch).
+  // int64 is common protobuf convention for timestamps.
+  int64 rt_timestamp_ms = 2;
+}
+
+// Identifies an AgentBus. New code should use this typed message instead of a
+// bare string so bus identifiers cannot be confused with unrelated strings.
+message BusId {
+  string agent_bus_id = 1;
+}
+
+message AppendRequest {
+  string agent_bus_id = 1; // Legacy id for the agent bus.
+  BusId bus_id = 3; // Supersedes agent_bus_id when set.
+  Payload payload = 2; // payload to be stored
+}
+
+message AppendResponse {
+  int64 log_position = 1; // log position where the entry was stored
+}
+
+message PollRequest {
+  string agent_bus_id = 1; // Legacy id for the agent bus.
+  BusId bus_id = 5; // Supersedes agent_bus_id when set.
+  int64 start_log_position = 2; // inclusive log position to start polling from
+  int32 max_entries = 3; // max number of entries to return
+  // Optional filter by payload types. If not set, returns all types.
+  // If set to empty list, returns no entries.
+  optional PayloadTypeFilter filter = 4;
+}
+
+message PayloadTypeFilter {
+  repeated SelectivePollType payload_types = 1;
+}
+
+// MB: TODO: each poll request uses a new linearization point;
+// for pagination we may want to use a prior established linearization point
+// for later requests
+message PollResponse {
+  repeated BusEntry entries = 1;
+  bool complete = 2; // true if there are no more entries to poll
+}
+
+// Read entries from [start_log_position, end_log_position).
+// end_log_position must be <= current tail.
+message ReadNextRequest {
+  string agent_bus_id = 1; // Legacy id for the agent bus.
+  BusId bus_id = 6; // Supersedes agent_bus_id when set.
+  int64 start_log_position = 2; // inclusive
+  int64 end_log_position = 3; // exclusive, must be <= tail
+  int32 max_entries = 4; // hint; server may cap lower
+  optional PayloadTypeFilter filter = 5;
+}
+
+message ReadNextResponse {
+  repeated BusEntry entries = 1;
+  // Position for the caller's next read_next call.
+  int64 next_start_position = 2;
+}
+
+message CheckTailRequest {
+  string agent_bus_id = 1; // Legacy id for the agent bus.
+  BusId bus_id = 2; // Supersedes agent_bus_id when set.
+}
+
+message CheckTailResponse {
+  int64 tail_position = 1; // next position to be written (0 for empty bus)
+}
+
+// Blocking poll: wait up to timeout_ms for new entries from start_log_position,
+// then return up to max_entries matching the optional filter.
+// The timeout is a hint -- the server may cap it. The operation is
+// linearizable.
+message BlockingPollRequest {
+  string agent_bus_id = 1; // Legacy id for the agent bus.
+  BusId bus_id = 6; // Supersedes agent_bus_id when set.
+  int64 start_log_position = 2;
+  int32 max_entries = 3;
+  optional PayloadTypeFilter filter = 4;
+  int32 timeout_ms = 5;
+}
+
+message BlockingPollResponse {
+  repeated BusEntry entries = 1;
+  int64 next_start_position = 2;
+}
+
+/**
+ * AgentBus service interface
+ */
+service AgentBusService {
+  // Append an entry to the agent bus
+  // Once this returns, we are guaranteed that
+  // the entry is durable;
+  // and that we will eventually see it via polling
+  // (or via a notification, once we support that)
+  // Note that an append can be used for intentions, votes,
+  // decider/voter policies, commits, or aborts.
+  rpc Append(AppendRequest) returns (AppendResponse);
+
+  // Poll for physical entries in the agent bus
+  // Optionally filter by payload types using payloadTypes field
+  rpc Poll(PollRequest) returns (PollResponse);
+
+  // Read entries from [start_log_position, end_log_position).
+  rpc ReadNext(ReadNextRequest) returns (ReadNextResponse);
+
+  // Returns the tail position (next position to be written)
+  rpc CheckTail(CheckTailRequest) returns (CheckTailResponse);
+
+  // Blocking poll: wait for entries, then return a page.
+  rpc BlockingPoll(BlockingPollRequest) returns (BlockingPollResponse);
+}

@@ -1,0 +1,19 @@
+# Clippy configuration for AgentBus
+#
+# Use futures::select_biased! for deterministic poll order (required for
+# simulator replay) and predictable cancellation semantics. The various
+# select variants (tokio::select!, futures::select!, futures::future::select)
+# each have different ordering and cancellation behaviour.
+
+disallowed-macros = [
+    { path = "tokio::select", reason = "Use futures::select_biased!" },
+    { path = "futures::select", reason = "Use futures::select_biased! for deterministic poll order" },
+]
+
+disallowed-types = [
+    { path = "tokio::sync::Barrier", reason = "Non-deterministic wake ordering. Use agentbus_simulator::SimulatorBarrier" },
+]
+
+disallowed-methods = [
+    { path = "futures::future::select", reason = "Use futures::select_biased! for deterministic poll order" },
+]

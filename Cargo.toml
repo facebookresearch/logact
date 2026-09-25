@@ -1,0 +1,45 @@
+[workspace]
+members = [
+  "bus/api",
+  "bus/appserver_proto",
+  "bus/cli",
+  "bus/core",
+  "bus/core/factory",
+  "bus/impls/conditional_write_space",
+  "bus/impls/dynamodb",
+  "bus/impls/observable",
+  "bus/impls/simple",
+  "bus/impls/sqlite",
+  "bus/impls/writeonce",
+  "bus/proto",
+  "bus/simulator",
+  "bus/testing/conformance",
+  "bus/testing/conformance_macros",
+  "bus/testing/linearizability",
+  "bus/tests",
+  "bus/voters/factory",
+  "bus/voters/llm",
+  "bus/voters/llm/proto",
+  "bus/voters/rule-based",
+  "bus/voters/rule-based/proto",
+  "logact/commit_service/api",
+  "logact/commit_service/cli",
+  "logact/commit_service/core",
+  "logact/commit_service/grpc",
+  "logact/commit_service/grpc/local_server",
+  "logact/commit_service/grpc/proto",
+  "logact/commit_service/impls/inmem",
+  "logact/commit_service/impls/sqlite",
+  "logact/commit_service/impls/static_config",
+  "logact/commit_service/impls/v1",
+  "logact/commit_service/impls/v1/engine",
+  "logact/commit_service/impls/v1/engine/tests",
+  "logact/commit_service/local_fs",
+  "logact/commit_service/proto",
+  "logact/commit_service/tests",
+]
+resolver = "2"
+
+[workspace.package]
+license = "MIT"
+repository = "https://github.com/facebookresearch/logact"

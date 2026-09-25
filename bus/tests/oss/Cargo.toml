@@ -1,0 +1,25 @@
+# Hand-written Cargo.toml for oss integration tests
+
+[package]
+name = "macro_tests_oss"
+version = "0.1.0"
+authors = ["Meta"]
+edition = "2021"
+
+[[test]]
+name = "integration_tests"
+path = "src/integration_tests.rs"
+
+[dev-dependencies]
+agentbus_api = { path = "../../api" }
+agentbus_core = { path = "../../core" }
+agentbus_dynamodb = { path = "../../impls/dynamodb" }
+agentbus_tests = { path = ".." }
+anyhow = "1.0.98"
+conformance = { path = "../../testing/conformance" }
+aws-sdk-dynamodb = "1.45.0"
+fbinit = "0.2.0"
+fbinit-tokio = "0.1.0"
+paste = "1.0.14"
+testcontainers = "0.27"
+tokio = { version = "1.47.1", features = ["full", "test-util", "tracing"] }

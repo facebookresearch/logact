@@ -1,0 +1,20 @@
+# Hand-written because protobuf compilation requires a custom build script.
+
+[package]
+name = "logact_commit_service_policy_proto-rust"
+version = "0.1.0"
+authors = ["Meta"]
+edition = "2024"
+repository = "https://github.com/facebookresearch/logact"
+license = "MIT"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+agent_bus_proto-rust = { path = "../../../bus/proto" }
+prost = "0.14"
+
+[build-dependencies]
+prost-build = "0.14"
+protoc-bin-vendored = "3.0.0"

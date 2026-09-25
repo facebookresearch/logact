@@ -1,0 +1,118 @@
+name: macOS package and release
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    tags: [ "v*" ]
+    # GitHub does not evaluate path filters for tag pushes.
+    paths:
+      - ".github/workflows/macos-release.yml"
+      - ".claude-plugin/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "bus/**"
+      - "INSTALL.md"
+      - "LICENSE"
+      - "logact/**"
+      - "plugins/**"
+      - "README.md"
+      - "scripts/**"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/macos-release.yml"
+      - ".claude-plugin/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "bus/**"
+      - "INSTALL.md"
+      - "LICENSE"
+      - "logact/**"
+      - "plugins/**"
+      - "README.md"
+      - "scripts/**"
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
+    - name: Resolve and fetch Cargo dependencies
+      run: |
+        # The repository does not check in Cargo.lock yet. Resolve once, then
+        # keep all subsequent dependency operations locked to that file.
+        cargo generate-lockfile
+        cargo fetch --locked
+    - name: Build Apple Silicon binaries
+      run: |
+        export LIBCLANG_PATH="$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib"
+        rustup target add aarch64-apple-darwin
+        cargo build --release --locked \
+          --target aarch64-apple-darwin \
+          --package agentbus_cli_lib \
+          --bin agentbus_cli
+        cargo build --release --locked \
+          --target aarch64-apple-darwin \
+          --package logact_commit_cli_lib \
+          --bin logact_commit_cli
+        cargo build --release --locked \
+          --target aarch64-apple-darwin \
+          --package logact_local_server_lib \
+          --bin logact_local_server
+    - name: Package
+      run: |
+        base_version="$(python3 -c 'import json; print(json.load(open(".claude-plugin/marketplace.json"))["metadata"]["version"])')"
+        if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+          package_version="${GITHUB_REF_NAME#v}"
+          case "$package_version" in
+            "$base_version"|"$base_version"-*) ;;
+            *)
+              echo "tag version $package_version does not match marketplace version $base_version" >&2
+              exit 1
+              ;;
+          esac
+        else
+          short_sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
+          package_version="$base_version-$short_sha"
+        fi
+        LOGACT_BINARY_DIR="$PWD/target/aarch64-apple-darwin/release" \
+          LOGACT_DIST_DIR="$PWD/dist" \
+          LOGACT_PACKAGE_PLATFORM=macos \
+          LOGACT_PACKAGE_ARCH=arm64 \
+          ./scripts/package-release.sh "$package_version"
+    - name: Test package installer
+      run: ./scripts/test-package-installer.sh dist
+    - name: Upload package artifact
+      uses: actions/upload-artifact@v5
+      with:
+        name: logact-macos
+        path: dist/*
+        if-no-files-found: error
+        retention-days: 14
+
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v4
+    - name: Download packaged artifacts
+      uses: actions/download-artifact@v5
+      with:
+        name: logact-macos
+        path: dist
+    - name: Publish GitHub release
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+      run: ./scripts/publish-github-release.sh "$GITHUB_REF_NAME" dist

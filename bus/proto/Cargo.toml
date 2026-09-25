@@ -1,0 +1,23 @@
+# Hand-written because protobuf compilation requires a custom build script.
+
+[package]
+name = "agent_bus_proto-rust"
+version = "0.1.0"
+authors = ["Meta"]
+edition = "2021"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+llm-voter-proto-rust = { path = "../voters/llm/proto" }
+prost = "0.14"
+prost-types = "0.14"
+rule-based-voter-proto-rust = { path = "../voters/rule-based/proto" }
+tonic = { version = "0.14", features = ["gzip", "tls-ring", "tls-webpki-roots"] }
+tonic-prost = "0.14"
+
+[build-dependencies]
+prost-build = "0.14"
+protoc-bin-vendored = "3.0.0"
+tonic-prost-build = "0.14"

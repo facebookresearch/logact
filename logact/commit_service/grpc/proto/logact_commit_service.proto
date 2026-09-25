@@ -1,0 +1,29 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+syntax = "proto3";
+
+package logact_commit_service;
+
+import "agentbus_proto/agent_bus.proto";
+
+message CommitIntentionRequest {
+  string bus_id = 1; // Legacy id for the AgentBus.
+  agent_bus.BusId typed_bus_id = 3; // Supersedes bus_id when set.
+  // Clients must omit policy_version_constraint; CommitService manages it.
+  agent_bus.Intention intention = 2;
+}
+
+message CommitIntentionResponse {
+  bool approved = 1;
+  string reason = 2;
+  int64 log_position = 3;
+}
+
+service CommitService {
+  rpc CommitIntention(CommitIntentionRequest) returns (CommitIntentionResponse);
+}
