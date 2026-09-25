@@ -1,0 +1,13 @@
+# Thin Cargo wrapper for `use appserver_proto_rust::appserver::*`.
+# `agent_bus.proto` and `appserver.proto` are compiled into
+# agent_bus_proto-rust, and this crate re-exports the appserver module under its
+# expected crate name.
+
+[package]
+name = "appserver_proto-rust"
+version = "0.1.0"
+authors = ["Meta"]
+edition = "2021"
+
+[dependencies]
+agent_bus_proto-rust = { path = "../proto" }

@@ -1,0 +1,55 @@
+{
+  "description": "Send Claude Code events to a local LogAct service through logact-oss-hook.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "socket=\"${LOGACT_OSS_SOCKET:-$HOME/.logact-oss/logact.sock}\"; exec logact-oss-hook --socket \"$socket\" claude-hook user-prompt-submit"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "socket=\"${LOGACT_OSS_SOCKET:-$HOME/.logact-oss/logact.sock}\"; exec logact-oss-hook --socket \"$socket\" claude-hook pre-tool-use"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "socket=\"${LOGACT_OSS_SOCKET:-$HOME/.logact-oss/logact.sock}\"; exec logact-oss-hook --socket \"$socket\" claude-hook post-tool-use"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "socket=\"${LOGACT_OSS_SOCKET:-$HOME/.logact-oss/logact.sock}\"; exec logact-oss-hook --socket \"$socket\" claude-hook post-tool-use-failure"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "socket=\"${LOGACT_OSS_SOCKET:-$HOME/.logact-oss/logact.sock}\"; exec logact-oss-hook --socket \"$socket\" claude-hook stop"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,72 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+syntax = "proto3";
+
+package appserver;
+
+import "agentbus_proto/agent_bus.proto";
+
+// Gate request — submit an intention and wait for commit/abort.
+message GateRequest {
+  string intention = 1;
+}
+
+message GateResponse {
+  bool approved = 1;
+  string reason = 2;
+  int64 intention_id = 3;
+}
+
+// Mail messages
+message CheckMailRequest {}
+
+message MailMessage {
+  agent_bus.Mail mail = 1;
+  int64 position = 2;
+}
+
+message CheckMailResponse {
+  repeated MailMessage messages = 1;
+}
+
+// Raw bus access — uses typed Payload from agent_bus.proto.
+message AppServerAppendRequest {
+  agent_bus.Payload payload = 1;
+}
+
+message AppServerAppendResponse {
+  int64 log_position = 1;
+}
+
+message AppServerPollRequest {
+  int64 start_log_position = 1;
+  int32 max_entries = 2;
+  optional agent_bus.PayloadTypeFilter filter = 3;
+}
+
+message AppServerPollResponse {
+  repeated agent_bus.BusEntry entries = 1;
+  bool complete = 2;
+}
+
+/**
+ * AppServer service — high-level API for agent-bus interactions.
+ */
+service AppServerService {
+  // Submit an intention and wait for the safety pipeline to commit or abort.
+  rpc Gate(GateRequest) returns (GateResponse);
+
+  // Drain buffered mail for this agent.
+  rpc CheckMail(CheckMailRequest) returns (CheckMailResponse);
+
+  // Raw append to the bus log.
+  rpc Append(AppServerAppendRequest) returns (AppServerAppendResponse);
+
+  // Raw poll from the bus log.
+  rpc Poll(AppServerPollRequest) returns (AppServerPollResponse);
+}

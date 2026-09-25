@@ -1,0 +1,57 @@
+name: Rust
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/rust.yml"
+      - ".claude-plugin/**"
+      - "Cargo.toml"
+      - "bus/**"
+      - "logact/**"
+      - "plugins/**"
+  pull_request:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/rust.yml"
+      - ".claude-plugin/**"
+      - "Cargo.toml"
+      - "bus/**"
+      - "logact/**"
+      - "plugins/**"
+  schedule:
+    - cron: '0 0,12 * * *'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+    - uses: actions/checkout@v4
+    - name: Validate plugin files
+      run: |
+        python3 -m json.tool .claude-plugin/marketplace.json >/dev/null
+        python3 -m json.tool plugins/logact-oss/.claude-plugin/plugin.json >/dev/null
+        python3 -m json.tool plugins/logact-oss/.codex-plugin/plugin.json >/dev/null
+        python3 -m json.tool plugins/logact-oss/.muse-plugin/plugin.json >/dev/null
+        python3 -m json.tool plugins/logact-oss/hooks/hooks.json >/dev/null
+        python3 -m json.tool plugins/logact-oss/hooks/codex-hooks.json >/dev/null
+        for script in plugins/logact-oss/hooks/*.sh scripts/*.sh; do
+          case "$(head -n 1 "$script")" in
+            *bash) bash -n "$script" ;;
+            *) sh -n "$script" ;;
+          esac
+        done
+    - name: Fetch Cargo dependencies
+      run: cargo fetch
+    - name: Build
+      run: cargo build --workspace --locked --verbose
+    - name: Run tests
+      run: cargo test --workspace --locked --verbose

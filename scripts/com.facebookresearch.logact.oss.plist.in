@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copyright (c) Meta Platforms, Inc. and affiliates.
+
+  This source code is licensed under the MIT license found in the
+  LICENSE file in the root directory of this source tree.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.facebookresearch.logact.oss</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>LOGACT_SERVER_PATH</string>
+    <string>--socket</string>
+    <string>LOGACT_SOCKET_PATH</string>
+    <string>--sqlite-path</string>
+    <string>LOGACT_SQLITE_PATH</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <!-- Decimal 63 is octal 077, restricting new files to the current user. -->
+  <key>Umask</key>
+  <integer>63</integer>
+  <key>StandardOutPath</key>
+  <string>LOGACT_LOG_PATH</string>
+  <key>StandardErrorPath</key>
+  <string>LOGACT_LOG_PATH</string>
+</dict>
+</plist>

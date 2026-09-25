@@ -1,0 +1,15 @@
+[package]
+name = "rule-based-voter-proto-rust"
+version = "0.1.0"
+authors = ["Meta"]
+edition = "2021"
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+prost = "0.14"
+
+[build-dependencies]
+prost-build = "0.14"
+protoc-bin-vendored = "3.0.0"

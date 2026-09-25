@@ -1,0 +1,6 @@
+build/
+*.egg-info/
+src/agentbus_proto/agent_bus_pb2.py
+src/agentbus_proto/agent_bus_pb2.pyi
+src/agentbus_proto/agent_bus_pb2_grpc.py
+src/appserver_proto/

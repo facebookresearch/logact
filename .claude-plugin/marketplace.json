@@ -1,0 +1,33 @@
+{
+  "name": "logact-oss",
+  "owner": {
+    "name": "Meta Open Source",
+    "url": "https://github.com/facebookresearch/logact"
+  },
+  "metadata": {
+    "description": "Plugins for recording and policy-checking agent actions with LogAct",
+    "version": "0.1.0"
+  },
+  "plugins": [
+    {
+      "name": "logact-oss",
+      "source": "./plugins/logact-oss",
+      "strict": true,
+      "version": "0.1.0",
+      "description": "Record Claude Code, Codex, and Muse Code events in a local LogAct service.",
+      "homepage": "https://github.com/facebookresearch/logact",
+      "repository": "https://github.com/facebookresearch/logact",
+      "license": "MIT",
+      "keywords": [
+        "logact",
+        "agentbus",
+        "commit",
+        "safety"
+      ],
+      "author": {
+        "name": "Meta Open Source",
+        "email": "opensource@fb.com"
+      }
+    }
+  ]
+}

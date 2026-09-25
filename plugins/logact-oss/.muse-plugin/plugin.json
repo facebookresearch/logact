@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "name": "logact-oss",
+  "version": "0.1.0",
+  "displayName": "LogAct OSS",
+  "description": "Record Muse Code events in a local LogAct service and inspect the resulting AgentBus.",
+  "compat": {
+    "source": "native",
+    "manifestDir": ".muse-plugin"
+  },
+  "capabilities": {
+    "skills": [
+      {
+        "id": "agentbus",
+        "path": "skills/agentbus/SKILL.md"
+      }
+    ],
+    "hooks": [
+      {
+        "id": "user-prompt-submit",
+        "event": "UserPromptSubmit",
+        "command": [
+          "sh",
+          "hooks/muse-user-prompt-submit.sh"
+        ]
+      },
+      {
+        "id": "pre-tool-use",
+        "event": "PreToolUse",
+        "command": [
+          "sh",
+          "hooks/muse-pre-tool-use.sh"
+        ]
+      },
+      {
+        "id": "post-tool-use",
+        "event": "PostToolUse",
+        "command": [
+          "sh",
+          "hooks/muse-post-tool-use.sh"
+        ]
+      },
+      {
+        "id": "stop",
+        "event": "Stop",
+        "command": [
+          "sh",
+          "hooks/muse-stop.sh"
+        ]
+      }
+    ]
+  }
+}
