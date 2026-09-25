@@ -83,6 +83,7 @@ jobs:
           short_sha="$(printf '%s' "$GITHUB_SHA" | cut -c1-12)"
           package_version="$base_version-$short_sha"
         fi
+        echo "LOGACT_PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
         LOGACT_BINARY_DIR="$PWD/target/aarch64-apple-darwin/release" \
           LOGACT_DIST_DIR="$PWD/dist" \
           LOGACT_PACKAGE_PLATFORM=macos \
@@ -90,6 +91,20 @@ jobs:
           ./scripts/package-release.sh "$package_version"
     - name: Test package installer
       run: ./scripts/test-package-installer.sh dist
+    - name: Test release downloader
+      run: |
+        work_dir="$(mktemp -d)"
+        mkdir -p "$work_dir/home"
+        LOGACT_RELEASE_BASE_URL="file://$PWD/dist" \
+          LOGACT_TEST_SKIP_LAUNCHCTL=1 \
+          HOME="$work_dir/home" \
+          ./scripts/install-release.sh \
+          --version "$LOGACT_PACKAGE_VERSION"
+        install_prefix="$work_dir/home/.local"
+        test -x "$install_prefix/bin/logact-oss-hook"
+        LOGACT_TEST_SKIP_LAUNCHCTL=1 HOME="$work_dir/home" \
+          "$install_prefix/share/logact-oss/uninstall.sh"
+        test ! -e "$install_prefix/bin/logact-oss-hook"
     - name: Upload package artifact
       uses: actions/upload-artifact@v5
       with:
