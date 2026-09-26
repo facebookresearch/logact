@@ -6,20 +6,66 @@
  */
 
 use std::os::unix::fs::PermissionsExt as _;
+use std::rc::Rc;
 
 use agent_bus_proto_rust::agent_bus::BusId;
 use agent_bus_proto_rust::agent_bus::CheckTailRequest;
+use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agent_bus_proto_rust::agent_bus::intention;
 use agentbus_api::AgentBus as _;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitSvc as _;
+use logact_commit_service_api::PolicyState;
+use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_grpc::GrpcCommitSvcClient;
+use logact_commit_service_sqlite_storage::SqliteStorage;
 use tokio::sync::oneshot;
 use tonic::transport::Endpoint;
 
+use crate::ensure_private_parent_directory;
 use crate::server::serve_with_shutdown;
 use crate::socket::bind_socket;
+use crate::sqlite_backed_commit_service::POLICY_REGISTER_KEY;
 use crate::sqlite_backed_commit_service::create_sqlite_backed_commit_service;
+
+#[tokio::test]
+async fn preserves_an_existing_sqlite_policy() {
+    let temp = tempfile::tempdir().expect("temporary directory should be created");
+    let sqlite_path = temp.path().join("state/logact.db");
+    ensure_private_parent_directory(&sqlite_path)
+        .await
+        .expect("private state directory should initialize");
+    let storage =
+        Rc::new(SqliteStorage::open(&sqlite_path).expect("policy storage should initialize"));
+    PolicyRegister::new(storage, POLICY_REGISTER_KEY)
+        .set_policy(
+            &PolicyState {
+                decider_policy: Some(DeciderPolicy::OffByDefault as i32),
+                ..Default::default()
+            },
+            None,
+        )
+        .await
+        .expect("existing policy should be stored");
+
+    let service = create_sqlite_backed_commit_service(&sqlite_path)
+        .await
+        .expect("embedded LogAct should initialize from SQLite");
+    let outcome = service
+        .commit_intention(CommitIntentionCommand {
+            bus_id: BusId {
+                agent_bus_id: "test-session".to_string(),
+            },
+            intention: intention::Intention::StringIntention("echo hello".to_string()),
+        })
+        .await
+        .expect("commit should succeed");
+
+    assert!(
+        !outcome.approved,
+        "the stored off-by-default policy should win"
+    );
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn serves_commit_service_and_agent_bus_over_one_socket() {

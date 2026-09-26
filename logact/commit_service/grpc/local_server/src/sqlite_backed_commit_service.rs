@@ -11,6 +11,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agentbus_api::AgentBusMetrics;
 use agentbus_api::AgentbusLogger;
 use agentbus_api::NoopLogger;
@@ -26,13 +27,20 @@ use logact_commit_service_core::ChanneledCommitService;
 use logact_commit_service_engine::BaseEngine;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::Observability;
+use logact_commit_service_engine::PolicyRegister;
+use logact_commit_service_engine::PolicyState;
+use logact_commit_service_engine::SynchronousRegisterProvider;
+use logact_commit_service_engine::bootstrap_policy_register_if_absent;
+use logact_commit_service_engine::default_policy_register_bootstrap_retry_config;
+use logact_commit_service_engine::validate_voter_configs;
 use logact_commit_service_sqlite_storage::SqliteStorage;
 use logact_commit_service_v1::CommitServiceV1;
 use logact_commit_service_v1::DelegatingVoterFactory;
 use logact_commit_service_v1::LlmVoterFactory;
 use logact_commit_service_v1::RuleBasedVoterFactory;
-use logact_commit_service_v1::StaticConfigPolicyProvider;
 use logact_private_fs::ensure_private_parent_directory;
+
+pub(crate) const POLICY_REGISTER_KEY: &str = "policy";
 
 /// Create an in-process AgentBus and CommitService over one SQLite database.
 pub(crate) async fn create_sqlite_backed_commit_service(
@@ -40,9 +48,35 @@ pub(crate) async fn create_sqlite_backed_commit_service(
 ) -> Result<ChanneledCommitService<ChanneledAgentBus>> {
     let path = path.as_ref().to_path_buf();
     ensure_private_parent_directory(&path).await?;
-    tokio::task::spawn_blocking(move || create_sqlite_backed_commit_service_blocking(path))
-        .await
-        .context("failed to join LogAct database initialization")?
+    tokio::task::spawn_blocking(move || {
+        initialize_policy_register(&path)?;
+        create_sqlite_backed_commit_service_blocking(path)
+    })
+    .await
+    .context("failed to join LogAct database initialization")?
+}
+
+fn initialize_policy_register(path: &Path) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("failed to create policy initialization runtime")?;
+    let storage =
+        Rc::new(SqliteStorage::open(path).context("failed to initialize policy storage")?);
+    let environment = RealEnvironment::new();
+    let register = PolicyRegister::new(storage, POLICY_REGISTER_KEY);
+    runtime
+        .block_on(bootstrap_policy_register_if_absent(
+            &register,
+            &PolicyState {
+                decider_policy: Some(DeciderPolicy::OnByDefault as i32),
+                ..Default::default()
+            },
+            &environment,
+            default_policy_register_bootstrap_retry_config(),
+        ))
+        .context("failed to initialize policy register")?;
+    Ok(())
 }
 
 fn create_sqlite_backed_commit_service_blocking(
@@ -81,13 +115,18 @@ fn create_sqlite_backed_commit_service_blocking(
             observability,
         );
         let decider_factory = DeciderFactoryImpl::new(storage.clone());
+        let policy_validator = voter_factory.clone();
+        let policy_provider = SynchronousRegisterProvider::new(
+            PolicyRegister::new(storage.clone(), POLICY_REGISTER_KEY),
+            move |policy| validate_voter_configs(&policy_validator, policy),
+        );
 
         CommitServiceV1::new(bus, move |engine_bus| {
             BaseEngine::new(
                 engine_bus,
                 storage,
                 voter_factory,
-                StaticConfigPolicyProvider::default(),
+                policy_provider,
                 decider_factory,
                 environment,
             )
