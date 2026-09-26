@@ -62,6 +62,8 @@ pub use policy_decider_applicator::OnByDefaultApplicator;
 pub use policy_register::PolicyRegister;
 pub use policy_register::PolicyRegisterError;
 pub use policy_register::PolicyRegisterResult;
+pub use policy_register::bootstrap_policy_register_if_absent;
+pub use policy_register::default_policy_register_bootstrap_retry_config;
 pub use scoped_storage::ScopedStorage;
 pub use state_machine_spec::StateMachineSpec;
 pub use stateless_voter_adapter::ImmutableVoter;
