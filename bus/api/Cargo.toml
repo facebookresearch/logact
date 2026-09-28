@@ -21,7 +21,7 @@ prost = { version = "0.14.4", default-features = false }
 prost-types = { version = "0.14.4", features = ["std"], default-features = false }
 rand = "0.10.3"
 serde_json = { version = "1.0.151", features = ["alloc", "float_roundtrip", "raw_value", "unbounded_depth"] }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["full", "test-util", "tracing"] }
 
 [dev-dependencies]

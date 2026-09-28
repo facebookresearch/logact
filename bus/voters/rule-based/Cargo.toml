@@ -15,7 +15,7 @@ async-trait = "0.1.92"
 prost-types = { version = "0.14.4", features = ["std"], default-features = false }
 regex = "1.13.1"
 rule-based-voter-proto-rust = { path = "proto" }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
 tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
 
 [dev-dependencies]

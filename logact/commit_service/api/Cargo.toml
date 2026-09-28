@@ -13,4 +13,4 @@ agent_bus_proto-rust = { path = "../../../bus/proto" }
 agentbus_api = { version = "0.1.0", path = "../../../bus/api" }
 anyhow = "1.0.104"
 logact_commit_service_policy_proto-rust = { path = "../proto" }
-thiserror = "2.0.20"
+thiserror = "2.0.21"
