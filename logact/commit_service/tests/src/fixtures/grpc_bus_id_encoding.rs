@@ -9,7 +9,6 @@
 
 use std::marker::PhantomData;
 
-use agent_bus_proto_rust::agent_bus::BusId;
 use agentbus_core::client::AgentBusClient;
 use logact_commit_service_api::CommitError;
 use logact_commit_service_api::CommitIntentionCommand;

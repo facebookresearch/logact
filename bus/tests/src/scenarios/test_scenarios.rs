@@ -1384,6 +1384,69 @@ mod defs {
         Ok(())
     }
 
+    /// Reading beyond tail or reading an empty bus with non-zero bounds
+    /// must return empty entries without panicking and advance next_start_position appropriately.
+    #[scenario]
+    pub async fn run_test_read_next_beyond_tail<F: AgentBusTestFixture>(
+        fixture: &F,
+    ) -> anyhow::Result<()> {
+        let env = fixture.get_env();
+        let bus = fixture.create_impl();
+        let bus_id: String = format!("bus-{}", env.with_rng(|rng| rng.random::<u64>()));
+
+        // Case 1: Empty bus, read range [0, 5) and [5, 10)
+        let resp1 = bus
+            .read_next(ReadNextRequest {
+                agent_bus_id: bus_id.clone(),
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.clone(),
+                }),
+                start_log_position: 0,
+                end_log_position: 5,
+                max_entries: 10,
+                filter: None,
+            })
+            .await?;
+        assert!(resp1.entries.is_empty());
+        assert_eq!(resp1.next_start_position, 5);
+
+        let resp2 = bus
+            .read_next(ReadNextRequest {
+                agent_bus_id: bus_id.clone(),
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.clone(),
+                }),
+                start_log_position: 5,
+                end_log_position: 10,
+                max_entries: 10,
+                filter: None,
+            })
+            .await?;
+        assert!(resp2.entries.is_empty());
+        assert_eq!(resp2.next_start_position, 10);
+
+        // Case 2: Append 2 entries, then read [5, 10) beyond tail
+        append_string_intention(&bus, bus_id.clone(), "entry-0".to_string()).await;
+        append_string_intention(&bus, bus_id.clone(), "entry-1".to_string()).await;
+
+        let resp3 = bus
+            .read_next(ReadNextRequest {
+                agent_bus_id: bus_id.clone(),
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.clone(),
+                }),
+                start_log_position: 5,
+                end_log_position: 10,
+                max_entries: 10,
+                filter: None,
+            })
+            .await?;
+        assert!(resp3.entries.is_empty());
+        assert_eq!(resp3.next_start_position, 10);
+
+        Ok(())
+    }
+
     /// Multi-type filter: filter for intentions + votes, verify commits/aborts excluded.
     #[scenario]
     pub async fn run_test_read_next_multi_type_filter<F: AgentBusTestFixture>(
