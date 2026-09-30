@@ -82,7 +82,7 @@ mod defs {
         fixture: &F,
     ) -> Result<()> {
         // Share one backing store between the direct handle and the faulty
-        // wrapper via `Rc` (the `Impl` need not be `Clone`).
+        // wrappers via `Rc` (the `Impl` need not be `Clone`).
         let storage = Rc::new(fixture.create_impl());
         storage.put("key", Bytes::from("v0"), None, 0).await?;
 
@@ -96,11 +96,14 @@ mod defs {
             },
         );
 
-        let mut successful_writes = 0u64;
-        let mut faulted_calls = 0u64;
-        let mut last_known_value = "v0".to_string();
+        // Deterministic setup: every run sees at least one fault and one
+        // successful write, whatever the seeded loop below draws.
+        force_fault_then_write(fixture, &storage).await?;
+        let mut successful_writes = 1u64;
+        let mut faulted_calls = 1u64;
+        let mut last_known_value = "v1".to_string();
 
-        for i in 1..20i64 {
+        for i in 2..=20i64 {
             let (_, expected_pos) = match faulty.get("key").await {
                 Ok(Some(entry)) => entry,
                 Ok(None) => panic!("key should always exist"),
@@ -148,6 +151,36 @@ mod defs {
         assert_eq!(
             val_str, last_known_value,
             "stored value must match the last successful write"
+        );
+        Ok(())
+    }
+
+    /// Forces one put fault on `key` (at position 0), then writes `v1` directly
+    /// with the same compare-and-swap, which only succeeds if the failed put
+    /// changed nothing.
+    async fn force_fault_then_write<F: StorageTestFixture>(
+        fixture: &F,
+        storage: &Rc<F::Impl>,
+    ) -> Result<()> {
+        let always_failing = FaultInjectingStorage::new(
+            storage.clone(),
+            fixture.get_env(),
+            StorageFaultConfig {
+                get_failure_rate: 1.0,
+                put_failure_rate: 1.0,
+                ..Default::default()
+            },
+        );
+        assert!(
+            always_failing
+                .put("key", Bytes::from("lost"), Some(0), 1)
+                .await
+                .is_err(),
+            "injected fault should propagate as Err"
+        );
+        assert!(
+            storage.put("key", Bytes::from("v1"), Some(0), 1).await?,
+            "failed put should not have advanced the position"
         );
         Ok(())
     }
