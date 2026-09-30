@@ -19,7 +19,6 @@ use crate::AppendRequest;
 use crate::AppendResponse;
 use crate::BlockingPollRequest;
 use crate::BlockingPollResponse;
-use crate::BusId;
 use crate::BusResult;
 use crate::CheckTailRequest;
 use crate::CheckTailResponse;

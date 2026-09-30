@@ -158,6 +158,12 @@ impl InMemoryAgentBusState {
         payload_types: &Option<Vec<i32>>,
         end_position: i64,
     ) -> Result<(Vec<BusEntry>, i64)> {
+        if start_position < 0 {
+            return Err(anyhow::anyhow!(
+                "start_position {} must not be negative",
+                start_position
+            ));
+        }
         if start_position > end_position {
             return Err(anyhow::anyhow!(
                 "start_position {} is beyond end_position {}",
@@ -175,6 +181,10 @@ impl InMemoryAgentBusState {
         };
 
         let start_idx = start_position as usize;
+        if start_idx >= bus.len() {
+            return Ok((vec![], end_position));
+        }
+
         let end_idx = (end_position as usize).min(bus.len());
         let slice = &bus[start_idx..end_idx];
 
@@ -193,13 +203,107 @@ impl InMemoryAgentBusState {
                 let next = entry
                     .header
                     .as_ref()
-                    .expect("entry should have header")
-                    .log_position
-                    + 1;
+                    .map(|h| h.log_position + 1)
+                    .unwrap_or(end_position);
                 return Ok((entries, next));
             }
         }
 
         Ok((entries, end_position))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_bus_proto_rust::agent_bus::intention::Intention as IntentionEnum;
+    use agent_bus_proto_rust::agent_bus::payload::Payload as PayloadEnum;
+
+    fn make_test_entry(position: i64, content: &str) -> BusEntry {
+        BusEntry {
+            header: Some(Header {
+                log_position: position,
+                rt_timestamp_ms: 1000 + position,
+            }),
+            payload: Some(Payload {
+                payload: Some(PayloadEnum::Intention(Intention {
+                    intention: Some(IntentionEnum::StringIntention(content.to_string())),
+                    ..Default::default()
+                })),
+            }),
+        }
+    }
+
+    #[test]
+    fn test_read_filtered_entries_beyond_tail() {
+        let mut state = InMemoryAgentBusState::new();
+        state.buses.insert(
+            "test-bus".to_string(),
+            vec![make_test_entry(0, "e0"), make_test_entry(1, "e1")],
+        );
+
+        // Reading beyond tail should not panic and return empty vec with end_position
+        let res = state.read_filtered_entries("test-bus", 5, 10, &None, 10);
+        assert!(res.is_ok());
+        let (entries, next) = res.unwrap();
+        assert!(entries.is_empty());
+        assert_eq!(next, 10);
+
+        // Reading exactly at tail
+        let res = state.read_filtered_entries("test-bus", 2, 10, &None, 10);
+        assert!(res.is_ok());
+        let (entries, next) = res.unwrap();
+        assert!(entries.is_empty());
+        assert_eq!(next, 10);
+    }
+
+    #[test]
+    fn test_read_filtered_entries_empty_bus() {
+        let mut state = InMemoryAgentBusState::new();
+        state.buses.insert("empty-bus".to_string(), vec![]);
+
+        let res = state.read_filtered_entries("empty-bus", 0, 10, &None, 5);
+        assert!(res.is_ok());
+        let (entries, next) = res.unwrap();
+        assert!(entries.is_empty());
+        assert_eq!(next, 5);
+
+        let res2 = state.read_filtered_entries("empty-bus", 2, 10, &None, 5);
+        assert!(res2.is_ok());
+        let (entries2, next2) = res2.unwrap();
+        assert!(entries2.is_empty());
+        assert_eq!(next2, 5);
+    }
+
+    #[test]
+    fn test_read_filtered_entries_negative_start() {
+        let state = InMemoryAgentBusState::new();
+        let res = state.read_filtered_entries("test-bus", -1, 10, &None, 5);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_read_filtered_entries_normal_pagination() {
+        let mut state = InMemoryAgentBusState::new();
+        state.buses.insert(
+            "test-bus".to_string(),
+            vec![
+                make_test_entry(0, "e0"),
+                make_test_entry(1, "e1"),
+                make_test_entry(2, "e2"),
+            ],
+        );
+
+        let (entries, next) = state
+            .read_filtered_entries("test-bus", 0, 2, &None, 3)
+            .unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(next, 2);
+
+        let (entries, next) = state
+            .read_filtered_entries("test-bus", next, 2, &None, 3)
+            .unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(next, 3);
     }
 }
