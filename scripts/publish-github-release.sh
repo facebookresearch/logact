@@ -156,7 +156,7 @@ read_release() {
     }' \
     --jq '.data.repository.release')" || return 2
 
-  [[ "$release_json" != null ]] || return 1
+  [[ -n "$release_json" && "$release_json" != null ]] || return 1
   printf '%s\n' "$release_json"
 }
 
