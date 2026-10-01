@@ -134,6 +134,32 @@ EOF
   cmp -s "$expected_file" "$log_file"
 }
 
+assert_plugin_registration() {
+  log_file=$1
+  expected_file=$2
+  share_dir=$3
+
+  cat > "$expected_file" <<EOF
+claude plugin marketplace add $share_dir
+claude plugin install logact-oss@logact-oss
+codex plugin marketplace add $share_dir
+codex plugin add logact-oss@logact-oss
+muse plugins marketplace add logact-oss $share_dir
+muse plugins install logact-oss@logact-oss
+EOF
+  cmp -s "$expected_file" "$log_file"
+}
+
+assert_path_summary() {
+  install_output=$1
+  install_prefix=$2
+
+  printf '%s\n' "$install_output" |
+    grep -F 'Run this command before starting an agent client:' >/dev/null
+  printf '%s\n' "$install_output" |
+    grep -F "  export PATH=\"$install_prefix/bin:\$PATH\"" >/dev/null
+}
+
 assert_rollback() {
   install_prefix=$1
   checksum_file=$2
@@ -181,6 +207,8 @@ main() {
     exit 2
   fi
 
+  # Keep repeated failure and rollback tests isolated from installed clients.
+  export LOGACT_TEST_SKIP_PLUGIN_REGISTRATION=1
   dist_dir=$1
   (cd "$dist_dir" && shasum -a 256 -c ./*.sha256)
   set -- "$dist_dir"/*.tar.gz
@@ -239,10 +267,25 @@ main() {
   assert_uninstalled "$install_prefix" "$home" "$launch_agent"
   rm "$launchctl_dir/bootout-called"
 
-  LOGACT_LAUNCHCTL="$launchctl_bin" HOME="$home" "$bundle/install.sh"
+  create_fake_agent_clients "$work_dir/fake-agent-clients"
+  plugin_log="$work_dir/plugin.log"
+  install_output="$(
+    LOGACT_LAUNCHCTL="$launchctl_bin" \
+      LOGACT_TEST_PLUGIN_LOG="$plugin_log" \
+      LOGACT_TEST_SKIP_PLUGIN_REGISTRATION=0 \
+      PATH="$work_dir/fake-agent-clients:$PATH" \
+      HOME="$home" \
+      "$bundle/install.sh"
+  )"
+  printf '%s\n' "$install_output"
   test -f "$launchctl_dir/bootstrap-called"
   assert_installed_payload "$install_prefix"
   assert_launch_agent "$launch_agent" "$install_prefix" "$home"
+  assert_plugin_registration \
+    "$plugin_log" \
+    "$work_dir/expected-plugin-registration.log" \
+    "$install_prefix/share/logact-oss"
+  assert_path_summary "$install_output" "$install_prefix"
 
   LOGACT_LAUNCHCTL="$launchctl_bin" HOME="$home" "$bundle/install.sh"
   test -f "$launchctl_dir/kickstart-called"
@@ -310,14 +353,14 @@ main() {
   /usr/bin/plutil -replace Label \
     -string com.facebookresearch.logact.oss \
     "$launch_agent"
-  create_fake_agent_clients "$work_dir/fake-agent-clients"
+  : > "$plugin_log"
   LOGACT_LAUNCHCTL="$launchctl_bin" \
-    LOGACT_TEST_PLUGIN_LOG="$work_dir/plugin-unregister.log" \
+    LOGACT_TEST_PLUGIN_LOG="$plugin_log" \
     PATH="$work_dir/fake-agent-clients:$PATH" \
     HOME="$home" \
     "$install_prefix/share/logact-oss/uninstall.sh"
   assert_plugin_unregistration \
-    "$work_dir/plugin-unregister.log" \
+    "$plugin_log" \
     "$work_dir/expected-plugin-unregister.log"
   test -f "$launchctl_dir/bootout-called"
   test ! -e "$launchctl_dir/loaded"

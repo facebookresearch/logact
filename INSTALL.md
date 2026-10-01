@@ -58,10 +58,11 @@ environment inherited by the agent clients:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer prints the commands for registering the plugin with each
-supported client. It also registers a per-user macOS LaunchAgent that starts
-`logact-oss-server` and restarts it after failures. The service keeps its
-SQLite state in `$HOME/.logact-oss/logact.sqlite` and writes diagnostics to
+The installer prints this command again as its final step. It automatically
+registers the plugin with Claude Code, Codex, and Muse Code when their commands
+are available on `PATH`. It also registers a per-user macOS LaunchAgent that
+starts `logact-oss-server` and restarts it after failures. The service keeps
+its SQLite state in `$HOME/.logact-oss/logact.sqlite` and writes diagnostics to
 `$HOME/.logact-oss/logact.log`.
 
 Install a newer preview by downloading it and running its `install.sh` again;

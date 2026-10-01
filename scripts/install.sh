@@ -202,6 +202,61 @@ cleanup() {
   exit "$cleanup_status"
 }
 
+register_claude_plugin() {
+  if ! command -v claude >/dev/null 2>&1; then
+    echo "Skipped Claude Code plugin registration: claude was not found on PATH."
+    return
+  fi
+  if claude plugin marketplace add "$share_dir" &&
+    claude plugin install logact-oss@logact-oss; then
+    echo "Registered the LogAct OSS plugin with Claude Code."
+  else
+    echo "warning: could not register the LogAct OSS plugin with Claude Code" >&2
+  fi
+}
+
+register_codex_plugin() {
+  if ! command -v codex >/dev/null 2>&1; then
+    echo "Skipped Codex plugin registration: codex was not found on PATH."
+    return
+  fi
+  if codex plugin marketplace add "$share_dir" &&
+    codex plugin add logact-oss@logact-oss; then
+    echo "Registered the LogAct OSS plugin with Codex."
+  else
+    echo "warning: could not register the LogAct OSS plugin with Codex" >&2
+  fi
+}
+
+register_muse_plugin() {
+  if ! command -v muse >/dev/null 2>&1; then
+    echo "Skipped Muse Code plugin registration: muse was not found on PATH."
+    return
+  fi
+  if ! muse plugins marketplace add logact-oss "$share_dir" >/dev/null 2>&1; then
+    # Muse reports an existing marketplace as an error. Refresh it so rerunning
+    # the installer still picks up a newly installed bundle.
+    if ! muse plugins marketplace update logact-oss; then
+      echo "warning: could not register the LogAct OSS marketplace with Muse Code" >&2
+      return
+    fi
+  fi
+  if muse plugins install logact-oss@logact-oss; then
+    echo "Registered the LogAct OSS plugin with Muse Code."
+  else
+    echo "warning: could not register the LogAct OSS plugin with Muse Code" >&2
+  fi
+}
+
+register_plugins() {
+  if [ "${LOGACT_TEST_SKIP_PLUGIN_REGISTRATION:-0}" = "1" ]; then
+    return
+  fi
+  register_claude_plugin
+  register_codex_plugin
+  register_muse_plugin
+}
+
 print_install_summary() {
   cat <<EOF
 Installed LogAct OSS.
@@ -216,20 +271,10 @@ Local state:
   socket: $state_dir/logact.sock
   log: $state_dir/logact.log
 
-Ensure this directory is on PATH before starting an agent client:
-  $bin_dir
-
-Register the plugin from this marketplace:
-  claude plugin marketplace add "$share_dir"
-  claude plugin install logact-oss@logact-oss
-
-  codex plugin marketplace add "$share_dir"
-  codex plugin add logact-oss@logact-oss
-
-  muse plugins marketplace add logact-oss "$share_dir"
-  muse plugins install logact-oss@logact-oss
-
 The LogAct LaunchAgent starts the local server and restarts it after failures.
+
+Run this command before starting an agent client:
+  export PATH="$bin_dir:\$PATH"
 EOF
 }
 
@@ -336,6 +381,9 @@ main() {
   backup_dir=""
   trap - EXIT HUP INT QUIT PIPE TERM
 
+  PATH="$bin_dir:$PATH"
+  export PATH
+  register_plugins
   print_install_summary
 }
 
