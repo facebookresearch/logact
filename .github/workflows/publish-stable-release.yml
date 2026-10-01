@@ -1,0 +1,15 @@
+name: Publish stable release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    uses: ./.github/workflows/macos-release.yml
+    with:
+      publish_stable: true
+    permissions:
+      contents: write

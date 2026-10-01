@@ -1,6 +1,13 @@
 name: macOS package and release
 
 on:
+  workflow_call:
+    inputs:
+      publish_stable:
+        description: Publish a stable release for the checked-in marketplace version
+        required: false
+        type: boolean
+        default: false
   workflow_dispatch:
   push:
     branches: [ "main" ]
@@ -43,8 +50,45 @@ jobs:
   package:
     runs-on: macos-14
     timeout-minutes: 60
+    outputs:
+      package_version: ${{ steps.package.outputs.version }}
     steps:
     - uses: actions/checkout@v4
+    - name: Validate manual release source
+      if: inputs.publish_stable
+      run: |
+        if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+          echo "stable releases must be dispatched from main" >&2
+          exit 1
+        fi
+        python3 - <<'PY'
+        import json
+
+        manifests = {
+            "marketplace": ".claude-plugin/marketplace.json",
+            "Claude plugin": "plugins/logact-oss/.claude-plugin/plugin.json",
+            "Codex plugin": "plugins/logact-oss/.codex-plugin/plugin.json",
+            "Muse plugin": "plugins/logact-oss/.muse-plugin/plugin.json",
+        }
+        documents = {
+            name: json.load(open(path)) for name, path in manifests.items()
+        }
+        expected = documents["marketplace"]["metadata"]["version"]
+        versions = {
+            name: document["metadata"]["version"]
+            if name == "marketplace"
+            else document["version"]
+            for name, document in documents.items()
+        }
+        versions["marketplace plugin"] = documents["marketplace"]["plugins"][0]["version"]
+        mismatches = {
+            name: version for name, version in versions.items() if version != expected
+        }
+        if mismatches:
+            raise SystemExit(f"release versions do not match {expected}: {mismatches}")
+        if "-" in expected:
+            raise SystemExit(f"stable release version contains a prerelease suffix: {expected}")
+        PY
     - name: Resolve and fetch Cargo dependencies
       run: |
         # The repository does not check in Cargo.lock yet. Resolve once, then
@@ -68,9 +112,12 @@ jobs:
           --package logact_local_server_lib \
           --bin logact_local_server
     - name: Package
+      id: package
       run: |
         base_version="$(python3 -c 'import json; print(json.load(open(".claude-plugin/marketplace.json"))["metadata"]["version"])')"
-        if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+        if [ "${{ inputs.publish_stable }}" = "true" ]; then
+          package_version="$base_version"
+        elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
           package_version="${GITHUB_REF_NAME#v}"
           case "$package_version" in
             "$base_version"|"$base_version"-*) ;;
@@ -84,6 +131,7 @@ jobs:
           package_version="$base_version-$short_sha"
         fi
         echo "LOGACT_PACKAGE_VERSION=$package_version" >> "$GITHUB_ENV"
+        echo "version=$package_version" >> "$GITHUB_OUTPUT"
         LOGACT_BINARY_DIR="$PWD/target/aarch64-apple-darwin/release" \
           LOGACT_DIST_DIR="$PWD/dist" \
           LOGACT_PACKAGE_PLATFORM=macos \
@@ -114,13 +162,40 @@ jobs:
         retention-days: 14
 
   release:
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    if: >-
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+      inputs.publish_stable
     needs: package
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
     - uses: actions/checkout@v4
+    - name: Resolve release tag
+      env:
+        PACKAGE_VERSION: ${{ needs.package.outputs.package_version }}
+        PUBLISH_STABLE: ${{ inputs.publish_stable }}
+      run: |
+        if [ "$PUBLISH_STABLE" = "true" ]; then
+          release_tag="v$PACKAGE_VERSION"
+          remote_refs="$(git ls-remote origin \
+            "refs/tags/$release_tag" \
+            "refs/tags/$release_tag^{}")"
+          remote_commit="$(printf '%s\n' "$remote_refs" | awk '
+            $2 ~ /\^\{\}$/ { peeled = $1 }
+            $2 !~ /\^\{\}$/ { direct = $1 }
+            END { print peeled ? peeled : direct }
+          ')"
+          if [ -z "$remote_commit" ]; then
+            git push origin "$GITHUB_SHA:refs/tags/$release_tag"
+          elif [ "$remote_commit" != "$GITHUB_SHA" ]; then
+            echo "$release_tag already points to $remote_commit, not $GITHUB_SHA" >&2
+            exit 1
+          fi
+        else
+          release_tag="$GITHUB_REF_NAME"
+        fi
+        echo "LOGACT_RELEASE_TAG=$release_tag" >> "$GITHUB_ENV"
     - name: Download packaged artifacts
       uses: actions/download-artifact@v5
       with:
@@ -130,4 +205,4 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
         GH_REPO: ${{ github.repository }}
-      run: ./scripts/publish-github-release.sh "$GITHUB_REF_NAME" dist
+      run: ./scripts/publish-github-release.sh "$LOGACT_RELEASE_TAG" dist

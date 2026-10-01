@@ -17,6 +17,16 @@ repository.
 5. Run `cargo fmt --all -- --check` and address formatting issues.
 6. Complete the Contributor License Agreement if you have not already done so.
 
+## Releases
+
+After updating the version in the marketplace and plugin manifests, run the
+`Publish stable release` workflow from `main`. The workflow derives the release
+version from `.claude-plugin/marketplace.json`, creates the corresponding `v*`
+tag, builds and tests the macOS package, and publishes the GitHub release.
+
+Rerunning the workflow is safe when the tag already points to the same commit.
+It fails rather than moving a tag that already points somewhere else.
+
 ## Contributor License Agreement
 
 To accept your pull request, we need you to submit a Contributor License
