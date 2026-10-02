@@ -226,7 +226,6 @@ impl<T: AgentBus, E: Environment> AgentBusCounter<T, E> {
         let response = self
             .agent_bus_impl
             .append(AppendRequest {
-                agent_bus_id: self.agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: self.agent_bus_id.clone(),
                 }),
@@ -243,7 +242,6 @@ impl<T: AgentBus, E: Environment> AgentBusCounter<T, E> {
         let resp = self
             .agent_bus_impl
             .blocking_poll(BlockingPollRequest {
-                agent_bus_id: self.agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: self.agent_bus_id.clone(),
                 }),
@@ -372,7 +370,6 @@ impl<T: AgentBus, E: Environment> Counter for AgentBusCounter<T, E> {
         let tail = self
             .agent_bus_impl
             .check_tail(CheckTailRequest {
-                agent_bus_id: self.agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: self.agent_bus_id.clone(),
                 }),

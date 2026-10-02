@@ -19,7 +19,6 @@ use crate::AppendRequest;
 use crate::AppendResponse;
 use crate::BlockingPollRequest;
 use crate::BlockingPollResponse;
-use crate::BusId;
 use crate::BusResult;
 use crate::CheckTailRequest;
 use crate::CheckTailResponse;
@@ -349,7 +348,6 @@ mod tests {
                 append_tx
                     .unbounded_send((
                         AppendRequest {
-                            agent_bus_id: bus_id.clone(),
                             bus_id: Some(BusId {
                                 agent_bus_id: bus_id.clone(),
                             }),
@@ -377,7 +375,6 @@ mod tests {
                 poll_tx
                     .unbounded_send((
                         PollRequest {
-                            agent_bus_id: bus_id.clone(),
                             bus_id: Some(BusId {
                                 agent_bus_id: bus_id.clone(),
                             }),

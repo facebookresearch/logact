@@ -25,7 +25,6 @@ mod defs {
 
     async fn append_intention(bus: &impl AgentBus, intention: &str) -> i64 {
         bus.append(AppendRequest {
-            agent_bus_id: BUS_ID.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: BUS_ID.to_string(),
             }),
@@ -43,7 +42,6 @@ mod defs {
 
     async fn poll_votes(bus: &impl AgentBus) -> Vec<Vote> {
         bus.poll(PollRequest {
-            agent_bus_id: BUS_ID.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: BUS_ID.to_string(),
             }),

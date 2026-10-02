@@ -161,7 +161,6 @@ async fn wait_for_agentbus_connection(
 
     let result = Retry::start(retry_strategy, || async {
         let request = CheckTailRequest {
-            agent_bus_id: agent_bus_id.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: agent_bus_id.to_string(),
             }),

@@ -253,7 +253,6 @@ mod defs {
                 };
                 policy_impl
                     .append(AppendRequest {
-                        agent_bus_id: agent_bus_id_for_policy.clone(),
                         bus_id: Some(BusId {
                             agent_bus_id: agent_bus_id_for_policy,
                         }),

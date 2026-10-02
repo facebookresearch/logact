@@ -25,15 +25,8 @@ pub use conformance::SimulatorFixture;
 pub trait AgentBusTestFixture: ConformanceFixture<Impl: agentbus_api::AgentBus + 'static> {}
 impl<F: ConformanceFixture<Impl: agentbus_api::AgentBus + 'static>> AgentBusTestFixture for F {}
 
-pub mod bus_id_encoding;
 pub mod integration;
 pub mod simtest;
 pub mod write_once_agentbus_fixture;
 
-pub use bus_id_encoding::BusIdEncodingFixture;
-pub use bus_id_encoding::LegacyBusIdEncoding;
-pub use bus_id_encoding::TypedBusIdEncoding;
 pub use write_once_agentbus_fixture::WriteOnceAgentBusGenericFixture;
-
-pub type LegacyBusIdFixture<F> = BusIdEncodingFixture<F, LegacyBusIdEncoding>;
-pub type TypedBusIdFixture<F> = BusIdEncodingFixture<F, TypedBusIdEncoding>;

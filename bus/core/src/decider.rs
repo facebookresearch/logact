@@ -112,7 +112,6 @@ impl<T: AgentBus> Decider<T> {
         let response = self
             .agent_bus
             .blocking_poll(BlockingPollRequest {
-                agent_bus_id: self.agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: self.agent_bus_id.clone(),
                 }),
@@ -328,7 +327,6 @@ impl<T: AgentBus> Decider<T> {
         };
 
         let append_request = AppendRequest {
-            agent_bus_id: self.agent_bus_id.clone(),
             bus_id: Some(BusId {
                 agent_bus_id: self.agent_bus_id.clone(),
             }),

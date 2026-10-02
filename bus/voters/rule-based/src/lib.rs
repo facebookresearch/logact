@@ -12,7 +12,7 @@
 
 use std::fmt;
 
-use agentbus_api::validate_bus_id;
+use agentbus_api::validate_bus_id_string;
 use agentbus_api::voter::Voter;
 use agentbus_api::voter::VoterContext;
 use regex::Regex;
@@ -84,13 +84,13 @@ pub enum RuleSubject {
 impl RuleSubject {
     fn validate(&self) -> Result<(), RuleBasedVoterError> {
         match self {
-            Self::ExactBusId(bus_id) => validate_bus_id(bus_id).map_err(|error| {
+            Self::ExactBusId(bus_id) => validate_bus_id_string(bus_id).map_err(|error| {
                 RuleBasedVoterError::InvalidRule(format!(
                     "invalid exact bus ID \"{}\": {}",
                     bus_id, error
                 ))
             }),
-            Self::BusIdPrefix(prefix) => validate_bus_id(prefix).map_err(|error| {
+            Self::BusIdPrefix(prefix) => validate_bus_id_string(prefix).map_err(|error| {
                 RuleBasedVoterError::InvalidRule(format!(
                     "invalid bus ID prefix \"{}\": {}",
                     prefix, error

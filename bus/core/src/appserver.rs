@@ -249,7 +249,6 @@ pub async fn gate_check_for_bus<T: AgentBus, E: Environment>(
     intention: &str,
 ) -> anyhow::Result<GateResult> {
     let append_request = AppendRequest {
-        agent_bus_id: bus_id.to_string(),
         bus_id: Some(BusId {
             agent_bus_id: bus_id.to_string(),
         }),
@@ -294,7 +293,6 @@ pub async fn gate_check_for_bus<T: AgentBus, E: Environment>(
 
         let response = bus
             .blocking_poll(BlockingPollRequest {
-                agent_bus_id: bus_id.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.to_string(),
                 }),

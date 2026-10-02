@@ -159,7 +159,6 @@ mod defs {
         let polled = svc
             .agent_bus()
             .poll(PollRequest {
-                agent_bus_id: agent_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent_id,
                 }),

@@ -131,7 +131,6 @@ async fn serves_commit_service_and_agent_bus_over_one_socket() {
     let tail = client
         .agent_bus()
         .check_tail(CheckTailRequest {
-            agent_bus_id: "test-session".to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: "test-session".to_string(),
             }),

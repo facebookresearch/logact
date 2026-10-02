@@ -92,7 +92,6 @@ async fn append_payload<B: agentbus_api::AgentBus + ?Sized>(
     payload: agentbus::Payload,
 ) -> Result<()> {
     bus.append(AppendRequest {
-        agent_bus_id: agent_id.clone(),
         bus_id: Some(BusId {
             agent_bus_id: agent_id,
         }),

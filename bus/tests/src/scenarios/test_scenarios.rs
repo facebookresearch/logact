@@ -48,7 +48,6 @@ mod defs {
 
         let append = bus
             .append(AppendRequest {
-                agent_bus_id: "ignored-legacy-id".to_owned(),
                 bus_id: Some(bus_id.clone()),
                 payload: Some(payload),
             })
@@ -57,7 +56,6 @@ mod defs {
 
         let poll = bus
             .poll(PollRequest {
-                agent_bus_id: String::new(),
                 bus_id: Some(bus_id.clone()),
                 start_log_position: 0,
                 max_entries: 1,
@@ -68,7 +66,6 @@ mod defs {
 
         let tail = bus
             .check_tail(CheckTailRequest {
-                agent_bus_id: String::new(),
                 bus_id: Some(bus_id.clone()),
             })
             .await?;
@@ -76,7 +73,6 @@ mod defs {
 
         let read = bus
             .read_next(ReadNextRequest {
-                agent_bus_id: String::new(),
                 bus_id: Some(bus_id.clone()),
                 start_log_position: 0,
                 end_log_position: 1,
@@ -88,7 +84,6 @@ mod defs {
 
         let blocking = bus
             .blocking_poll(BlockingPollRequest {
-                agent_bus_id: String::new(),
                 bus_id: Some(bus_id),
                 start_log_position: 0,
                 max_entries: 1,
@@ -683,7 +678,6 @@ mod defs {
 
         for payload in payloads {
             let request = agent_bus_proto_rust::agent_bus::AppendRequest {
-                agent_bus_id: agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent_bus_id.clone(),
                 }),
@@ -821,7 +815,6 @@ mod defs {
 
         let make_append_request = |bus_id: String| {
             agent_bus_proto_rust::agent_bus::AppendRequest {
-        agent_bus_id: bus_id.clone(),
         bus_id: Some(BusId {
             agent_bus_id: bus_id,
         }),
@@ -844,7 +837,6 @@ mod defs {
         };
 
         let make_poll_request = |bus_id: String| agent_bus_proto_rust::agent_bus::PollRequest {
-            agent_bus_id: bus_id.clone(),
             bus_id: Some(BusId {
                 agent_bus_id: bus_id,
             }),
@@ -950,7 +942,6 @@ mod defs {
 
         let result = bus
             .check_tail(CheckTailRequest {
-                agent_bus_id: bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.clone(),
                 }),
@@ -980,7 +971,6 @@ mod defs {
 
             let result = bus
                 .check_tail(CheckTailRequest {
-                    agent_bus_id: bus_id.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id.clone(),
                     }),
@@ -1028,7 +1018,6 @@ mod defs {
             loop {
                 let tail_position = tail_bus
                     .check_tail(CheckTailRequest {
-                        agent_bus_id: tail_bus_id.clone(),
                         bus_id: Some(BusId {
                             agent_bus_id: tail_bus_id.clone(),
                         }),
@@ -1061,7 +1050,6 @@ mod defs {
         let final_bus = fixture.create_impl();
         let final_tail = final_bus
             .check_tail(CheckTailRequest {
-                agent_bus_id: bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id,
                 }),
@@ -1096,7 +1084,6 @@ mod defs {
 
         let tail_a = bus
             .check_tail(CheckTailRequest {
-                agent_bus_id: bus_a.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_a.clone(),
                 }),
@@ -1104,7 +1091,6 @@ mod defs {
             .await?;
         let tail_b = bus
             .check_tail(CheckTailRequest {
-                agent_bus_id: bus_b.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_b.clone(),
                 }),
@@ -1218,7 +1204,6 @@ mod defs {
 
         let tail = bus
             .check_tail(CheckTailRequest {
-                agent_bus_id: bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.clone(),
                 }),
@@ -1234,7 +1219,6 @@ mod defs {
         while cursor < tail {
             let resp = bus
                 .read_next(ReadNextRequest {
-                    agent_bus_id: bus_id.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id.clone(),
                     }),
@@ -1280,7 +1264,6 @@ mod defs {
             (
                 "max_entries=0",
                 ReadNextRequest {
-                    agent_bus_id: bus_id.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id.clone(),
                     }),
@@ -1293,7 +1276,6 @@ mod defs {
             (
                 "max_entries=-1",
                 ReadNextRequest {
-                    agent_bus_id: bus_id.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id.clone(),
                     }),
@@ -1306,7 +1288,6 @@ mod defs {
             (
                 "start=-1",
                 ReadNextRequest {
-                    agent_bus_id: bus_id.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id.clone(),
                     }),
@@ -1319,7 +1300,6 @@ mod defs {
             (
                 "end < start",
                 ReadNextRequest {
-                    agent_bus_id: bus_id.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id.clone(),
                     }),
@@ -1332,7 +1312,6 @@ mod defs {
             (
                 "empty filter",
                 ReadNextRequest {
-                    agent_bus_id: bus_id.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id.clone(),
                     }),
@@ -1367,7 +1346,6 @@ mod defs {
 
         let resp = bus
             .read_next(ReadNextRequest {
-                agent_bus_id: bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.clone(),
                 }),
@@ -1463,7 +1441,6 @@ mod defs {
         let timeout_ms = env.with_rng(|rng| rng.random_range(0..=5));
         let resp = bus
             .blocking_poll(BlockingPollRequest {
-                agent_bus_id: bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id,
                 }),
@@ -1490,7 +1467,6 @@ mod defs {
 
         assert!(
             bus.blocking_poll(BlockingPollRequest {
-                agent_bus_id: bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.clone(),
                 }),
@@ -1506,7 +1482,6 @@ mod defs {
 
         assert!(
             bus.blocking_poll(BlockingPollRequest {
-                agent_bus_id: bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.clone(),
                 }),
@@ -1546,7 +1521,6 @@ mod defs {
 
         let first = bus
             .blocking_poll(BlockingPollRequest {
-                agent_bus_id: bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.clone(),
                 }),
@@ -1584,7 +1558,6 @@ mod defs {
 
         let second = bus
             .blocking_poll(BlockingPollRequest {
-                agent_bus_id: bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id,
                 }),
@@ -1656,7 +1629,6 @@ mod defs {
                 let max_entries = poll_env.with_rng(|rng| rng.random_range(1..=5));
                 let resp = poll_bus
                     .blocking_poll(BlockingPollRequest {
-                        agent_bus_id: poll_bus_id.clone(),
                         bus_id: Some(BusId {
                             agent_bus_id: poll_bus_id.clone(),
                         }),

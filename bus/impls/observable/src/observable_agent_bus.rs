@@ -29,7 +29,7 @@ use agentbus_api::ReadNextResponse;
 use agentbus_api::logger::AgentbusLogger;
 use agentbus_api::metrics::AgentBusMetrics;
 use agentbus_api::payload;
-use agentbus_api::resolve_bus_id;
+use agentbus_api::validate_bus_id;
 
 const NO_TAGS: &[(&str, &str)] = &[];
 const COMPONENT: &str = "agent_bus";
@@ -126,7 +126,8 @@ impl<T: AgentBus, E: Environment> AgentBus for ObservableAgentBus<T, E> {
     async fn append(&self, request: AppendRequest) -> BusResult<AppendResponse> {
         self.metrics
             .record_counter("append.agent_bus.num_calls", 1, NO_TAGS);
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
         let payload_type = request
             .payload
             .as_ref()
@@ -164,7 +165,8 @@ impl<T: AgentBus, E: Environment> AgentBus for ObservableAgentBus<T, E> {
     async fn poll(&self, request: PollRequest) -> BusResult<PollResponse> {
         self.metrics
             .record_counter("poll.agent_bus.num_calls", 1, NO_TAGS);
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
         let start_position = request.start_log_position;
         let max_entries = request.max_entries;
         let start = self.monotonic_time();
@@ -207,7 +209,8 @@ impl<T: AgentBus, E: Environment> AgentBus for ObservableAgentBus<T, E> {
     async fn read_next(&self, request: ReadNextRequest) -> BusResult<ReadNextResponse> {
         self.metrics
             .record_counter("read_next.agent_bus.num_calls", 1, NO_TAGS);
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
         let start_position = request.start_log_position;
         let max_entries = request.max_entries;
         let start = self.monotonic_time();
@@ -250,7 +253,8 @@ impl<T: AgentBus, E: Environment> AgentBus for ObservableAgentBus<T, E> {
     async fn check_tail(&self, request: CheckTailRequest) -> BusResult<CheckTailResponse> {
         self.metrics
             .record_counter("check_tail.agent_bus.num_calls", 1, NO_TAGS);
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
         let start = self.monotonic_time();
 
         let result = self.inner.check_tail(request).await;
@@ -279,7 +283,8 @@ impl<T: AgentBus, E: Environment> AgentBus for ObservableAgentBus<T, E> {
     async fn blocking_poll(&self, request: BlockingPollRequest) -> BusResult<BlockingPollResponse> {
         self.metrics
             .record_counter("blocking_poll.agent_bus.num_calls", 1, NO_TAGS);
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
         let start_position = request.start_log_position;
         let max_entries = request.max_entries;
         let timeout_ms = request.timeout_ms;

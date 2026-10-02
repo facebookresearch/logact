@@ -31,21 +31,14 @@ use logact_commit_service_v1::DelegatingVoterFactory;
 use logact_commit_service_v1::StaticConfigPolicyProvider;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 
-pub mod bus_id_encoding;
 pub mod channeled;
 pub mod grpc;
-mod grpc_bus_id_encoding;
 pub mod inmem;
 pub mod random_routing;
 pub mod v1;
 pub mod v1_latency;
 pub mod v1_with_counting_voter;
 
-pub use bus_id_encoding::BusIdEncoding;
-pub use bus_id_encoding::BusIdEncodingFixture;
-pub use bus_id_encoding::BusIdEncodingFixtureFactory;
-pub use bus_id_encoding::LegacyBusIdEncoding;
-pub use bus_id_encoding::TypedBusIdEncoding;
 pub use channeled::ChanneledCommitServiceFixture;
 pub use conformance::ConformanceFixture;
 pub use conformance::SimulatorFixture;
@@ -56,9 +49,6 @@ pub use v1::CommitServiceV1Fixture;
 pub use v1::CommitServiceV1StorageConflictFixture;
 pub use v1_latency::CommitServiceV1LatencyFixture;
 pub use v1_with_counting_voter::CommitServiceV1CountingVoterFixture;
-
-pub type LegacyBusIdFixture<F> = BusIdEncodingFixture<F, LegacyBusIdEncoding>;
-pub type TypedBusIdFixture<F> = BusIdEncodingFixture<F, TypedBusIdEncoding>;
 
 /// Build a `CommitServiceV1` over `bus` and `storage` with the engine's default
 /// decider, leaving only the voter factory and policy to vary.

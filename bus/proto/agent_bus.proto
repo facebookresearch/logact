@@ -280,8 +280,9 @@ message BusId {
 }
 
 message AppendRequest {
-  string agent_bus_id = 1; // Legacy id for the agent bus.
-  BusId bus_id = 3; // Supersedes agent_bus_id when set.
+  reserved 1;
+  reserved "agent_bus_id";
+  BusId bus_id = 3;
   Payload payload = 2; // payload to be stored
 }
 
@@ -290,8 +291,9 @@ message AppendResponse {
 }
 
 message PollRequest {
-  string agent_bus_id = 1; // Legacy id for the agent bus.
-  BusId bus_id = 5; // Supersedes agent_bus_id when set.
+  reserved 1;
+  reserved "agent_bus_id";
+  BusId bus_id = 5;
   int64 start_log_position = 2; // inclusive log position to start polling from
   int32 max_entries = 3; // max number of entries to return
   // Optional filter by payload types. If not set, returns all types.
@@ -314,8 +316,9 @@ message PollResponse {
 // Read entries from [start_log_position, end_log_position).
 // end_log_position must be <= current tail.
 message ReadNextRequest {
-  string agent_bus_id = 1; // Legacy id for the agent bus.
-  BusId bus_id = 6; // Supersedes agent_bus_id when set.
+  reserved 1;
+  reserved "agent_bus_id";
+  BusId bus_id = 6;
   int64 start_log_position = 2; // inclusive
   int64 end_log_position = 3; // exclusive, must be <= tail
   int32 max_entries = 4; // hint; server may cap lower
@@ -329,8 +332,9 @@ message ReadNextResponse {
 }
 
 message CheckTailRequest {
-  string agent_bus_id = 1; // Legacy id for the agent bus.
-  BusId bus_id = 2; // Supersedes agent_bus_id when set.
+  reserved 1;
+  reserved "agent_bus_id";
+  BusId bus_id = 2;
 }
 
 message CheckTailResponse {
@@ -342,8 +346,9 @@ message CheckTailResponse {
 // The timeout is a hint -- the server may cap it. The operation is
 // linearizable.
 message BlockingPollRequest {
-  string agent_bus_id = 1; // Legacy id for the agent bus.
-  BusId bus_id = 6; // Supersedes agent_bus_id when set.
+  reserved 1;
+  reserved "agent_bus_id";
+  BusId bus_id = 6;
   int64 start_log_position = 2;
   int32 max_entries = 3;
   optional PayloadTypeFilter filter = 4;

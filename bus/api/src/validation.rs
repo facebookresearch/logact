@@ -7,7 +7,11 @@
 
 //! Validation utilities for AgentBus
 
+use agent_bus_proto_rust::agent_bus::BusId;
 use anyhow::Result;
+
+use crate::AgentBusError;
+use crate::BusResult;
 
 /// Minimum length for a bus ID
 pub const MIN_BUS_ID_LEN: usize = 1;
@@ -21,8 +25,17 @@ pub fn is_valid_bus_id_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '/'
 }
 
-/// Validates a bus ID string
-pub fn validate_bus_id(bus_id: &str) -> Result<()> {
+/// Validates that a request contains a non-empty, well-formed typed bus ID.
+pub fn validate_bus_id(bus_id: Option<&BusId>) -> BusResult<&BusId> {
+    let bus_id = bus_id.ok_or_else(|| {
+        AgentBusError::InvalidArgument(anyhow::anyhow!("Bus ID must be provided"))
+    })?;
+    validate_bus_id_string(&bus_id.agent_bus_id).map_err(AgentBusError::InvalidArgument)?;
+    Ok(bus_id)
+}
+
+/// Validates a string representation of a bus ID.
+pub fn validate_bus_id_string(bus_id: &str) -> Result<()> {
     let len = bus_id.len();
     if len < MIN_BUS_ID_LEN || len > MAX_BUS_ID_LEN {
         return Err(anyhow::anyhow!(
@@ -40,4 +53,38 @@ pub fn validate_bus_id(bus_id: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn typed_bus_id_is_required() {
+        assert!(matches!(
+            validate_bus_id(None),
+            Err(AgentBusError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn typed_bus_id_must_not_be_empty() {
+        assert!(matches!(
+            validate_bus_id(Some(&BusId::default())),
+            Err(AgentBusError::InvalidArgument(_))
+        ));
+    }
+
+    #[test]
+    fn typed_bus_id_is_returned_after_validation() {
+        let bus_id = BusId {
+            agent_bus_id: "test-bus".to_owned(),
+        };
+        assert_eq!(
+            validate_bus_id(Some(&bus_id))
+                .expect("valid bus ID should pass validation")
+                .agent_bus_id,
+            "test-bus"
+        );
+    }
 }

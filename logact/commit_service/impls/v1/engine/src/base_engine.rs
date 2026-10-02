@@ -612,7 +612,6 @@ where
             .runtime
             .bus
             .append(AppendRequest {
-                agent_bus_id: bus_id.to_owned(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.to_owned(),
                 }),
@@ -662,7 +661,6 @@ where
         self.runtime
             .bus
             .append(AppendRequest {
-                agent_bus_id: bus_id.to_owned(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.to_owned(),
                 }),
@@ -705,7 +703,6 @@ where
                 .runtime
                 .bus
                 .poll(PollRequest {
-                    agent_bus_id: bus_id_owned.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id_owned.clone(),
                     }),
@@ -722,7 +719,6 @@ where
                 self.runtime
                     .bus
                     .append(AppendRequest {
-                        agent_bus_id: bus_id_owned.clone(),
                         bus_id: Some(BusId {
                             agent_bus_id: bus_id_owned.clone(),
                         }),
@@ -864,7 +860,6 @@ where
         for payload in produced {
             self.bus
                 .append(AppendRequest {
-                    agent_bus_id: bus_id.to_owned(),
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id.to_owned(),
                     }),

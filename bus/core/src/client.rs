@@ -24,7 +24,7 @@ use agent_bus_proto_rust::agent_bus::ReadNextResponse;
 use agent_bus_proto_rust::agent_bus::agent_bus_service_client::AgentBusServiceClient;
 use agentbus_api::AgentBus;
 use agentbus_api::BusResult;
-use agentbus_api::resolve_bus_id;
+use agentbus_api::validate_bus_id;
 use anyhow::Result;
 use tonic::transport::Channel;
 use tracing::warn;
@@ -77,7 +77,8 @@ impl AgentBusClient {
 
 impl AgentBus for AgentBusClient {
     async fn append(&self, request: AppendRequest) -> BusResult<AppendResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref());
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.as_str();
         // Clone the client to get a mutable reference
         let mut client = self.client.clone();
 
@@ -96,7 +97,8 @@ impl AgentBus for AgentBusClient {
     }
 
     async fn poll(&self, request: PollRequest) -> BusResult<PollResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref());
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.as_str();
         // Clone the client to get a mutable reference
         let mut client = self.client.clone();
 
@@ -117,7 +119,8 @@ impl AgentBus for AgentBusClient {
     }
 
     async fn read_next(&self, request: ReadNextRequest) -> BusResult<ReadNextResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref());
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.as_str();
         let mut client = self.client.clone();
 
         let response = client.read_next(request.clone()).await.map_err(|e| {
@@ -136,7 +139,8 @@ impl AgentBus for AgentBusClient {
     }
 
     async fn check_tail(&self, request: CheckTailRequest) -> BusResult<CheckTailResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref());
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.as_str();
         let mut client = self.client.clone();
 
         let response = client.check_tail(request.clone()).await.map_err(|e| {
@@ -152,7 +156,8 @@ impl AgentBus for AgentBusClient {
     }
 
     async fn blocking_poll(&self, request: BlockingPollRequest) -> BusResult<BlockingPollResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref());
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.as_str();
         let mut client = self.client.clone();
 
         let response = client.blocking_poll(request.clone()).await.map_err(|e| {

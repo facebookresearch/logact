@@ -73,7 +73,6 @@ impl<T: AgentBus, E: Environment> Mailbox<T, E> {
         let response = self
             .agent_bus
             .blocking_poll(BlockingPollRequest {
-                agent_bus_id: self.agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: self.agent_bus_id.clone(),
                 }),
@@ -216,7 +215,6 @@ pub async fn send_mail(
         })),
     };
     bus.append(AppendRequest {
-        agent_bus_id: bus_id.to_string(),
         bus_id: Some(BusId {
             agent_bus_id: bus_id.to_string(),
         }),

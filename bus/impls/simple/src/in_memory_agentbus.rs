@@ -14,7 +14,7 @@ use agentbus_api::AgentBusError;
 use agentbus_api::BusResult;
 use agentbus_api::environment::Clock;
 use agentbus_api::environment::Environment;
-use agentbus_api::resolve_bus_id;
+use agentbus_api::validate_bus_id;
 use tracing::debug;
 use tracing::error;
 
@@ -49,7 +49,8 @@ impl<E: Environment> Clone for InMemoryAgentBus<E> {
 
 impl<E: Environment> InMemoryAgentBus<E> {
     pub async fn append(&self, request: AppendRequest) -> BusResult<AppendResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
         let rt_timestamp_ms = self
             .environment
             .with_clock(|c| c.unsafe_wall_time().as_millis() as i64);
@@ -80,7 +81,8 @@ impl<E: Environment> InMemoryAgentBus<E> {
     }
 
     pub async fn poll(&self, request: PollRequest) -> BusResult<PollResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
         let result = self.state.borrow().poll(request.clone());
 
         match &result {
@@ -121,7 +123,8 @@ impl<E: Environment + 'static> AgentBus for InMemoryAgentBus<E> {
     }
 
     async fn read_next(&self, request: ReadNextRequest) -> BusResult<ReadNextResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref());
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.as_str();
         if request.max_entries <= 0 {
             return Err(AgentBusError::InvalidArgument(anyhow::anyhow!(
                 "max_entries must be > 0"
@@ -168,7 +171,8 @@ impl<E: Environment + 'static> AgentBus for InMemoryAgentBus<E> {
     }
 
     async fn check_tail(&self, request: CheckTailRequest) -> BusResult<CheckTailResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref());
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.as_str();
         let tail_position = self.state.borrow().get_tail(bus_id);
         Ok(CheckTailResponse { tail_position })
     }

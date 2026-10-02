@@ -269,7 +269,6 @@ async fn pre_tool_use<C: CommitSvc + ?Sized>(
 
 async fn record<B: AgentBus + ?Sized>(bus: &B, agent_id: String, payload: Payload) -> Result<()> {
     bus.append(AppendRequest {
-        agent_bus_id: agent_id.clone(),
         bus_id: Some(BusId {
             agent_bus_id: agent_id,
         }),

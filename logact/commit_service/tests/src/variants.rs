@@ -12,7 +12,7 @@
 //! one place — plus a channeled
 //! stack over the simple in-memory bus and the random-routing fixtures. The
 //! standalone `InMemCommitService` runs as a single fixture. The local gRPC and
-//! SQLite stack runs in both legacy-ID and typed-ID modes in the integration suite.
+//! SQLite stack runs in the integration suite.
 //! `define_driver!` calls `commit_service_fixtures!` with a per-fixture callback;
 //! `cs_bus_bridge` adapts each AgentBus fixture into the V1 commit-service fixture.
 
@@ -22,13 +22,8 @@
 macro_rules! commit_service_fixtures {
     ($cb:path) => {
         $cb!([
-            $crate::fixtures::LegacyBusIdFixture<$crate::fixtures::GrpcCommitServiceFixture>,
-            grpc_sqlite_legacy_bus_id,
-            integration
-        ]);
-        $cb!([
-            $crate::fixtures::TypedBusIdFixture<$crate::fixtures::GrpcCommitServiceFixture>,
-            grpc_sqlite_typed_bus_id,
+            $crate::fixtures::GrpcCommitServiceFixture,
+            grpc_sqlite,
             integration
         ]);
         // V1 over every AgentBus backend; `$cb` is forwarded through the registry to

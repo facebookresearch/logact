@@ -26,16 +26,10 @@ use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 
 pub struct GrpcCommitServiceFixture {
-    channel: Channel,
+    client: GrpcCommitSvcClient,
     environment: Rc<RealEnvironment>,
     server: JoinHandle<Result<()>>,
     _temp: Arc<TempDir>,
-}
-
-impl GrpcCommitServiceFixture {
-    pub(super) fn channel(&self) -> Channel {
-        self.channel.clone()
-    }
 }
 
 impl ConformanceFixture for GrpcCommitServiceFixture {
@@ -47,7 +41,7 @@ impl ConformanceFixture for GrpcCommitServiceFixture {
     }
 
     fn create_impl(&self) -> Self::Impl {
-        GrpcCommitSvcClient::new(self.channel())
+        self.client.clone()
     }
 }
 
@@ -79,8 +73,10 @@ impl IntegrationFixture for GrpcCommitServiceFixture {
                 return Err(error);
             }
         };
+        let client = GrpcCommitSvcClient::new(channel);
+
         Ok(Self {
-            channel,
+            client,
             environment: Rc::new(RealEnvironment::new()),
             server,
             _temp: temp,

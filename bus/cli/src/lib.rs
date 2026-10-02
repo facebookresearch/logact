@@ -189,7 +189,6 @@ async fn append_intention(
         })),
     };
     let request = AppendRequest {
-        agent_bus_id: agent_bus_id.to_owned(),
         bus_id: Some(BusId {
             agent_bus_id: agent_bus_id.to_owned(),
         }),
@@ -237,7 +236,6 @@ async fn append_decider_policy(
         payload: Some(payload::Payload::DeciderPolicy(decider_policy)),
     };
     let request = AppendRequest {
-        agent_bus_id: agent_bus_id.to_owned(),
         bus_id: Some(BusId {
             agent_bus_id: agent_bus_id.to_owned(),
         }),
@@ -279,7 +277,6 @@ async fn append_voter_policy(
         payload: Some(payload::Payload::VoterPolicy(voter_policy)),
     };
     let request = AppendRequest {
-        agent_bus_id: agent_bus_id.to_owned(),
         bus_id: Some(BusId {
             agent_bus_id: agent_bus_id.to_owned(),
         }),
@@ -617,7 +614,6 @@ async fn poll_entries(
         Some(end) => end,
         None => {
             bus.check_tail(CheckTailRequest {
-                agent_bus_id: agent_bus_id.to_owned(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent_bus_id.to_owned(),
                 }),
@@ -725,7 +721,6 @@ impl rustyline::Helper for AgentBusCompleter {}
 async fn find_end_position(bus: &impl AgentBus, agent_bus_id: &str) -> Result<i64> {
     let tail = bus
         .check_tail(CheckTailRequest {
-            agent_bus_id: agent_bus_id.to_owned(),
             bus_id: Some(BusId {
                 agent_bus_id: agent_bus_id.to_owned(),
             }),
@@ -774,7 +769,6 @@ async fn tail_follow(bus: &impl AgentBus, agent_bus_id: &str, tail_n: i16) -> Re
                 break;
             }
             result = bus.blocking_poll(BlockingPollRequest {
-                agent_bus_id: agent_bus_id.to_owned(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent_bus_id.to_owned(),
                 }),

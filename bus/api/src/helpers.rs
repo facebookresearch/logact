@@ -24,11 +24,6 @@ use serde_json;
 use crate::environment::Clock;
 use crate::environment::Environment;
 
-/// Returns the typed bus ID when present, otherwise the legacy string ID.
-pub fn resolve_bus_id<'a>(agent_bus_id: &'a str, bus_id: Option<&'a BusId>) -> &'a str {
-    bus_id.map_or(agent_bus_id, |bus_id| bus_id.agent_bus_id.as_str())
-}
-
 /// Returns the SelectivePollType for a payload, or None if the payload is empty.
 pub fn get_payload_type(payload: &Payload) -> Option<i32> {
     match &payload.payload {
@@ -375,7 +370,6 @@ pub async fn read_range<B: crate::AgentBus>(
     while cursor < end_log_position && remaining > 0 {
         let resp = bus
             .read_next(ReadNextRequest {
-                agent_bus_id: agent_bus_id.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent_bus_id.to_string(),
                 }),
@@ -429,7 +423,6 @@ pub async fn blocking_poll_default<B: crate::AgentBus, E: Environment>(
     loop {
         let tail = bus
             .check_tail(CheckTailRequest {
-                agent_bus_id: request.agent_bus_id.clone(),
                 bus_id: request.bus_id.clone(),
             })
             .await?
@@ -439,7 +432,6 @@ pub async fn blocking_poll_default<B: crate::AgentBus, E: Environment>(
             // New data
             let resp = bus
                 .read_next(ReadNextRequest {
-                    agent_bus_id: request.agent_bus_id.clone(),
                     bus_id: request.bus_id.clone(),
                     start_log_position: request.start_log_position,
                     end_log_position: tail,

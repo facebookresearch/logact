@@ -81,7 +81,6 @@ mod defs {
             };
             let appended = bus
                 .append(AppendRequest {
-                    agent_bus_id: BUS_ID.to_string(),
                     bus_id: Some(BusId {
                         agent_bus_id: BUS_ID.to_string(),
                     }),

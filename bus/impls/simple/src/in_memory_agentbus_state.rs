@@ -11,7 +11,6 @@ use agent_bus_proto_rust::agent_bus::*;
 use agentbus_api::AgentBusError;
 use agentbus_api::BusResult;
 use agentbus_api::payload_matches_filter;
-use agentbus_api::resolve_bus_id;
 use agentbus_api::validate_bus_id;
 use anyhow::Result;
 
@@ -37,9 +36,8 @@ impl InMemoryAgentBusState {
         request: AppendRequest,
         rt_timestamp_ms: i64,
     ) -> BusResult<AppendResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
-        // Validate bus ID
-        validate_bus_id(&bus_id).map_err(AgentBusError::InvalidArgument)?;
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
 
         let payload = request.payload.ok_or_else(|| {
             AgentBusError::InvalidArgument(anyhow::anyhow!("Missing or unknown payload in request"))
@@ -64,8 +62,8 @@ impl InMemoryAgentBusState {
     }
 
     pub fn poll(&self, request: PollRequest) -> BusResult<PollResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
-        validate_bus_id(&bus_id).map_err(AgentBusError::InvalidArgument)?;
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
         let max_entries = (request.max_entries as usize).min(MAX_POLL_ENTRIES);
 
         let payload_types = request.filter.as_ref().map(|f| f.payload_types.clone());

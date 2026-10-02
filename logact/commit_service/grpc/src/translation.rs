@@ -23,12 +23,11 @@ pub mod commit_intention {
     pub fn proto_from_native_request(command: CommitIntentionCommand) -> CommitIntentionRequest {
         let CommitIntentionCommand { bus_id, intention } = command;
         CommitIntentionRequest {
-            bus_id: bus_id.agent_bus_id.clone(),
+            bus_id: Some(bus_id),
             intention: Some(Intention {
                 intention: Some(intention),
                 ..Default::default()
             }),
-            typed_bus_id: Some(bus_id),
         }
     }
 
@@ -38,11 +37,7 @@ pub mod commit_intention {
     pub fn native_from_proto_request(
         request: CommitIntentionRequest,
     ) -> Result<CommitIntentionCommand, Status> {
-        let CommitIntentionRequest {
-            bus_id,
-            typed_bus_id,
-            intention,
-        } = request;
+        let CommitIntentionRequest { bus_id, intention } = request;
         let Intention {
             intention,
             policy_version_constraint,
@@ -54,9 +49,7 @@ pub mod commit_intention {
         }
 
         Ok(CommitIntentionCommand {
-            bus_id: typed_bus_id.unwrap_or(BusId {
-                agent_bus_id: bus_id,
-            }),
+            bus_id: bus_id.ok_or_else(|| Status::invalid_argument("bus_id is required"))?,
             intention: intention
                 .ok_or_else(|| Status::invalid_argument("intention variant is required"))?,
         })
@@ -111,10 +104,9 @@ pub mod commit_intention {
         }
 
         #[test]
-        fn request_prefers_typed_bus_id() {
+        fn request_preserves_bus_id() {
             let command = native_from_proto_request(CommitIntentionRequest {
-                bus_id: "ignored-legacy".to_string(),
-                typed_bus_id: Some(BusId {
+                bus_id: Some(BusId {
                     agent_bus_id: "typed".to_string(),
                 }),
                 intention: Some(Intention {
@@ -130,30 +122,12 @@ pub mod commit_intention {
         }
 
         #[test]
-        fn request_accepts_legacy_bus_id() {
-            let command = native_from_proto_request(CommitIntentionRequest {
-                bus_id: "legacy".to_string(),
-                typed_bus_id: None,
-                intention: Some(Intention {
-                    intention: Some(intention::Intention::StringIntention(
-                        "run tool".to_string(),
-                    )),
-                    ..Default::default()
-                }),
-            })
-            .expect("request should be valid");
-
-            assert_eq!(command.bus_id.agent_bus_id, "legacy");
-        }
-
-        #[test]
         fn request_requires_intention() {
             let error = native_from_proto_request(CommitIntentionRequest {
-                bus_id: "test-bus".to_string(),
-                intention: None,
-                typed_bus_id: Some(BusId {
+                bus_id: Some(BusId {
                     agent_bus_id: "test-bus".to_string(),
                 }),
+                intention: None,
             })
             .expect_err("missing intention should be rejected");
 
@@ -163,11 +137,10 @@ pub mod commit_intention {
         #[test]
         fn request_requires_intention_variant() {
             let error = native_from_proto_request(CommitIntentionRequest {
-                bus_id: "test-bus".to_string(),
-                intention: Some(Intention::default()),
-                typed_bus_id: Some(BusId {
+                bus_id: Some(BusId {
                     agent_bus_id: "test-bus".to_string(),
                 }),
+                intention: Some(Intention::default()),
             })
             .expect_err("missing intention variant should be rejected");
 
@@ -177,7 +150,9 @@ pub mod commit_intention {
         #[test]
         fn request_rejects_policy_version_constraint() {
             let error = native_from_proto_request(CommitIntentionRequest {
-                bus_id: "test-bus".to_string(),
+                bus_id: Some(BusId {
+                    agent_bus_id: "test-bus".to_string(),
+                }),
                 intention: Some(Intention {
                     intention: Some(intention::Intention::StringIntention(
                         "run tool".to_string(),
@@ -185,9 +160,6 @@ pub mod commit_intention {
                     policy_version_constraint: Some(
                         intention::PolicyVersionConstraint::RequiredPolicyVersion(1),
                     ),
-                }),
-                typed_bus_id: Some(BusId {
-                    agent_bus_id: "test-bus".to_string(),
                 }),
             })
             .expect_err("policy version constraint should be rejected");

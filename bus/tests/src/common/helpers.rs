@@ -38,7 +38,6 @@ pub async fn append_string_intention<T: AgentBus>(
         })),
     };
     let request = AppendRequest {
-        agent_bus_id: agent_bus_id.clone(),
         bus_id: Some(BusId { agent_bus_id }),
         payload: Some(payload),
         ..Default::default()
@@ -59,7 +58,6 @@ pub async fn append_decider_policy<T: AgentBus>(
         payload: Some(payload::Payload::DeciderPolicy(decider_policy)),
     };
     let request = AppendRequest {
-        agent_bus_id: agent_bus_id.clone(),
         bus_id: Some(BusId { agent_bus_id }),
         payload: Some(payload),
         ..Default::default()
@@ -87,7 +85,6 @@ pub async fn append_vote<T: AgentBus>(
         })),
     };
     let request = AppendRequest {
-        agent_bus_id: agent_bus_id.clone(),
         bus_id: Some(BusId { agent_bus_id }),
         payload: Some(payload),
         ..Default::default()
@@ -113,7 +110,6 @@ pub async fn append_commit<T: AgentBus>(
         })),
     };
     let request = AppendRequest {
-        agent_bus_id: agent_bus_id.clone(),
         bus_id: Some(BusId { agent_bus_id }),
         payload: Some(payload),
         ..Default::default()
@@ -132,7 +128,6 @@ pub async fn poll<T: AgentBus>(
     max_entries: i16,
 ) -> PollResponse {
     let poll_request = PollRequest {
-        agent_bus_id: agent_bus_id.clone(),
         bus_id: Some(BusId { agent_bus_id }),
         start_log_position,
         max_entries: max_entries as i32,
@@ -153,7 +148,6 @@ pub async fn poll_selective<T: AgentBus>(
     payload_types: Vec<i32>,
 ) -> PollResponse {
     let poll_request = PollRequest {
-        agent_bus_id: agent_bus_id.clone(),
         bus_id: Some(BusId { agent_bus_id }),
         start_log_position,
         max_entries: max_entries as i32,
@@ -180,7 +174,6 @@ pub async fn read_linearizable_snapshot<T: AgentBus, E: Environment>(
 ) -> (Vec<BusEntry>, i64) {
     let tail = bus
         .check_tail(CheckTailRequest {
-            agent_bus_id: agent_bus_id.clone(),
             bus_id: Some(BusId {
                 agent_bus_id: agent_bus_id.clone(),
             }),
@@ -199,7 +192,6 @@ pub async fn read_linearizable_snapshot<T: AgentBus, E: Environment>(
         if use_blocking_poll {
             let resp = bus
                 .blocking_poll(BlockingPollRequest {
-                    agent_bus_id: agent_bus_id.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: agent_bus_id.clone(),
                     }),
@@ -216,7 +208,6 @@ pub async fn read_linearizable_snapshot<T: AgentBus, E: Environment>(
         } else {
             let resp = bus
                 .read_next(ReadNextRequest {
-                    agent_bus_id: agent_bus_id.clone(),
                     bus_id: Some(BusId {
                         agent_bus_id: agent_bus_id.clone(),
                     }),

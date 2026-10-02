@@ -23,7 +23,6 @@ use agentbus_api::WriteOnceSpace;
 use agentbus_api::environment::Clock;
 use agentbus_api::environment::Environment;
 use agentbus_api::payload_matches_filter;
-use agentbus_api::resolve_bus_id;
 use agentbus_api::validate_bus_id;
 use bytes::Bytes;
 use prost::Message as ProstMessage;
@@ -109,8 +108,8 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
     for WriteOnceAgentBus<W, E>
 {
     async fn append(&self, request: AppendRequest) -> BusResult<AppendResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
-        validate_bus_id(&bus_id).map_err(AgentBusError::InvalidArgument)?;
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
 
         let payload = request.payload.ok_or_else(|| {
             AgentBusError::InvalidArgument(anyhow::anyhow!("Missing or unknown payload in request"))
@@ -190,8 +189,8 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
     }
 
     async fn poll(&self, request: PollRequest) -> BusResult<PollResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref()).to_owned();
-        validate_bus_id(&bus_id).map_err(AgentBusError::InvalidArgument)?;
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.clone();
         let max_entries = (request.max_entries as usize).min(MAX_POLL_ENTRIES);
         let start_position = request.start_log_position.max(0) as u64;
 
@@ -273,7 +272,8 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
     }
 
     async fn read_next(&self, request: ReadNextRequest) -> BusResult<ReadNextResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref());
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.as_str();
         if request.max_entries <= 0 {
             return Err(AgentBusError::InvalidArgument(anyhow::anyhow!(
                 "max_entries must be > 0"
@@ -317,7 +317,8 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
     }
 
     async fn check_tail(&self, request: CheckTailRequest) -> BusResult<CheckTailResponse> {
-        let bus_id = resolve_bus_id(&request.agent_bus_id, request.bus_id.as_ref());
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        let bus_id = bus_id.agent_bus_id.as_str();
         let space = { self.state.borrow().space.clone() };
         let tail_position = space
             .tail(&prefixed_space_id(bus_id), TAIL_WINDOW_SIZE)

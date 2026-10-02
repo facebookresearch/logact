@@ -52,7 +52,6 @@ fn test_metrics_recorded_on_append_and_poll() {
             })),
         };
         bus.append(AppendRequest {
-            agent_bus_id: "test-bus".to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: "test-bus".to_string(),
             }),
@@ -63,7 +62,6 @@ fn test_metrics_recorded_on_append_and_poll() {
         .expect("append should succeed");
 
         bus.poll(PollRequest {
-            agent_bus_id: "test-bus".to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: "test-bus".to_string(),
             }),
@@ -75,7 +73,6 @@ fn test_metrics_recorded_on_append_and_poll() {
         .expect("poll should succeed");
 
         bus.check_tail(CheckTailRequest {
-            agent_bus_id: "test-bus".to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: "test-bus".to_string(),
             }),
@@ -84,7 +81,6 @@ fn test_metrics_recorded_on_append_and_poll() {
         .expect("check_tail should succeed");
 
         bus.read_next(ReadNextRequest {
-            agent_bus_id: "test-bus".to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: "test-bus".to_string(),
             }),
@@ -97,7 +93,6 @@ fn test_metrics_recorded_on_append_and_poll() {
         .expect("read_next should succeed");
 
         bus.blocking_poll(BlockingPollRequest {
-            agent_bus_id: "test-bus".to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: "test-bus".to_string(),
             }),
@@ -211,7 +206,6 @@ fn test_filter_payload_types_are_not_logged() {
 
     let handle = env.spawn(async move {
         bus.poll(PollRequest {
-            agent_bus_id: "test-bus".to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: "test-bus".to_string(),
             }),

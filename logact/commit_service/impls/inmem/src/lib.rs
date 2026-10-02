@@ -122,7 +122,6 @@ where
         let response = self
             .bus
             .append(AppendRequest {
-                agent_bus_id: request.bus_id.agent_bus_id.clone(),
                 bus_id: Some(request.bus_id.clone()),
                 payload: Some(intention_to_payload(request.intention)),
             })

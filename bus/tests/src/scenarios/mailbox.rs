@@ -95,7 +95,6 @@ mod defs {
         // Send a message with a message_id
         sender_bus
             .append(AppendRequest {
-                agent_bus_id: bus_id.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.to_string(),
                 }),
@@ -114,7 +113,6 @@ mod defs {
         // Send a reply
         sender_bus
             .append(AppendRequest {
-                agent_bus_id: bus_id.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: bus_id.to_string(),
                 }),

@@ -57,7 +57,6 @@ mod defs {
             ),
         };
             let request = AppendRequest {
-                agent_bus_id: self.agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: self.agent_bus_id.clone(),
                 }),
@@ -78,7 +77,6 @@ mod defs {
 
         async fn get_concatenated_commands(&self) -> String {
             let poll_request = PollRequest {
-                agent_bus_id: self.agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: self.agent_bus_id.clone(),
                 }),
@@ -170,7 +168,6 @@ mod defs {
                         ),
                     };
                     let policy_request = AppendRequest {
-                        agent_bus_id: agent_bus_id_clone.clone(),
                         bus_id: Some(BusId {
                             agent_bus_id: agent_bus_id_clone.clone(),
                         }),

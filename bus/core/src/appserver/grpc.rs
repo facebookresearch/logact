@@ -108,7 +108,6 @@ pub fn spawn_grpc_worker<T: AgentBus + Clone + 'static, E: Environment + 'static
                 }
                 Op::Append { payload, reply } => {
                     let req = agent_bus::AppendRequest {
-                        agent_bus_id: app.bus_id().to_string(),
                         bus_id: Some(agent_bus::BusId {
                             agent_bus_id: app.bus_id().to_string(),
                         }),
@@ -129,7 +128,6 @@ pub fn spawn_grpc_worker<T: AgentBus + Clone + 'static, E: Environment + 'static
                     reply,
                 } => {
                     let req = agent_bus::PollRequest {
-                        agent_bus_id: app.bus_id().to_string(),
                         bus_id: Some(agent_bus::BusId {
                             agent_bus_id: app.bus_id().to_string(),
                         }),

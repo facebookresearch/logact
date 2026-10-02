@@ -42,7 +42,6 @@ pub fn run_fault_test<Impl>(
         })),
     };
     let request = AppendRequest {
-        agent_bus_id: "bus-1".to_string(),
         bus_id: Some(BusId {
             agent_bus_id: "bus-1".to_string(),
         }),
@@ -50,7 +49,6 @@ pub fn run_fault_test<Impl>(
     };
 
     let poll_request = PollRequest {
-        agent_bus_id: "bus-1".to_string(),
         bus_id: Some(BusId {
             agent_bus_id: "bus-1".to_string(),
         }),
@@ -113,7 +111,6 @@ pub fn run_fault_test<Impl>(
 
 fn make_request(bus_id: String, value: &str) -> AppendRequest {
     AppendRequest {
-        agent_bus_id: bus_id.clone(),
         bus_id: Some(BusId {
             agent_bus_id: bus_id,
         }),
@@ -184,7 +181,6 @@ pub fn run_permutations_with_faults_test<Impl>(
         // Poll this bus to get the outcome
         let agentbus_clone = agentbus.clone();
         let poll_request = PollRequest {
-            agent_bus_id: bus_id_str.clone(),
             bus_id: Some(BusId {
                 agent_bus_id: bus_id_str,
             }),

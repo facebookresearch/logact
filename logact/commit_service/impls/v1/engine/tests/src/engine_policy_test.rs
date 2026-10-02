@@ -615,7 +615,6 @@ async fn append_intention<T: agentbus_api::AgentBus>(
 ) -> anyhow::Result<i64> {
     Ok(bus
         .append(AppendRequest {
-            agent_bus_id: agent_id.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: agent_id.to_string(),
             }),
@@ -682,7 +681,6 @@ async fn append_add_voter<T: agentbus_api::AgentBus>(
 ) -> anyhow::Result<String> {
     let voter_id = bus
         .poll(PollRequest {
-            agent_bus_id: agent_id.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: agent_id.to_string(),
             }),
@@ -755,7 +753,6 @@ async fn next_policy_batch_versions<T: agentbus_api::AgentBus>(
 ) -> anyhow::Result<(Option<i64>, i64)> {
     let entries = bus
         .poll(PollRequest {
-            agent_bus_id: agent_id.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: agent_id.to_string(),
             }),
@@ -785,7 +782,6 @@ async fn append_policy_batch<T: agentbus_api::AgentBus>(
     batch: PolicyBatch,
 ) -> anyhow::Result<()> {
     bus.append(AppendRequest {
-        agent_bus_id: agent_id.to_string(),
         bus_id: Some(BusId {
             agent_bus_id: agent_id.to_string(),
         }),
@@ -825,7 +821,6 @@ async fn poll_all_types<T: agentbus_api::AgentBus>(
 ) -> anyhow::Result<Vec<&'static str>> {
     let resp = bus
         .poll(PollRequest {
-            agent_bus_id: agent_id.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: agent_id.to_string(),
             }),
@@ -844,7 +839,6 @@ async fn poll_vote_bools<T: agentbus_api::AgentBus>(
 ) -> anyhow::Result<Vec<bool>> {
     let resp = bus
         .poll(PollRequest {
-            agent_bus_id: agent_id.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: agent_id.to_string(),
             }),
@@ -867,7 +861,6 @@ async fn poll_vote_voter_ids<T: agentbus_api::AgentBus>(
 ) -> anyhow::Result<Vec<String>> {
     let resp = bus
         .poll(PollRequest {
-            agent_bus_id: agent_id.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: agent_id.to_string(),
             }),
@@ -1107,7 +1100,6 @@ fn policy_provider_entries_are_resolved_before_first_intention() {
         );
         let entries = bus
             .poll(PollRequest {
-                agent_bus_id: agent.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent.to_string(),
                 }),
@@ -1306,7 +1298,6 @@ fn intention_policy_constraints_gate_dispatch_against_applied_version() {
 
         let entries = bus
             .poll(PollRequest {
-                agent_bus_id: agent.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent.to_string(),
                 }),
@@ -1673,7 +1664,6 @@ fn intention_policy_constraints_gate_replay_before_dispatch() {
 
         let entries = bus
             .poll(PollRequest {
-                agent_bus_id: agent.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent.to_string(),
                 }),
@@ -1753,7 +1743,6 @@ fn invalid_policy_batch_is_atomic_and_wedges_playback() {
         );
         let malformed_entry = bus
             .poll(PollRequest {
-                agent_bus_id: agent.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent.to_string(),
                 }),
@@ -1846,7 +1835,6 @@ fn malformed_batch_add_voter_has_add_voter_kind() {
         );
         let malformed_entry = bus
             .poll(PollRequest {
-                agent_bus_id: agent.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent.to_string(),
                 }),
@@ -1918,7 +1906,6 @@ fn malformed_batch_remove_voter_has_remove_voter_kind() {
         );
         let malformed_entry = bus
             .poll(PollRequest {
-                agent_bus_id: agent.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: agent.to_string(),
                 }),
@@ -2592,7 +2579,6 @@ fn standalone_policy_controls_are_rejected() {
         let add_agent = "add-agent";
 
         bus.append(AppendRequest {
-            agent_bus_id: add_agent.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: add_agent.to_string(),
             }),
@@ -2610,7 +2596,6 @@ fn standalone_policy_controls_are_rejected() {
 
         let malformed_entry = bus
             .poll(PollRequest {
-                agent_bus_id: add_agent.to_string(),
                 bus_id: Some(BusId {
                     agent_bus_id: add_agent.to_string(),
                 }),
@@ -2662,7 +2647,6 @@ fn standalone_policy_controls_are_rejected() {
 
         let remove_agent = "remove-agent";
         bus.append(AppendRequest {
-            agent_bus_id: remove_agent.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: remove_agent.to_string(),
             }),
@@ -2702,7 +2686,6 @@ fn standalone_policy_controls_are_rejected() {
 
         let decider_agent = "decider-agent";
         bus.append(AppendRequest {
-            agent_bus_id: decider_agent.to_string(),
             bus_id: Some(BusId {
                 agent_bus_id: decider_agent.to_string(),
             }),

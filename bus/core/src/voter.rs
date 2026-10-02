@@ -74,7 +74,6 @@ impl<T: AgentBus, E: Environment> VoterLoop<T, E> {
         let response = self
             .agent_bus
             .blocking_poll(BlockingPollRequest {
-                agent_bus_id: self.agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: self.agent_bus_id.clone(),
                 }),
@@ -207,7 +206,6 @@ impl<T: AgentBus, E: Environment> VoterLoop<T, E> {
 
         self.agent_bus
             .append(AppendRequest {
-                agent_bus_id: self.agent_bus_id.clone(),
                 bus_id: Some(BusId {
                     agent_bus_id: self.agent_bus_id.clone(),
                 }),

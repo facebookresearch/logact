@@ -23,19 +23,12 @@
 #[macro_export]
 macro_rules! agentbus_fixtures {
     ($cb:path $(, $ctx:tt)?) => {
-        $cb!([$crate::fixtures::LegacyBusIdFixture<$crate::fixtures::simtest::BusSimpleMemory>, bus_simple_memory_legacy_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::TypedBusIdFixture<$crate::fixtures::simtest::BusSimpleMemory>, bus_simple_memory_typed_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::LegacyBusIdFixture<$crate::fixtures::simtest::BusChanneled>, bus_channeled_agentbus_legacy_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::TypedBusIdFixture<$crate::fixtures::simtest::BusChanneled>, bus_channeled_agentbus_typed_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::LegacyBusIdFixture<$crate::fixtures::simtest::BusChained>, bus_chained_agentbus_legacy_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::TypedBusIdFixture<$crate::fixtures::simtest::BusChained>, bus_chained_agentbus_typed_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::LegacyBusIdFixture<$crate::fixtures::simtest::SpaceInMemory>, bus_write_once_in_memory_legacy_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::TypedBusIdFixture<$crate::fixtures::simtest::SpaceInMemory>, bus_write_once_in_memory_typed_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::LegacyBusIdFixture<$crate::fixtures::simtest::SpaceChanneled>, bus_write_once_channeled_legacy_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::TypedBusIdFixture<$crate::fixtures::simtest::SpaceChanneled>, bus_write_once_channeled_typed_bus_id, sim] $(, $ctx)?);
-        $cb!([$crate::fixtures::LegacyBusIdFixture<$crate::fixtures::integration::SqliteAgentBusFixture>, bus_write_once_sqlite_legacy_bus_id, integration] $(, $ctx)?);
-        $cb!([$crate::fixtures::TypedBusIdFixture<$crate::fixtures::integration::SqliteAgentBusFixture>, bus_write_once_sqlite_typed_bus_id, integration] $(, $ctx)?);
-        $cb!([$crate::fixtures::LegacyBusIdFixture<$crate::fixtures::integration::IntegrationTestFixture>, integration_legacy_bus_id, integration] $(, $ctx)?);
-        $cb!([$crate::fixtures::TypedBusIdFixture<$crate::fixtures::integration::IntegrationTestFixture>, integration_typed_bus_id, integration] $(, $ctx)?);
+        $cb!([$crate::fixtures::simtest::BusSimpleMemory, bus_simple_memory, sim] $(, $ctx)?);
+        $cb!([$crate::fixtures::simtest::BusChanneled, bus_channeled_agentbus, sim] $(, $ctx)?);
+        $cb!([$crate::fixtures::simtest::BusChained, bus_chained_agentbus, sim] $(, $ctx)?);
+        $cb!([$crate::fixtures::simtest::SpaceInMemory, bus_write_once_in_memory, sim] $(, $ctx)?);
+        $cb!([$crate::fixtures::simtest::SpaceChanneled, bus_write_once_channeled, sim] $(, $ctx)?);
+        $cb!([$crate::fixtures::integration::SqliteAgentBusFixture, bus_write_once_sqlite, integration] $(, $ctx)?);
+        $cb!([$crate::fixtures::integration::IntegrationTestFixture, integration, integration] $(, $ctx)?);
     };
 }
