@@ -11,7 +11,7 @@ license = "MIT"
 [dependencies]
 agentbus_api = { version = "0.1.0", path = "../../api" }
 anyhow = "1.0.104"
-aws-sdk-dynamodb = "1.128.0"
+aws-sdk-dynamodb = "1.129.0"
 bytes = { version = "1.12.1", features = ["serde"] }
 
 [dev-dependencies]
