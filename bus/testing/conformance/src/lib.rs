@@ -76,12 +76,13 @@ pub trait IntegrationFixture: Sized {
 /// An optional trailing `$seed` (a `u64` literal) pins the simulator to a fixed
 /// seed instead of a fresh random one — for a scenario that needs a specific
 /// ordering to reproduce (e.g. a fixture engineered to trip a checker). Omit it
-/// and every run picks a new random seed.
+/// and every run picks a new random seed; set `AGENTBUS_SIMULATOR_SEED` to replay
+/// the seed a failed run printed.
 #[macro_export]
 macro_rules! sim_test {
     ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty) => {
         $crate::sim_test!($test_fn, $test_name, $suffix, $fix, {
-            rand::random::<u64>()
+            agentbus_simulator::generate_seed()
         });
     };
     ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $seed:tt) => {
@@ -127,14 +128,15 @@ macro_rules! integration_test {
 ///
 /// Unlike [`sim_test!`], `$test_fn` returns a comparable value (e.g. the committed
 /// log) rather than `Result<()>` — the runs' return values are what's compared. The
-/// optional trailing `$seed` pins a fixed seed (default: a fresh random one, held
-/// fixed across the runs). Runs are driven sequentially, each self-contained (build
-/// fixture, spawn, `env.run()`, `block_on`), so there is no nesting of simulators.
+/// optional trailing `$seed` pins a fixed seed (default: picked as in [`sim_test!`],
+/// then held fixed across the runs). Runs are driven sequentially, each
+/// self-contained (build fixture, spawn, `env.run()`, `block_on`), so there is no
+/// nesting of simulators.
 #[macro_export]
 macro_rules! sim_determinism_test {
     ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $cardinality:tt) => {
         $crate::sim_determinism_test!($test_fn, $test_name, $suffix, $fix, $cardinality, {
-            rand::random::<u64>()
+            agentbus_simulator::generate_seed()
         });
     };
     ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $cardinality:tt, $seed:tt) => {

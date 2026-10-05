@@ -18,6 +18,8 @@ use thiserror::Error;
 pub enum TailError {
     #[error("backend unavailable: {0}")]
     BackendUnavailable(String),
+    #[error("window_size must be at least 1")]
+    ZeroWindowSize,
 }
 
 /// Result type alias for tail operations.
@@ -30,7 +32,8 @@ pub type TailResult<T> = std::result::Result<T, TailError>;
 /// distance between the contiguous tail and the non-contiguous tail (the first
 /// unwritten address after which all addresses are unwritten). This gives the
 /// implementation license to only scan the last `window_size` addresses rather
-/// than the entire address space.
+/// than the entire address space. `window_size` must be at least 1;
+/// implementations return [`TailError::ZeroWindowSize`] otherwise.
 ///
 /// This is not strongly consistent / linearizable; it only has to correspond
 /// to an unordered, non-atomic scan of the space that occurs within the

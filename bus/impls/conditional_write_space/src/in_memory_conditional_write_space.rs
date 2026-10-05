@@ -11,6 +11,7 @@ use std::rc::Rc;
 
 use agentbus_api::ConditionalWriteResult;
 use agentbus_api::ConditionalWriteSpace;
+use agentbus_api::TailError;
 use agentbus_api::TailResult;
 use agentbus_api::TailableSpace;
 use agentbus_api::Version;
@@ -52,6 +53,10 @@ fn version_to_u64(v: &Version) -> u64 {
 
 impl TailableSpace for InMemoryConditionalWriteSpace {
     async fn tail(&self, space_id: &str, window_size: u64) -> TailResult<u64> {
+        if window_size == 0 {
+            return Err(TailError::ZeroWindowSize);
+        }
+
         let state = self.state.borrow();
         let Some(space) = state.get(space_id) else {
             return Ok(0);

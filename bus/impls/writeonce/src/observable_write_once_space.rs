@@ -86,6 +86,7 @@ fn base_row(row: LogRow, method: &str, space_id: &str, elapsed: Duration) -> Log
 fn tail_error_code(err: &TailError) -> &'static str {
     match err {
         TailError::BackendUnavailable(_) => "BackendUnavailable",
+        TailError::ZeroWindowSize => "ZeroWindowSize",
     }
 }
 

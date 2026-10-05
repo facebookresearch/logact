@@ -9,6 +9,7 @@
 mod defs {
     //! Test scenarios for TailableSpace implementations
 
+    use agentbus_api::TailError;
     use agentbus_api::TailableSpace;
     use agentbus_api::environment::Environment;
     use anyhow::Result;
@@ -74,10 +75,34 @@ mod defs {
             .rposition(|&w| w)
             .map(|i| i as u64 + 1)
             .unwrap_or(0);
-        let window_size = non_contiguous_tail.saturating_sub(contiguous_tail);
+        // `tail` rejects a window of 0, and a window larger than needed is still valid.
+        let window_size = non_contiguous_tail.saturating_sub(contiguous_tail).max(1);
 
         let tail = space.tail(DEFAULT_SPACE, window_size).await?;
         assert_eq!(tail, contiguous_tail);
+
+        Ok(())
+    }
+
+    /// Test that tail rejects a window_size of 0, whether or not the space is empty.
+    #[scenario]
+    pub async fn run_test_tail_rejects_zero_window<F: TailableSpaceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let space = fixture.create_impl();
+
+        assert_eq!(
+            space.tail(DEFAULT_SPACE, 0).await,
+            Err(TailError::ZeroWindowSize),
+            "tail of an empty space with window 0 should be rejected"
+        );
+
+        fixture.write_at(DEFAULT_SPACE, 0).await?;
+        assert_eq!(
+            space.tail(DEFAULT_SPACE, 0).await,
+            Err(TailError::ZeroWindowSize),
+            "tail of a non-empty space with window 0 should be rejected"
+        );
 
         Ok(())
     }

@@ -74,6 +74,10 @@ fn try_version_to_u64(v: &Version) -> Option<u64> {
 
 impl TailableSpace for DynamoConditionalWriteSpace {
     async fn tail(&self, space_id: &str, window_size: u64) -> TailResult<u64> {
+        if window_size == 0 {
+            return Err(TailError::ZeroWindowSize);
+        }
+
         let result = self
             .client
             .query()

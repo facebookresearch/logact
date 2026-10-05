@@ -91,6 +91,10 @@ fn write_error(error: AnyhowError) -> ConditionalWriteError {
 
 impl TailableSpace for SqliteConditionalWriteSpace {
     async fn tail(&self, space_id: &str, window_size: u64) -> TailResult<u64> {
+        if window_size == 0 {
+            return Err(TailError::ZeroWindowSize);
+        }
+
         let addrs: Vec<u64> = self
             .db
             .query_rows(

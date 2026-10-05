@@ -8,6 +8,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use agentbus_api::TailError;
 use agentbus_api::TailResult;
 use agentbus_api::TailableSpace;
 use agentbus_api::WriteOnceResult;
@@ -41,6 +42,10 @@ impl InMemoryWriteOnceSpace {
 
 impl TailableSpace for InMemoryWriteOnceSpace {
     async fn tail(&self, space_id: &str, window_size: u64) -> TailResult<u64> {
+        if window_size == 0 {
+            return Err(TailError::ZeroWindowSize);
+        }
+
         Ok(self.state.borrow().tail(space_id, window_size))
     }
 }

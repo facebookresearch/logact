@@ -16,8 +16,9 @@ use agentbus_core::client::AgentBusClient;
 use anyhow::Result;
 use conformance::ConformanceFixture;
 use fbinit::FacebookInit;
-use tokio::time::Duration;
+use tokio::net::TcpListener;
 use tonic::transport::Server;
+use tonic::transport::server::TcpIncoming;
 
 use super::IntegrationFixture;
 use super::WriteOnceAgentBusGenericFixture;
@@ -54,9 +55,7 @@ impl ConformanceFixture for IntegrationTestFixture {
 
 impl IntegrationTestFixture {
     pub async fn new_async(fb: FacebookInit) -> Result<Self> {
-        let (server_handle, port) = create_test_grpc_server().await?;
-        let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        let (server_handle, addr) = create_test_grpc_server().await?;
 
         let env = Rc::new(RealEnvironment::new());
 
@@ -85,8 +84,9 @@ impl IntegrationFixture for IntegrationTestFixture {
     }
 }
 
-async fn create_test_grpc_server() -> Result<(tokio::task::JoinHandle<()>, u16)> {
-    let port = crate::common::integration_utils::find_free_port().await?;
+async fn create_test_grpc_server() -> Result<(tokio::task::JoinHandle<()>, SocketAddr)> {
+    let listener = TcpListener::bind("127.0.0.1:0").await?;
+    let addr = listener.local_addr()?;
     let env = RealEnvironment::new();
     let bus = ChanneledAgentBus::new_in_process(move || {
         use std::rc::Rc;
@@ -98,11 +98,13 @@ async fn create_test_grpc_server() -> Result<(tokio::task::JoinHandle<()>, u16)>
     let handler = AgentBusHandler::new(bus);
 
     let service = AgentBusServiceServer::new(handler);
-    let addr: SocketAddr = format!("127.0.0.1:{}", port).parse().unwrap();
 
     let server_handle = tokio::spawn(async move {
-        let _ = Server::builder().add_service(service).serve(addr).await;
+        let _ = Server::builder()
+            .add_service(service)
+            .serve_with_incoming(TcpIncoming::from(listener))
+            .await;
     });
 
-    Ok((server_handle, port))
+    Ok((server_handle, addr))
 }

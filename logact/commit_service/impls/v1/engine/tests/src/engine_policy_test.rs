@@ -1065,7 +1065,7 @@ fn storage_concurrency_is_retried_only_by_its_owner() {
 
 #[test]
 fn policy_provider_entries_are_resolved_before_first_intention() {
-    let seed: u64 = rand::random();
+    let seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(seed);
     let fixture = SimpleMemoryFixture::new(simulator);
     let env = fixture.get_env();
@@ -1135,7 +1135,7 @@ fn policy_provider_entries_are_resolved_before_first_intention() {
 
 #[test]
 fn policy_provider_rejects_reconfiguring_existing_voter() {
-    let seed: u64 = rand::random();
+    let seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(seed);
     let fixture = SimpleMemoryFixture::new(simulator);
     let env = fixture.get_env();
@@ -2278,7 +2278,7 @@ fn policy_batch_rejects_unchanged_version() {
 
 #[test]
 fn policy_provider_skips_all_policy_after_engine_state_has_voter_config() {
-    let seed: u64 = rand::random();
+    let seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(seed);
     let fixture = SimpleMemoryFixture::new(simulator);
     let env = fixture.get_env();
@@ -2334,7 +2334,7 @@ fn policy_provider_skips_all_policy_after_engine_state_has_voter_config() {
 
 #[test]
 fn policy_provider_reconciles_voters_after_existing_policy() {
-    let seed: u64 = rand::random();
+    let seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(seed);
     let fixture = SimpleMemoryFixture::new(simulator);
     let env = fixture.get_env();
@@ -2851,7 +2851,7 @@ fn voter_config_is_applied_and_survives_reboot() {
     // A non-trivial voter config (the counting voter's modulus) must reach the
     // voter and persist across a reboot — proving the engine stores the full
     // config, not just the type URL.
-    let seed: u64 = rand::random();
+    let seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(seed);
     let fixture = SimpleMemoryFixture::new(simulator);
     let env = fixture.get_env();
@@ -2897,7 +2897,7 @@ fn voter_config_is_applied_and_survives_reboot() {
 #[test]
 fn random_voter_uses_configured_seed() {
     // The configured seed reaches the voter and determines its first vote.
-    let sim_seed: u64 = rand::random();
+    let sim_seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(sim_seed);
     let fixture = SimpleMemoryFixture::new(simulator);
     let env = fixture.get_env();
@@ -3155,7 +3155,7 @@ fn observed_applicators_emit_metrics_and_rows() {
     // Wires the engine with an observed decider and observed voter factory.
     // Driving one intention through should record apply metrics and log a row
     // per `apply`.
-    let seed: u64 = rand::random();
+    let seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(seed);
     let fixture = SimpleMemoryFixture::new(simulator);
     let env = fixture.get_env();

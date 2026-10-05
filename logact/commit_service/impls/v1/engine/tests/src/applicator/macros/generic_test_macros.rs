@@ -13,7 +13,7 @@ macro_rules! gen_applicator_test {
             fn [<$test_name _ $suffix>]() {
                 use $crate::applicator::fixtures::ApplicatorTestFixture;
                 use $crate::fixtures::SimulatorFixture;
-                let seed: u64 = rand::random();
+                let seed = agentbus_simulator::generate_seed();
                 eprintln!("Simulator seed: {seed}");
                 let simulator = agentbus_simulator::Simulator::new(seed);
                 let fixture = <$fixture as SimulatorFixture>::new(simulator);
