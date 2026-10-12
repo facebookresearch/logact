@@ -19,4 +19,4 @@ thiserror = "2.0.21"
 tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
 
 [dev-dependencies]
-tokio = { version = "1.53.1", features = ["full", "test-util", "tracing"] }
+tokio = { version = "1.53.2", features = ["full", "test-util", "tracing"] }

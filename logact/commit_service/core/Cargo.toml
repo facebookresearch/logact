@@ -12,5 +12,5 @@ license = "MIT"
 agentbus_api = { version = "0.1.0", path = "../../../bus/api" }
 anyhow = "1.0.104"
 logact_commit_service_api = { version = "0.1.0", path = "../api" }
-tokio = { version = "1.53.1", features = ["full", "test-util", "tracing"] }
+tokio = { version = "1.53.2", features = ["full", "test-util", "tracing"] }
 tracing = { version = "0.1.41", features = ["attributes", "valuable"] }

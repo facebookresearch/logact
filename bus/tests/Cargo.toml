@@ -35,7 +35,7 @@ futures = { version = "0.3.34", features = ["async-await", "compat"] }
 paste = "1.0.14"
 rand = "0.10.3"
 tempfile = "3.27.0"
-tokio = { version = "1.53.1", features = ["full", "test-util", "tracing"] }
+tokio = { version = "1.53.2", features = ["full", "test-util", "tracing"] }
 tonic = { version = "0.14.6", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
 
 [dev-dependencies]

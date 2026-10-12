@@ -26,7 +26,7 @@ fbinit-tokio = { version = "0.1.2", git = "https://github.com/facebookexperiment
 futures = { version = "0.3.34", features = ["async-await", "compat"] }
 llm-voter-proto-rust = { path = "../voters/llm/proto" }
 rustyline = { version = "18.0.1", features = ["derive"] }
-tokio = { version = "1.53.1", features = ["full", "test-util", "tracing"] }
+tokio = { version = "1.53.2", features = ["full", "test-util", "tracing"] }
 tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
 tracing-glog = { version = "0.4.1", features = ["ansi", "tracing-log"] }
 tracing-subscriber = { version = "0.3.23", features = ["chrono", "env-filter", "json", "local-time", "parking_lot", "registry"] }
