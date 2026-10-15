@@ -15,6 +15,7 @@ use agent_bus_proto_rust::agent_bus::AppendRequest;
 use agent_bus_proto_rust::agent_bus::BusId;
 use agent_bus_proto_rust::agent_bus::Payload;
 use agentbus_api::AgentBus;
+use agentbus_api::AgentBusId;
 use anyhow::Context;
 use anyhow::Result;
 use logact_commit_service_api::CommitIntentionCommand;
@@ -91,18 +92,23 @@ pub(crate) struct PreparedHook {
 }
 
 impl PreparedHook {
-    pub(crate) fn into_dispatch(self, agent_id_prefix: &str) -> DispatchInput {
-        let base = format!("{agent_id_prefix}.{}.{}", self.user_name, self.session_id);
-        let agent_id = match self.subagent_id.as_deref() {
-            Some(subagent_id) if !subagent_id.is_empty() => {
-                format!("{base}.agent.{subagent_id}")
-            }
-            _ => base,
-        };
-        DispatchInput {
-            agent_id,
+    pub(crate) fn into_dispatch(
+        self,
+        agent_id_prefix: &str,
+    ) -> Result<DispatchInput, PrepareError> {
+        let agent_id = AgentBusId::try_new(
+            agent_id_prefix,
+            &self.user_name,
+            &self.session_id,
+            self.subagent_id
+                .as_deref()
+                .filter(|value| !value.is_empty()),
+        )
+        .map_err(PrepareError::Input)?;
+        Ok(DispatchInput {
+            agent_id: agent_id.to_string(),
             body: self.body,
-        }
+        })
     }
 }
 
@@ -391,6 +397,7 @@ mod tests {
         prepare_body("alice", PAYLOAD.to_owned())
             .unwrap()
             .into_dispatch(prefix)
+            .unwrap()
     }
 
     fn dispatch_sync(
@@ -433,7 +440,8 @@ mod tests {
         let body = r#"{"session_id":"parent-session","agent_id":"child-agent","hook_event_name":"PreToolUse"}"#;
         let input = prepare_body("alice", body.to_owned())
             .unwrap()
-            .into_dispatch("codex");
+            .into_dispatch("codex")
+            .unwrap();
 
         assert_eq!(
             input.agent_id,
@@ -447,7 +455,8 @@ mod tests {
         let body = r#"{"session_id":"session-123","agent_id":""}"#;
         let input = prepare_body("alice", body.to_owned())
             .unwrap()
-            .into_dispatch("claude");
+            .into_dispatch("claude")
+            .unwrap();
 
         assert_eq!(input.agent_id, "claude.alice.session-123");
     }

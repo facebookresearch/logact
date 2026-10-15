@@ -82,7 +82,7 @@ pub async fn run<C: CommitSvc + ?Sized>(
     let outcome = hooks::dispatch(
         commit_client,
         hook_event,
-        prepared.into_dispatch(agent_id_prefix),
+        prepared.into_dispatch(agent_id_prefix)?,
     )
     .await
     .map_err(HookRunError::Dispatch)?;
