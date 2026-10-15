@@ -11,6 +11,7 @@
 //! - `AgentBus` trait: The main interface for AgentBus implementations
 //! - `Environment` trait: Clock and randomness abstraction for testing
 
+pub mod agent_bus_id;
 pub mod any_helpers;
 pub mod conditional_write_space;
 pub mod environment;
@@ -27,6 +28,7 @@ pub mod write_once_space;
 
 // Re-export commonly used items
 // Re-export proto types for convenience
+pub use agent_bus_id::AgentBusId;
 pub use agent_bus_proto_rust::agent_bus::*;
 pub use any_helpers::pack_any;
 pub use any_helpers::unpack_any;
