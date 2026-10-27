@@ -36,7 +36,6 @@ where
     WOF::Impl: Clone,
 {
     space_fixture: Rc<WOF>,
-    agentbus: WriteOnceAgentBus<WOF::Impl, WOF::Env>,
 }
 
 impl<WOF: WriteOnceSpaceTestFixture + 'static> WriteOnceAgentBusGenericFixture<WOF>
@@ -44,12 +43,7 @@ where
     WOF::Impl: Clone + 'static,
 {
     pub fn new(space_fixture: Rc<WOF>) -> Self {
-        let space = space_fixture.create_impl();
-        let env = space_fixture.get_env();
-        Self {
-            agentbus: WriteOnceAgentBus::new(space, env, None),
-            space_fixture,
-        }
+        Self { space_fixture }
     }
 }
 
@@ -66,7 +60,11 @@ where
     }
 
     fn create_impl(&self) -> Self::Impl {
-        self.agentbus.clone()
+        WriteOnceAgentBus::new(
+            self.space_fixture.create_impl(),
+            self.space_fixture.get_env(),
+            None,
+        )
     }
 }
 
