@@ -22,6 +22,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use agent_bus_proto_rust::agent_bus::Abort;
+use agent_bus_proto_rust::agent_bus::Commit;
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agent_bus_proto_rust::agent_bus::Intention;
 use agent_bus_proto_rust::agent_bus::Payload;
@@ -148,6 +150,27 @@ where
             ),
         };
 
+        let decision = if approved {
+            payload::Payload::Commit(Commit {
+                intention_id: response.log_position,
+                reason: reason.clone(),
+            })
+        } else {
+            payload::Payload::Abort(Abort {
+                intention_id: response.log_position,
+                reason: reason.clone(),
+            })
+        };
+        self.bus
+            .append(AppendRequest {
+                bus_id: Some(request.bus_id),
+                payload: Some(Payload {
+                    payload: Some(decision),
+                }),
+            })
+            .await
+            .map_err(commit_error_from_bus)?;
+
         Ok(CommitIntentionOutcome {
             approved,
             reason,
@@ -267,7 +290,7 @@ mod tests {
                     .await
                     .unwrap()
                     .log_position,
-                1
+                2
             );
             // A second agent starts its own sequence at 0.
             assert_eq!(
@@ -405,7 +428,7 @@ mod tests {
                     .await
                     .unwrap()
                     .log_position,
-                1
+                2
             );
         });
     }
