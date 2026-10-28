@@ -13,7 +13,7 @@ mod defs {
     //! of every propose.
     //!
     //! Pinned with `#[scenario_for]` to the register-backed fixtures (a single V1
-    //! engine and a router), since only those implement `DeciderPolicyFixture`.
+    //! engine and a router), to exercise their shared policy register.
 
     use agent_bus_proto_rust::agent_bus::DeciderPolicy;
     use agent_bus_proto_rust::agent_bus::intention as proto_intention;

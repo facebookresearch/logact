@@ -8,25 +8,33 @@
 //! CommitService conformance fixture over the local gRPC and SQLite stack.
 
 use std::path::Path;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
+use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agentbus_api::RealEnvironment;
 use anyhow::Context as _;
 use anyhow::Result;
 use conformance::ConformanceFixture;
 use conformance::IntegrationFixture;
 use fbinit::FacebookInit;
+use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_grpc::GrpcCommitSvcClient;
+use logact_commit_service_sqlite_storage::SqliteStorage;
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 
+use crate::fixtures::DeciderPolicyFixture;
+use crate::fixtures::SettableDeciderPolicy;
+
 pub struct GrpcCommitServiceFixture {
     client: GrpcCommitSvcClient,
+    sqlite_path: PathBuf,
     environment: Rc<RealEnvironment>,
     server: JoinHandle<Result<()>>,
     _temp: Arc<TempDir>,
@@ -52,11 +60,16 @@ impl IntegrationFixture for GrpcCommitServiceFixture {
         let socket = state_dir.join("logact.sock");
         let sqlite_path = state_dir.join("logact.sqlite");
         let server_socket = socket.clone();
+        let server_sqlite_path = sqlite_path.clone();
         let server_temp = temp.clone();
         let mut server = tokio::spawn(async move {
             let _temp = server_temp;
-            logact_local_server_lib::run_server(server_socket, sqlite_path, std::future::pending())
-                .await
+            logact_local_server_lib::run_server(
+                server_socket,
+                server_sqlite_path,
+                std::future::pending(),
+            )
+            .await
         });
         let channel = tokio::select! {
             channel = connect(&socket) => channel,
@@ -77,6 +90,7 @@ impl IntegrationFixture for GrpcCommitServiceFixture {
 
         Ok(Self {
             client,
+            sqlite_path,
             environment: Rc::new(RealEnvironment::new()),
             server,
             _temp: temp,
@@ -105,5 +119,18 @@ async fn connect(socket: &Path) -> Result<Channel> {
                 return Err(error).context("timed out connecting to the local LogAct server");
             }
         }
+    }
+}
+
+impl DeciderPolicyFixture for GrpcCommitServiceFixture {
+    async fn set_decider_policy(&self, policy: DeciderPolicy) -> Result<()> {
+        let path = self.sqlite_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let storage = Rc::new(SqliteStorage::open(path)?);
+            let register = PolicyRegister::new(storage, "policy");
+            tokio::runtime::Handle::current().block_on(register.set_decider_policy(policy))
+        })
+        .await
+        .context("policy update task failed")?
     }
 }

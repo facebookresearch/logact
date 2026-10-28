@@ -87,13 +87,8 @@ where
 pub trait CommitServiceTestFixture: ConformanceFixture<Impl: CommitSvc> {}
 impl<F: ConformanceFixture<Impl: CommitSvc>> CommitServiceTestFixture for F {}
 
-/// A fixture whose commit service sources its decider policy from a register the
-/// test controls (a `SynchronousRegisterProvider`). `set_decider_policy` installs a
-/// policy service-wide; because the engine reads the register on the critical path
-/// of every `propose_intention`, the next `commit_intention` reflects it — so the
-/// switch is linearizable against probes. Only fixtures wired with a register
-/// provider implement it, so it is a bespoke subtrait rather than a generic
-/// scenario bound.
+/// A fixture that can update the decider policy used by its commit service.
+/// The next `commit_intention` observes an installed policy.
 pub trait DeciderPolicyFixture: CommitServiceTestFixture {
     fn set_decider_policy(
         &self,

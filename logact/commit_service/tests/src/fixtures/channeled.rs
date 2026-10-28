@@ -9,10 +9,12 @@
 
 use std::rc::Rc;
 
+use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_core::ChanneledCommitService;
 
 use crate::fixtures::ConformanceFixture;
+use crate::fixtures::DeciderPolicyFixture;
 use crate::fixtures::SimulatorFixture;
 use crate::simulator::Simulator;
 
@@ -67,5 +69,15 @@ where
             env,
             _inner: inner,
         }
+    }
+}
+
+impl<CF> DeciderPolicyFixture for ChanneledCommitServiceFixture<CF>
+where
+    CF: DeciderPolicyFixture<Env = Simulator>,
+    <CF::Impl as CommitSvc>::Bus: Clone,
+{
+    async fn set_decider_policy(&self, policy: DeciderPolicy) -> anyhow::Result<()> {
+        self._inner.set_decider_policy(policy).await
     }
 }
