@@ -39,6 +39,8 @@ pub use fixtures::simtest::SpaceInMemory;
 pub use fixtures::simtest::SpaceTransactionConflictEmpty;
 pub use fixtures::simtest::SpaceTransactionConflictOccupied;
 pub mod impls;
+#[path = "scenarios/lin_test.rs"]
+pub mod legacy_lin_test;
 pub mod variants;
 pub use agentbus_simulator as simulator;
 pub mod tailable_space;
@@ -58,7 +60,7 @@ pub use futures;
 conformance::define_driver! {
     $,
     root = agentbus_tests,
-    scenario_mods = [test_scenarios, appserver, mailbox, voter_e2e, sim_only_scenarios, lin_test, multi_node, fault_injection],
+    scenario_mods = [test_scenarios, appserver, mailbox, voter_e2e, sim_only_scenarios, multi_node, fault_injection],
     fixtures = agentbus_fixtures,
     suite = agentbus,
 }

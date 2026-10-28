@@ -24,10 +24,8 @@ use super::*;
 // AgentBus tests
 // =============================================================================
 
-// Every AgentBus test is a scenario now, all emitted by `agentbus_sim_suite!`: the
-// standard `#[scenario]` fan-out, the seeded `#[scenario_for]` buggy-poll and
-// failure-injection pins, and the `#[scenario(sim_only, cardinality = 2)]` multi-node
-// determinism guard.
+// Every AgentBus test in this crate is emitted by `agentbus_sim_suite!`. Counter
+// linearizability coverage lives in the shared linearizability Counter suite.
 agentbus_sim_suite!();
 
 // End-to-end tests over the in-process transport fixture, driven by the generated

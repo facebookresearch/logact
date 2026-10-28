@@ -25,14 +25,14 @@ mod defs {
 
     use agent_bus_proto_rust::agent_bus::intention;
     use agentbus_api::environment::Environment;
-    use agentbus_tests::scenarios::lin_test::counter_impl::SequentialCounter;
-    use agentbus_tests::scenarios::lin_test::counter_trait::CommandResult;
-    use agentbus_tests::scenarios::lin_test::counter_trait::Counter;
-    use agentbus_tests::scenarios::lin_test::counter_worker::CounterWorker;
-    use agentbus_tests::scenarios::lin_test::linearizability_tracker::ExecutedCommand;
-    use agentbus_tests::scenarios::lin_test::linearizability_tracker::LinearizabilityTracker;
-    use agentbus_tests::scenarios::lin_test::test::Op;
-    use agentbus_tests::scenarios::lin_test::tracking_counter::TrackingCounter;
+    use agentbus_tests::legacy_lin_test::counter_impl::SequentialCounter;
+    use agentbus_tests::legacy_lin_test::counter_trait::CommandResult;
+    use agentbus_tests::legacy_lin_test::counter_trait::Counter;
+    use agentbus_tests::legacy_lin_test::counter_worker::CounterWorker;
+    use agentbus_tests::legacy_lin_test::linearizability_tracker::ExecutedCommand;
+    use agentbus_tests::legacy_lin_test::linearizability_tracker::LinearizabilityTracker;
+    use agentbus_tests::legacy_lin_test::test::Op;
+    use agentbus_tests::legacy_lin_test::tracking_counter::TrackingCounter;
     use anyhow::Result;
     use logact_commit_service_api::CommitIntentionCommand;
     use logact_commit_service_api::CommitIntentionOutcome;
