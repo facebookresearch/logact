@@ -38,6 +38,7 @@ use agentbus_api::Environment;
 use agentbus_api::InMemoryLogger;
 use agentbus_api::InMemoryMetrics;
 use agentbus_api::LogFieldValue;
+use agentbus_observable::ObservableAgentBus;
 use agentbus_simulator::generate_seed;
 use agentbus_tests::fixtures::ConformanceFixture;
 use agentbus_tests::fixtures::SimulatorFixture;
@@ -920,7 +921,19 @@ fn engine_voter_and_decider_storage_conflicts_are_retried() {
     let env_for_engine = env.clone();
 
     let handle = env.spawn(async move {
-        let bus = fixture.create_impl();
+        let metrics = Rc::new(InMemoryMetrics::new());
+        let logger = Rc::new(InMemoryLogger::new());
+        let bus = ObservableAgentBus::new(
+            fixture.create_impl(),
+            metrics.clone(),
+            logger.clone(),
+            env_for_engine.clone(),
+        );
+        let observability = Observability {
+            metrics: metrics.clone(),
+            logger,
+            environment: env_for_engine.clone(),
+        };
         let storage = Rc::new(RetryTestStorage::new());
         let voter_factory = StatelessTestVoterFactory {
             storage: storage.clone(),
@@ -939,7 +952,14 @@ fn engine_voter_and_decider_storage_conflicts_are_retried() {
             ),
             DeciderFactoryImpl::new(storage.clone()),
             env_for_engine,
-        );
+        )
+        .with_playback_wrapper(|playback| {
+            Rc::new(ObservableApplicator::new(
+                playback,
+                "base-engine",
+                observability,
+            ))
+        });
 
         let outcome = propose_intention(&engine, "agent-1", "retry conflicts").await?;
 
@@ -960,6 +980,12 @@ fn engine_voter_and_decider_storage_conflicts_are_retried() {
             !storage.voter_cas_pending.get(),
             "the voter CAS rejection should be injected"
         );
+        assert_eq!(
+            metrics.counter("poll.agent_bus.num_calls"),
+            0,
+            "confirmed appends must survive a CAS retry that skips the applied entry"
+        );
+        assert_eq!(metrics.counter("check_tail.agent_bus.num_calls"), 0);
         assert_eq!(
             poll_all_types(&bus, "agent-1").await?,
             vec!["DeciderPolicy", "AddVoter", "Intention", "Vote", "Commit"],

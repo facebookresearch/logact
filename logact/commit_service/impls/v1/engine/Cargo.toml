@@ -39,6 +39,7 @@ thiserror = "2.0.21"
 tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
 
 [dev-dependencies]
+agentbus_observable = { version = "0.1.0", path = "../../../../../bus/impls/observable" }
 agentbus_simulator = { version = "0.1.0", path = "../../../../../bus/simulator" }
 agentbus_tests = { version = "0.1.0", path = "../../../../../bus/tests" }
 conformance = { version = "0.1.0", path = "../../../../../bus/testing/conformance" }

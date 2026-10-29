@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::cell::Cell;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -13,11 +14,11 @@ use agent_bus_proto_rust::agent_bus::AppendRequest;
 use agent_bus_proto_rust::agent_bus::BaseEngineControl;
 use agent_bus_proto_rust::agent_bus::BusEntry;
 use agent_bus_proto_rust::agent_bus::BusId;
+use agent_bus_proto_rust::agent_bus::CheckTailRequest;
 use agent_bus_proto_rust::agent_bus::Control;
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agent_bus_proto_rust::agent_bus::Payload;
 use agent_bus_proto_rust::agent_bus::PolicyBatch;
-use agent_bus_proto_rust::agent_bus::PollRequest;
 use agent_bus_proto_rust::agent_bus::SelectivePollType;
 use agent_bus_proto_rust::agent_bus::VoterConfig;
 use agent_bus_proto_rust::agent_bus::base_engine_control;
@@ -32,6 +33,7 @@ use agentbus_api::RetryConfig;
 use agentbus_api::RetryDecision;
 use agentbus_api::RetryFailure;
 use agentbus_api::helpers::get_payload_type;
+use agentbus_api::helpers::read_range;
 use agentbus_api::retry;
 use anyhow::Context;
 use anyhow::Result;
@@ -302,7 +304,7 @@ struct EngineEntryApplicator<T, F, S, D, E> {
 
 pub struct BaseEngine<T, F, S, P, D, E> {
     runtime: Rc<EngineRuntime<T, F, S, D, E>>,
-    playback: Rc<dyn Applicator>,
+    playback: Rc<dyn Applicator<i64>>,
     policy_provider: P,
 }
 
@@ -559,7 +561,7 @@ where
     /// Decorate the applicator used for entry playback.
     pub fn with_playback_wrapper<W>(mut self, wrap: W) -> Self
     where
-        W: FnOnce(Rc<dyn Applicator>) -> Rc<dyn Applicator>,
+        W: FnOnce(Rc<dyn Applicator<i64>>) -> Rc<dyn Applicator<i64>>,
     {
         self.playback = wrap(self.playback);
         self
@@ -752,46 +754,55 @@ where
     ) -> EngineResult<ProposalOutcome> {
         let bus_id_owned = bus_id.to_string();
         let mut pos = proposed_position.min(cursor);
+        let mut known_position = proposed_position;
 
         loop {
-            // `poll` is self-bounding — an empty result means we've reached the
-            // tail (no `check_tail` needed). Read a bounded batch to amortize bus
-            // latency over replay rather than paying it once per historical entry.
-            let resp = self
-                .runtime
-                .bus
-                .poll(PollRequest {
-                    bus_id: Some(BusId {
-                        agent_bus_id: bus_id_owned.clone(),
-                    }),
-                    start_log_position: pos,
-                    max_entries: POLL_BATCH_SIZE,
-                    filter: None,
-                })
-                .await
-                .map_err(EngineError::Bus)?;
-
-            if resp.entries.is_empty() {
-                // Drained the log with no decision — force an abort, then loop to
-                // read it back as the outcome.
-                self.runtime
+            if pos > known_position {
+                let tail = self
+                    .runtime
                     .bus
-                    .append(AppendRequest {
+                    .check_tail(CheckTailRequest {
                         bus_id: Some(BusId {
                             agent_bus_id: bus_id_owned.clone(),
                         }),
-                        payload: Some(forced_abort(proposed_position)),
                     })
                     .await
-                    .map_err(EngineError::Bus)?;
-                continue;
+                    .map_err(EngineError::Bus)?
+                    .tail_position;
+
+                if pos >= tail {
+                    let response = self
+                        .runtime
+                        .bus
+                        .append(AppendRequest {
+                            bus_id: Some(BusId {
+                                agent_bus_id: bus_id_owned.clone(),
+                            }),
+                            payload: Some(forced_abort(proposed_position)),
+                        })
+                        .await
+                        .map_err(EngineError::Bus)?;
+                    known_position = known_position.max(response.log_position);
+                    continue;
+                }
+                known_position = tail - 1;
             }
 
-            for entry in &resp.entries {
-                let entry_position = entry
+            let (entries, next_cursor) = read_range(
+                &self.runtime.bus,
+                bus_id,
+                pos,
+                known_position + 1,
+                POLL_BATCH_SIZE,
+                None,
+            )
+            .await
+            .map_err(EngineError::Bus)?;
+
+            for entry in &entries {
+                entry
                     .header
                     .as_ref()
-                    .map(|header| header.log_position)
                     .ok_or(ApplyError::MissingHeader)
                     .map_err(EngineError::Playback)?;
 
@@ -806,13 +817,17 @@ where
                 }
 
                 if requires_application(entry) {
-                    self.playback
+                    if let Some(position) = self
+                        .playback
                         .apply(bus_id, entry)
                         .await
-                        .map_err(EngineError::Playback)?;
+                        .map_err(EngineError::Playback)?
+                    {
+                        known_position = known_position.max(position);
+                    }
                 }
-                pos = entry_position + 1;
             }
+            pos = next_cursor;
         }
     }
 }
@@ -834,14 +849,15 @@ where
         &self,
         bus_id: &str,
         entry: &BusEntry,
-    ) -> std::result::Result<(), ApplyError> {
+    ) -> std::result::Result<Option<i64>, ApplyError> {
+        let highest_append = Cell::new(None);
         // human: retry on concurrency errors to ensure forward progress. We
         // cannot wait on a competing drive and cannot assume it will finish.
         let mut retry_policy = ConcurrencyRetryPolicy::default();
         retry(
             self.environment.as_ref(),
             self.config.retry_config,
-            || self.apply_entry_once(bus_id, entry),
+            || self.apply_entry_once(bus_id, entry, &highest_append),
             |error| match error {
                 ApplyError::Concurrency(error @ ConcurrencyError::Engine { .. }) => {
                     retry_policy.decide(error)
@@ -850,13 +866,15 @@ where
             },
         )
         .await
-        .map_err(RetryFailure::into_last_error)
+        .map_err(RetryFailure::into_last_error)?;
+        Ok(highest_append.get())
     }
 
     async fn apply_entry_once(
         &self,
         bus_id: &str,
         entry: &BusEntry,
+        highest_append: &Cell<Option<i64>>,
     ) -> std::result::Result<(), ApplyError> {
         let entry_position = entry
             .header
@@ -916,7 +934,8 @@ where
 
         // 2. Append what the applicators produced, before committing the cursor.
         for payload in produced {
-            self.bus
+            let response = self
+                .bus
                 .append(AppendRequest {
                     bus_id: Some(BusId {
                         agent_bus_id: bus_id.to_owned(),
@@ -925,6 +944,14 @@ where
                 })
                 .await
                 .map_err(ApplyError::Bus)?;
+            // Retain confirmed writes even if the following cursor CAS needs a retry.
+            highest_append.set(Some(
+                highest_append
+                    .get()
+                    .map_or(response.log_position, |position| {
+                        position.max(response.log_position)
+                    }),
+            ));
         }
 
         // 3. Advance the engine state last — recording decider policy and
@@ -974,7 +1001,7 @@ where
 }
 
 #[async_trait::async_trait(?Send)]
-impl<T, F, S, D, E> Applicator for EngineEntryApplicator<T, F, S, D, E>
+impl<T, F, S, D, E> Applicator<i64> for EngineEntryApplicator<T, F, S, D, E>
 where
     T: AgentBus,
     F: VoterFactory,
@@ -986,9 +1013,8 @@ where
         &self,
         bus_id: &str,
         entry: &BusEntry,
-    ) -> std::result::Result<Option<Payload>, ApplyError> {
-        self.runtime.apply_entry(bus_id, entry).await?;
-        Ok(None)
+    ) -> std::result::Result<Option<i64>, ApplyError> {
+        self.runtime.apply_entry(bus_id, entry).await
     }
 }
 
@@ -999,7 +1025,8 @@ impl<T, F, S, P, D, E> Applicator for BaseEngine<T, F, S, P, D, E> {
         bus_id: &str,
         entry: &BusEntry,
     ) -> std::result::Result<Option<Payload>, ApplyError> {
-        self.playback.apply(bus_id, entry).await
+        self.playback.apply(bus_id, entry).await?;
+        Ok(None)
     }
 }
 

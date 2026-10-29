@@ -64,15 +64,15 @@ impl<L, E> Clone for Observability<L, E> {
 }
 
 /// Wraps an [`Applicator`] with metrics and structured-row logging.
-pub struct ObservableApplicator<L, E: Environment> {
-    inner: Rc<dyn Applicator>,
+pub struct ObservableApplicator<L, E: Environment, Output = Payload> {
+    inner: Rc<dyn Applicator<Output>>,
     applicator_kind: &'static str,
     observability: Observability<L, E>,
 }
 
-impl<L, E: Environment> ObservableApplicator<L, E> {
+impl<L, E: Environment, Output> ObservableApplicator<L, E, Output> {
     pub fn new(
-        inner: Rc<dyn Applicator>,
+        inner: Rc<dyn Applicator<Output>>,
         applicator_kind: &'static str,
         observability: Observability<L, E>,
     ) -> Self {
@@ -114,12 +114,12 @@ fn error_code(err: &ApplyError) -> &'static str {
 }
 
 #[async_trait::async_trait(?Send)]
-impl<L, E> Applicator for ObservableApplicator<L, E>
+impl<L, E, Output> Applicator<Output> for ObservableApplicator<L, E, Output>
 where
     L: AgentbusLogger,
     E: Environment,
 {
-    async fn apply(&self, bus_id: &str, entry: &BusEntry) -> Result<Option<Payload>, ApplyError> {
+    async fn apply(&self, bus_id: &str, entry: &BusEntry) -> Result<Option<Output>, ApplyError> {
         let tags = [("applicator_kind", self.applicator_kind)];
         self.observability
             .metrics
