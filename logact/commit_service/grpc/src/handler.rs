@@ -9,6 +9,8 @@ use logact_commit_service_api::CommitError;
 use logact_commit_service_core::ChanneledCommitServiceHandle;
 use logact_commit_service_grpc_proto_rust::logact_commit_service::CommitIntentionRequest;
 use logact_commit_service_grpc_proto_rust::logact_commit_service::CommitIntentionResponse;
+use logact_commit_service_grpc_proto_rust::logact_commit_service::CreateBusRequest;
+use logact_commit_service_grpc_proto_rust::logact_commit_service::CreateBusResponse;
 use logact_commit_service_grpc_proto_rust::logact_commit_service::commit_service_server::CommitService;
 use tonic::Request;
 use tonic::Response;
@@ -30,6 +32,18 @@ impl GrpcCommitServiceHandler {
 
 #[tonic::async_trait]
 impl CommitService for GrpcCommitServiceHandler {
+    async fn create_bus(
+        &self,
+        request: Request<CreateBusRequest>,
+    ) -> Result<Response<CreateBusResponse>, Status> {
+        let command = translation::create_bus::native_from_proto_request(request.into_inner());
+        self.service
+            .create_bus(command)
+            .await
+            .map_err(commit_status)?;
+        Ok(Response::new(CreateBusResponse {}))
+    }
+
     async fn commit_intention(
         &self,
         request: Request<CommitIntentionRequest>,

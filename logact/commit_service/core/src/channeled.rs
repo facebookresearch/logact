@@ -24,26 +24,31 @@ use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
+use logact_commit_service_api::CreateBusCommand;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::unbounded_channel;
 use tokio::sync::oneshot;
 
 enum Op {
+    CreateBus {
+        request: CreateBusCommand,
+        reply: oneshot::Sender<CommitResult<()>>,
+    },
     CommitIntention {
         request: CommitIntentionCommand,
         reply: oneshot::Sender<CommitResult<CommitIntentionOutcome>>,
     },
 }
 
-/// Cloneable channel-backed frontend for any `CommitSvc` implementation.
+/// Cloneable channel-backed frontend for a commit service.
 #[derive(Clone)]
 pub struct ChanneledCommitService<B> {
     commit: ChanneledCommitServiceHandle,
     bus: B,
 }
 
-/// Cloneable transport handle for the commit-only surface.
+/// Cloneable transport handle for commit-service operations.
 #[derive(Clone)]
 pub struct ChanneledCommitServiceHandle {
     tx: UnboundedSender<Op>,
@@ -117,7 +122,7 @@ impl<B> ChanneledCommitService<B> {
         }
     }
 
-    /// Consume the composed service and return its commit-only transport handle.
+    /// Consume the composed service and return its transport handle.
     pub fn into_commit_handle(self) -> ChanneledCommitServiceHandle {
         self.commit
     }
@@ -133,6 +138,12 @@ impl<B> ChanneledCommitService<B> {
         let state = Rc::new(state);
         while let Some(op) = rx.recv().await {
             match op {
+                Op::CreateBus { request, reply } => {
+                    let state = state.clone();
+                    env.spawn_local(async move {
+                        let _ = reply.send(state.create_bus(request).await);
+                    });
+                }
                 Op::CommitIntention { request, reply } => {
                     let state = state.clone();
                     env.spawn_local(async move {
@@ -145,6 +156,17 @@ impl<B> ChanneledCommitService<B> {
 }
 
 impl ChanneledCommitServiceHandle {
+    pub async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.tx
+            .send(Op::CreateBus {
+                request,
+                reply: reply_tx,
+            })
+            .map_err(|_| worker_terminated())?;
+        reply_rx.await.map_err(|_| worker_terminated())?
+    }
+
     pub async fn commit_intention(
         &self,
         request: CommitIntentionCommand,
@@ -170,6 +192,10 @@ impl<B: AgentBus> CommitSvc for ChanneledCommitService<B> {
 
     fn agent_bus(&self) -> &Self::Bus {
         &self.bus
+    }
+
+    async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
+        self.commit.create_bus(request).await
     }
 
     async fn commit_intention(

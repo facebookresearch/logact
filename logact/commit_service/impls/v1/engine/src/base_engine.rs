@@ -575,6 +575,64 @@ where
     P::Error: Into<anyhow::Error>,
     D: DeciderFactory,
 {
+    /// Append the initial policy and optimistically checkpoint a fresh bus.
+    pub async fn create_bus(&self, bus_id: &str) -> EngineResult<()> {
+        let desired = self
+            .policy_provider
+            .read(bus_id)
+            .await
+            .map_err(|error| EngineError::PolicyProvider(error.into()))?;
+        let batch = plan(&PolicyState::default(), None, &desired)
+            .map_err(EngineError::Internal)?
+            .ok_or_else(|| {
+                EngineError::Internal(anyhow::anyhow!(
+                    "CreateBus initial policy planning produced no batch"
+                ))
+            })?;
+        let position = self
+            .runtime
+            .bus
+            .append(AppendRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.to_owned(),
+                }),
+                payload: Some(policy_batch_payload(batch.clone())),
+            })
+            .await
+            .map_err(EngineError::Bus)?
+            .log_position;
+        if position == 0 {
+            let mut state = PerBusEngineState::default();
+            self.runtime
+                .apply_policy_batch(&mut state, &batch, position)
+                .map_err(EngineError::Playback)?;
+            match state
+                .save(&self.runtime.engine_storage, bus_id, None, 0)
+                .await
+            {
+                Ok(true) => {}
+                Ok(false) => tracing::info!(
+                    bus_id,
+                    position,
+                    "CreateBus initial checkpoint was rejected by a conditional write; deferring replay to commit"
+                ),
+                Err(error) => tracing::info!(
+                    bus_id,
+                    position,
+                    error = %error,
+                    "CreateBus initial checkpoint failed; deferring replay to commit"
+                ),
+            }
+        } else {
+            tracing::info!(
+                bus_id,
+                position,
+                "CreateBus policy append returned a nonzero position; deferring replay to commit"
+            );
+        }
+        Ok(())
+    }
+
     /// Propose an intention: append it, drive the log until it has a decision, and
     /// return the outcome. The engine forces an abort if nothing decides it, so
     /// this always yields an outcome.

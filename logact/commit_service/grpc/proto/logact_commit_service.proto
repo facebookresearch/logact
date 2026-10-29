@@ -11,6 +11,12 @@ package logact_commit_service;
 
 import "agentbus_proto/agent_bus.proto";
 
+message CreateBusRequest {
+  string bus_id = 1;
+}
+
+message CreateBusResponse {}
+
 message CommitIntentionRequest {
   reserved 1;
   agent_bus.BusId bus_id = 3;
@@ -25,5 +31,6 @@ message CommitIntentionResponse {
 }
 
 service CommitService {
+  rpc CreateBus(CreateBusRequest) returns (CreateBusResponse);
   rpc CommitIntention(CommitIntentionRequest) returns (CommitIntentionResponse);
 }

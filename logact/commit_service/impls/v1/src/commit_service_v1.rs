@@ -16,6 +16,7 @@ use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
+use logact_commit_service_api::CreateBusCommand;
 use logact_commit_service_engine::ApplyError;
 use logact_commit_service_engine::BaseEngine;
 use logact_commit_service_engine::DeciderFactory;
@@ -72,6 +73,13 @@ where
 
     fn agent_bus(&self) -> &Self::Bus {
         &self.bus
+    }
+
+    async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
+        self.engine
+            .create_bus(&request.bus_id)
+            .await
+            .map_err(commit_error_from_engine)
     }
 
     async fn commit_intention(

@@ -292,6 +292,7 @@ mod tests {
     use logact_commit_service_api::CommitError;
     use logact_commit_service_api::CommitIntentionOutcome;
     use logact_commit_service_api::CommitResult;
+    use logact_commit_service_api::CreateBusCommand;
 
     use super::*;
 
@@ -336,6 +337,10 @@ mod tests {
 
         fn agent_bus(&self) -> &Self::Bus {
             self
+        }
+
+        async fn create_bus(&self, _command: CreateBusCommand) -> CommitResult<()> {
+            panic!("create_bus is not used by commit CLI tests")
         }
 
         async fn commit_intention(

@@ -11,6 +11,7 @@ use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
+use logact_commit_service_api::CreateBusCommand;
 use logact_commit_service_grpc_proto_rust::logact_commit_service::commit_service_client::CommitServiceClient;
 use tonic::Code;
 use tonic::Status;
@@ -39,6 +40,15 @@ impl CommitSvc for GrpcCommitSvcClient {
 
     fn agent_bus(&self) -> &Self::Bus {
         &self.bus
+    }
+
+    async fn create_bus(&self, command: CreateBusCommand) -> CommitResult<()> {
+        self.commit
+            .clone()
+            .create_bus(translation::create_bus::proto_from_native_request(command))
+            .await
+            .map_err(commit_error)?;
+        Ok(())
     }
 
     async fn commit_intention(

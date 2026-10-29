@@ -9,6 +9,12 @@ use agent_bus_proto_rust::agent_bus::intention;
 use agentbus_api::AgentBus;
 use agentbus_api::BusId;
 
+/// Request to create a bus using the service's configured initial policy.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateBusCommand {
+    pub bus_id: String,
+}
+
 /// A validated request to commit one durable AgentBus intention.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommitIntentionCommand {
@@ -66,6 +72,14 @@ pub trait CommitSvc {
 
     /// Return this service's AgentBus surface.
     fn agent_bus(&self) -> &Self::Bus;
+
+    /// Append the service's initial policy without submitting an intention.
+    /// Repeated calls succeed without resetting the bus's policy or log. Policy
+    /// application may be deferred until an intention is committed.
+    fn create_bus(
+        &self,
+        request: CreateBusCommand,
+    ) -> impl std::future::Future<Output = CommitResult<()>>;
 
     /// Commit an intention. Blocks on the safety pipeline; the returned
     /// `approved` reflects the decider's verdict.

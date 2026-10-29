@@ -37,12 +37,27 @@ mod defs {
                 intention: intention::Intention::StringIntention("decision probe".to_string()),
             })
             .await?;
+        assert_returned_outcome_is_persisted(
+            &service,
+            fixture.get_env().as_ref(),
+            &bus_id,
+            &outcome,
+        )
+        .await
+    }
+
+    pub async fn assert_returned_outcome_is_persisted<S: CommitSvc, E: Environment>(
+        service: &S,
+        environment: &E,
+        bus_id: &str,
+        outcome: &logact_commit_service_api::CommitIntentionOutcome,
+    ) -> Result<()> {
         let (entries, _) = read_linearizable_snapshot(
             service.agent_bus(),
-            bus_id.to_string(),
+            bus_id.to_owned(),
             outcome.log_position,
             None,
-            fixture.get_env().as_ref(),
+            environment,
             Some(1),
         )
         .await;

@@ -5,9 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! Trait-surface scenarios: drive `CommitSvc::commit_intention` and assert on
-//! the response. Implementation-internal behavior (bus log shape, runtime
-//! registry, bootstrap policy) is covered by per-impl unit tests, not here.
+//! Trait-surface scenarios for `CommitSvc`.
 //!
 //! Each scenario is a generic async function over a `CommitServiceTestFixture`
 //! plus a `#[scenario(..)]` annotation. The
@@ -21,22 +19,81 @@
 mod defs {
     use std::collections::HashSet;
 
+    use agent_bus_proto_rust::agent_bus::AgentInput;
+    use agent_bus_proto_rust::agent_bus::AppendRequest;
     use agent_bus_proto_rust::agent_bus::BusId;
+    use agent_bus_proto_rust::agent_bus::DeciderPolicy;
+    use agent_bus_proto_rust::agent_bus::Payload;
     use agent_bus_proto_rust::agent_bus::PollRequest;
+    use agent_bus_proto_rust::agent_bus::agent_input;
+    use agent_bus_proto_rust::agent_bus::base_engine_control;
+    use agent_bus_proto_rust::agent_bus::control;
     use agent_bus_proto_rust::agent_bus::intention;
     use agent_bus_proto_rust::agent_bus::payload;
     use agentbus_api::AgentBus;
     use agentbus_api::environment::Environment;
+    use agentbus_tests::common::helpers::read_linearizable_snapshot;
     use anyhow::Result;
     use futures::StreamExt as _;
     use futures::TryStreamExt as _;
     use futures::future::try_join;
+    use logact_commit_service_api::CommitError;
     use logact_commit_service_api::CommitIntentionCommand;
     use logact_commit_service_api::CommitIntentionOutcome;
     use logact_commit_service_api::CommitSvc;
+    use logact_commit_service_api::CreateBusCommand;
     use rand::RngExt as _;
 
     use crate::fixtures::CommitServiceTestFixture;
+    use crate::scenarios::decisions::assert_returned_outcome_is_persisted;
+
+    async fn assert_initial_policy_is_appended<F: CommitServiceTestFixture>(
+        fixture: &F,
+        service: &F::Impl,
+        bus_id: &str,
+    ) -> Result<()> {
+        let (entries, _) = read_linearizable_snapshot(
+            service.agent_bus(),
+            bus_id.to_owned(),
+            0,
+            None,
+            fixture.get_env().as_ref(),
+            Some(64),
+        )
+        .await;
+        anyhow::ensure!(
+            !entries.iter().any(|entry| matches!(
+                entry.payload.as_ref().and_then(|p| p.payload.as_ref()),
+                Some(payload::Payload::Intention(_)),
+            )),
+            "creation must not submit an intention"
+        );
+        let policy = entries
+            .iter()
+            .find_map(|entry| match entry.payload.as_ref()?.payload.as_ref()? {
+                payload::Payload::Control(control) => match control.control.as_ref()? {
+                    control::Control::BaseEngineControl(control) => {
+                        match control.control.as_ref()? {
+                            base_engine_control::Control::PolicyBatch(batch) => Some(batch),
+                            _ => None,
+                        }
+                    }
+                },
+                _ => None,
+            })
+            .ok_or_else(|| {
+                anyhow::anyhow!("CreateBus must append its initial policy before any commit")
+            })?;
+        anyhow::ensure!(
+            policy.expected_current_version.is_none(),
+            "initial policy must be a bootstrap batch"
+        );
+        anyhow::ensure!(
+            policy.decider_policy == Some(DeciderPolicy::OnByDefault as i32),
+            "default initial policy must approve"
+        );
+        Ok(())
+    }
 
     fn fresh_agent_id<F: CommitServiceTestFixture>(fixture: &F) -> String {
         let env = fixture.get_env();
@@ -74,6 +131,114 @@ mod defs {
             "concurrent intentions must occupy distinct log positions"
         );
         Ok((first, second))
+    }
+
+    #[scenario]
+    pub async fn run_create_bus_then_commit<F: CommitServiceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let service = fixture.create_impl();
+        let bus_id = fresh_agent_id(fixture);
+        service
+            .create_bus(CreateBusCommand {
+                bus_id: bus_id.clone(),
+            })
+            .await?;
+        assert_initial_policy_is_appended(fixture, &service, &bus_id).await?;
+        let committing_service = fixture.create_impl();
+        let committed = committing_service
+            .commit_intention(intention(bus_id.clone(), "probe"))
+            .await?;
+        anyhow::ensure!(committed.approved, "default policy should approve");
+        assert_returned_outcome_is_persisted(
+            &committing_service,
+            fixture.get_env().as_ref(),
+            &bus_id,
+            &committed,
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[scenario]
+    pub async fn run_concurrent_create_bus<F>(fixture: &F) -> Result<()>
+    where
+        F: CommitServiceTestFixture,
+        F::Impl: Clone,
+    {
+        let first = fixture.create_impl();
+        let second = first.clone();
+        let bus_id = fresh_agent_id(fixture);
+        let command = CreateBusCommand {
+            bus_id: bus_id.clone(),
+        };
+        try_join(
+            first.create_bus(command.clone()),
+            second.create_bus(command),
+        )
+        .await?;
+        assert_initial_policy_is_appended(fixture, &first, &bus_id).await?;
+        let committed = first.commit_intention(intention(bus_id, "probe")).await?;
+        anyhow::ensure!(committed.approved, "created bus should be usable");
+        Ok(())
+    }
+
+    #[scenario]
+    pub async fn run_create_bus_on_existing_uninitialized_bus<F: CommitServiceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let service = fixture.create_impl();
+        let bus_id = fresh_agent_id(fixture);
+        service
+            .agent_bus()
+            .append(AppendRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.clone(),
+                }),
+                payload: Some(Payload {
+                    payload: Some(payload::Payload::AgentInput(AgentInput {
+                        agent_input: Some(agent_input::AgentInput::StringAgentInput(
+                            "existing input".to_owned(),
+                        )),
+                    })),
+                }),
+            })
+            .await?;
+        service
+            .create_bus(CreateBusCommand {
+                bus_id: bus_id.clone(),
+            })
+            .await?;
+        assert_initial_policy_is_appended(fixture, &service, &bus_id).await?;
+        let outcome = service
+            .commit_intention(intention(bus_id.clone(), "probe"))
+            .await?;
+        anyhow::ensure!(
+            outcome.approved,
+            "commit must replay the policy after a nonzero creation append"
+        );
+        assert_returned_outcome_is_persisted(
+            &service,
+            fixture.get_env().as_ref(),
+            &bus_id,
+            &outcome,
+        )
+        .await
+    }
+
+    #[scenario]
+    pub async fn run_create_bus_rejects_invalid_id<F: CommitServiceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let service = fixture.create_impl();
+        for bus_id in ["".to_owned(), "invalid bus".to_owned(), "x".repeat(257)] {
+            let error = service
+                .create_bus(CreateBusCommand { bus_id })
+                .await
+                .expect_err("invalid bus IDs must be rejected");
+            anyhow::ensure!(matches!(error, CommitError::InvalidArgument(_)));
+        }
+        Ok(())
     }
 
     #[scenario]

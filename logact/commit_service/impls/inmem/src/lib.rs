@@ -23,12 +23,20 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use agent_bus_proto_rust::agent_bus::Abort;
+use agent_bus_proto_rust::agent_bus::AddVoterOp;
+use agent_bus_proto_rust::agent_bus::BaseEngineControl;
 use agent_bus_proto_rust::agent_bus::Commit;
+use agent_bus_proto_rust::agent_bus::Control;
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agent_bus_proto_rust::agent_bus::Intention;
 use agent_bus_proto_rust::agent_bus::Payload;
+use agent_bus_proto_rust::agent_bus::PolicyBatch;
+use agent_bus_proto_rust::agent_bus::VoterOp;
+use agent_bus_proto_rust::agent_bus::base_engine_control;
+use agent_bus_proto_rust::agent_bus::control;
 use agent_bus_proto_rust::agent_bus::intention;
 use agent_bus_proto_rust::agent_bus::payload;
+use agent_bus_proto_rust::agent_bus::voter_op;
 use agentbus_api::AgentBusError;
 use agentbus_api::AppendRequest;
 use agentbus_api::Environment;
@@ -39,6 +47,7 @@ use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
+use logact_commit_service_api::CreateBusCommand;
 use logact_commit_service_api::PolicyProvider;
 use logact_commit_service_api::PolicyState;
 use logact_commit_service_api::VersionedPolicyState;
@@ -68,7 +77,7 @@ impl<E: Environment> InMemCommitService<E, StaticConfigPolicyProvider> {
 }
 
 impl<E: Environment, P> InMemCommitService<E, P> {
-    /// Build a service that consults `policy_provider` on the commit path.
+    /// Build a service that consults `policy_provider` on creation and commits.
     pub fn with_policy_provider(environment: Rc<E>, policy_provider: P) -> Self {
         Self {
             bus: InMemoryAgentBus::new(environment),
@@ -114,6 +123,59 @@ where
 
     fn agent_bus(&self) -> &Self::Bus {
         &self.bus
+    }
+
+    async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
+        let initial = self
+            .policy_provider
+            .read(&request.bus_id)
+            .await
+            .map_err(|error| CommitError::Internal(error.into()))?;
+        get_decider_policy(&initial.state).map_err(CommitError::Internal)?;
+        let batch = PolicyBatch {
+            expected_current_version: None,
+            new_version: initial.version,
+            decider_policy: initial.state.decider_policy,
+            voter_ops: initial
+                .state
+                .voters
+                .iter()
+                .map(|(id, config)| {
+                    (
+                        id.clone(),
+                        VoterOp {
+                            op: Some(voter_op::Op::Add(AddVoterOp {
+                                config: Some(config.clone()),
+                            })),
+                        },
+                    )
+                })
+                .collect(),
+        };
+        let position = self
+            .bus
+            .append(AppendRequest {
+                bus_id: Some(agentbus_api::BusId {
+                    agent_bus_id: request.bus_id.clone(),
+                }),
+                payload: Some(Payload {
+                    payload: Some(payload::Payload::Control(Control {
+                        control: Some(control::Control::BaseEngineControl(BaseEngineControl {
+                            control: Some(base_engine_control::Control::PolicyBatch(batch)),
+                        })),
+                    })),
+                }),
+            })
+            .await
+            .map_err(commit_error_from_bus)?
+            .log_position;
+        if position == 0 {
+            self.policy_state
+                .borrow_mut()
+                .entry(request.bus_id)
+                .or_insert(initial);
+        }
+        Ok(())
     }
 
     async fn commit_intention(

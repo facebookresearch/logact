@@ -7,6 +7,24 @@
 
 //! Conversion helpers between the CommitService core API and protobuf types.
 
+/// Translation helpers for the `create_bus` RPC.
+pub mod create_bus {
+    use logact_commit_service_api::CreateBusCommand;
+    use logact_commit_service_grpc_proto_rust::logact_commit_service::CreateBusRequest;
+
+    pub fn proto_from_native_request(command: CreateBusCommand) -> CreateBusRequest {
+        CreateBusRequest {
+            bus_id: command.bus_id,
+        }
+    }
+
+    pub fn native_from_proto_request(request: CreateBusRequest) -> CreateBusCommand {
+        CreateBusCommand {
+            bus_id: request.bus_id,
+        }
+    }
+}
+
 /// Translation helpers for the `commit_intention` RPC.
 pub mod commit_intention {
     use agent_bus_proto_rust::agent_bus::BusId;

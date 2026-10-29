@@ -28,6 +28,7 @@ use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
+use logact_commit_service_api::CreateBusCommand;
 use logact_commit_service_engine::BaseEngine;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
@@ -86,6 +87,10 @@ impl<S: CommitSvc, E: Environment> CommitSvc for RandomRoutingCommitService<S, E
         // `new` rejects an empty service list, and every routed service is
         // constructed over the same logical bus.
         self.services[0].agent_bus()
+    }
+
+    async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
+        self.pick().create_bus(request).await
     }
 
     async fn commit_intention(
@@ -230,6 +235,11 @@ mod tests {
 
         fn agent_bus(&self) -> &Self::Bus {
             &self.bus
+        }
+
+        async fn create_bus(&self, _request: CreateBusCommand) -> CommitResult<()> {
+            self.hits.set(self.hits.get() + 1);
+            Ok(())
         }
 
         async fn commit_intention(

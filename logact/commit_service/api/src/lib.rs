@@ -18,3 +18,4 @@ pub use traits::CommitIntentionCommand;
 pub use traits::CommitIntentionOutcome;
 pub use traits::CommitResult;
 pub use traits::CommitSvc;
+pub use traits::CreateBusCommand;
