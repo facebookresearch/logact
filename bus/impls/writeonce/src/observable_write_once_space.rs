@@ -35,6 +35,7 @@ pub struct ObservableWriteOnceSpace<W, E: Environment> {
     metrics: Rc<dyn AgentBusMetrics>,
     logger: Rc<dyn AgentbusLogger>,
     environment: Rc<E>,
+    component: &'static str,
 }
 
 impl<W: Clone, E: Environment> Clone for ObservableWriteOnceSpace<W, E> {
@@ -44,6 +45,7 @@ impl<W: Clone, E: Environment> Clone for ObservableWriteOnceSpace<W, E> {
             metrics: self.metrics.clone(),
             logger: self.logger.clone(),
             environment: self.environment.clone(),
+            component: self.component,
         }
     }
 }
@@ -60,7 +62,25 @@ impl<W, E: Environment> ObservableWriteOnceSpace<W, E> {
             metrics,
             logger,
             environment,
+            component: COMPONENT,
         }
+    }
+
+    /// Set the component used in metric keys and structured rows.
+    pub fn with_component(mut self, component: &'static str) -> Self {
+        self.component = component;
+        self
+    }
+
+    fn metric_key(&self, operation: &str, metric: &str) -> String {
+        format!("{operation}.{}.{metric}", self.component)
+    }
+
+    fn base_row(&self, row: LogRow, method: &str, space_id: &str, elapsed: Duration) -> LogRow {
+        row.api_call_name(method)
+            .latency_ms(elapsed.as_millis() as u64)
+            .add_string_field("component", self.component)
+            .add_string_field("resource_id", space_id)
     }
 
     fn monotonic_time(&self) -> MonotonicInstant {
@@ -74,13 +94,6 @@ impl<W, E: Environment> ObservableWriteOnceSpace<W, E> {
 
 fn record_latency(metrics: &dyn AgentBusMetrics, key: &str, elapsed: Duration) {
     metrics.record_histogram(key, elapsed.as_micros() as i64, NO_TAGS);
-}
-
-fn base_row(row: LogRow, method: &str, space_id: &str, elapsed: Duration) -> LogRow {
-    row.api_call_name(method)
-        .latency_ms(elapsed.as_millis() as u64)
-        .add_string_field("component", COMPONENT)
-        .add_string_field("resource_id", space_id)
 }
 
 fn tail_error_code(err: &TailError) -> &'static str {
@@ -126,20 +139,24 @@ impl<W: TailableSpace, E: Environment> TailableSpace for ObservableWriteOnceSpac
     async fn tail(&self, space_id: &str, window_size: u64) -> TailResult<u64> {
         let logger = self.logger.clone();
         self.metrics
-            .record_counter("tail.write_once_space.num_calls", 1, NO_TAGS);
+            .record_counter(&self.metric_key("tail", "num_calls"), 1, NO_TAGS);
         let start = self.monotonic_time();
 
         let result = self.inner.tail(space_id, window_size).await;
 
         let elapsed = self.elapsed(start);
-        record_latency(&*self.metrics, "tail.write_once_space.latency_us", elapsed);
+        record_latency(
+            &*self.metrics,
+            &self.metric_key("tail", "latency_us"),
+            elapsed,
+        );
         if result.is_err() {
             self.metrics
-                .record_counter("tail.write_once_space.num_errors", 1, NO_TAGS);
+                .record_counter(&self.metric_key("tail", "num_errors"), 1, NO_TAGS);
         }
 
         let row = LogRow::default().add_i64_field("window_size", window_size as i64);
-        let row = add_tail_result(base_row(row, "tail", space_id, elapsed), &result);
+        let row = add_tail_result(self.base_row(row, "tail", space_id, elapsed), &result);
         logger.log_row(row);
 
         result
@@ -151,9 +168,9 @@ impl<W: WriteOnceSpace, E: Environment> WriteOnceSpace for ObservableWriteOnceSp
         let logger = self.logger.clone();
         let value_bytes = value.len();
         self.metrics
-            .record_counter("write.write_once_space.num_calls", 1, NO_TAGS);
+            .record_counter(&self.metric_key("write", "num_calls"), 1, NO_TAGS);
         self.metrics.record_histogram(
-            "write.write_once_space.value_bytes",
+            &self.metric_key("write", "value_bytes"),
             value_bytes as i64,
             NO_TAGS,
         );
@@ -162,12 +179,16 @@ impl<W: WriteOnceSpace, E: Environment> WriteOnceSpace for ObservableWriteOnceSp
         let result = self.inner.write(space_id, address, value).await;
 
         let elapsed = self.elapsed(start);
-        record_latency(&*self.metrics, "write.write_once_space.latency_us", elapsed);
+        record_latency(
+            &*self.metrics,
+            &self.metric_key("write", "latency_us"),
+            elapsed,
+        );
         match &result {
             Ok(()) => {}
             Err(WriteOnceError::AddressAlreadyExists(_)) => {
                 self.metrics
-                    .record_counter("write.write_once_space.num_conflicts", 1, NO_TAGS);
+                    .record_counter(&self.metric_key("write", "num_conflicts"), 1, NO_TAGS);
             }
             Err(
                 WriteOnceError::TransactionConflict(_)
@@ -176,14 +197,14 @@ impl<W: WriteOnceSpace, E: Environment> WriteOnceSpace for ObservableWriteOnceSp
                 | WriteOnceError::InternalError(_),
             ) => {
                 self.metrics
-                    .record_counter("write.write_once_space.num_errors", 1, NO_TAGS);
+                    .record_counter(&self.metric_key("write", "num_errors"), 1, NO_TAGS);
             }
         }
 
         let row = LogRow::default()
             .add_i64_field("position", address as i64)
             .add_i64_field("value_bytes", value_bytes as i64);
-        let row = add_write_result(base_row(row, "write", space_id, elapsed), &result);
+        let row = add_write_result(self.base_row(row, "write", space_id, elapsed), &result);
         logger.log_row(row);
 
         result
@@ -192,19 +213,23 @@ impl<W: WriteOnceSpace, E: Environment> WriteOnceSpace for ObservableWriteOnceSp
     async fn read(&self, space_id: &str, address: u64) -> Option<Bytes> {
         let logger = self.logger.clone();
         self.metrics
-            .record_counter("read.write_once_space.num_calls", 1, NO_TAGS);
+            .record_counter(&self.metric_key("read", "num_calls"), 1, NO_TAGS);
         let start = self.monotonic_time();
 
         let result = self.inner.read(space_id, address).await;
 
         let elapsed = self.elapsed(start);
-        record_latency(&*self.metrics, "read.write_once_space.latency_us", elapsed);
+        record_latency(
+            &*self.metrics,
+            &self.metric_key("read", "latency_us"),
+            elapsed,
+        );
         if result.is_none() {
             self.metrics
-                .record_counter("read.write_once_space.num_misses", 1, NO_TAGS);
+                .record_counter(&self.metric_key("read", "num_misses"), 1, NO_TAGS);
         }
 
-        let mut row = base_row(
+        let mut row = self.base_row(
             LogRow::default()
                 .add_i64_field("position", address as i64)
                 .add_i64_field("success", 1)
@@ -231,6 +256,7 @@ mod tests {
     use anyhow::anyhow;
 
     use super::*;
+    use crate::CachingWriteOnceSpace;
     use crate::InMemoryWriteOnceSpace;
 
     fn field(row: &LogRow, key: &str) -> Option<String> {
@@ -238,6 +264,89 @@ mod tests {
             .iter()
             .find(|(k, _)| k == key)
             .map(|(_, v)| v.to_string())
+    }
+
+    #[test]
+    fn cached_and_backing_layers_record_separate_metrics() {
+        futures::executor::block_on(async {
+            for max_entries in [0, 2] {
+                let metrics = Rc::new(InMemoryMetrics::new());
+                let logger = Rc::new(InMemoryLogger::new());
+                let environment = Rc::new(RealEnvironment::new());
+                let backing = ObservableWriteOnceSpace::new(
+                    InMemoryWriteOnceSpace::new(),
+                    metrics.clone(),
+                    logger.clone(),
+                    environment.clone(),
+                );
+                let cached = CachingWriteOnceSpace::new(backing, max_entries, 1024)
+                    .with_write_ttl(Duration::from_secs(60));
+                let mut space = ObservableWriteOnceSpace::new(
+                    cached,
+                    metrics.clone(),
+                    logger.clone(),
+                    environment,
+                )
+                .with_component("cached_write_once_space");
+
+                space
+                    .write("space", 0, Bytes::from_static(b"value"))
+                    .await
+                    .expect("initial write should succeed");
+                for _ in 0..2 {
+                    assert_eq!(
+                        space.clone().read("space", 0).await,
+                        Some(Bytes::from_static(b"value"))
+                    );
+                    assert_eq!(space.read("space", 1).await, None);
+                }
+                assert_eq!(space.tail("space", 10).await.unwrap(), 1);
+                assert!(matches!(
+                    space.write("space", 0, Bytes::from_static(b"other")).await,
+                    Err(WriteOnceError::AddressAlreadyExists(0))
+                ));
+
+                let backing_reads = if max_entries == 0 { 4 } else { 2 };
+                assert_eq!(metrics.counter("read.cached_write_once_space.num_calls"), 4);
+                assert_eq!(
+                    metrics.counter("read.write_once_space.num_calls"),
+                    backing_reads,
+                    "only cache misses should reach backing storage when caching is enabled"
+                );
+                for component in ["write_once_space", "cached_write_once_space"] {
+                    assert_eq!(metrics.counter(&format!("write.{component}.num_calls")), 2);
+                    assert_eq!(
+                        metrics.counter(&format!("write.{component}.num_conflicts")),
+                        1
+                    );
+                    assert_eq!(metrics.counter(&format!("read.{component}.num_misses")), 2);
+                    assert_eq!(metrics.counter(&format!("tail.{component}.num_calls")), 1);
+                }
+                assert_eq!(
+                    metrics
+                        .histogram("read.cached_write_once_space.latency_us")
+                        .len(),
+                    4
+                );
+                assert_eq!(
+                    metrics.histogram("read.write_once_space.latency_us").len(),
+                    backing_reads as usize
+                );
+                let rows = logger.rows();
+                for (component, expected) in [
+                    ("cached_write_once_space", 7),
+                    ("write_once_space", backing_reads + 3),
+                ] {
+                    assert_eq!(
+                        rows.iter()
+                            .filter(|row| field(row, "component").as_deref() == Some(component))
+                            .count(),
+                        expected as usize,
+                        "each layer should emit one identifiable row per operation"
+                    );
+                }
+            }
+        });
     }
 
     #[test]
