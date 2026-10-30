@@ -8,6 +8,7 @@
 #[conformance_macros::scenarios(commit_service_decisions_list)]
 mod defs {
 
+    use agent_bus_proto_rust::agent_bus::DeciderPolicy;
     use agent_bus_proto_rust::agent_bus::intention;
     use agent_bus_proto_rust::agent_bus::payload;
     use agentbus_api::Environment;
@@ -19,6 +20,66 @@ mod defs {
     use rand::RngExt as _;
 
     use crate::fixtures::CommitServiceTestFixture;
+    use crate::fixtures::DeciderPolicyFixture;
+
+    #[scenario]
+    pub async fn run_test_concurrent_calls_return_persisted_outcomes<F: DeciderPolicyFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        fixture
+            .set_decider_policy(DeciderPolicy::OnByDefault)
+            .await?;
+        let service = fixture.create_impl();
+        let other_service = fixture.create_impl();
+        let bus_id = format!(
+            "concurrent-decisions-{}",
+            fixture.get_env().with_rng(|rng| rng.random::<u64>())
+        );
+        let command = CommitIntentionCommand {
+            bus_id: agentbus_api::BusId {
+                agent_bus_id: bus_id.clone(),
+            },
+            intention: intention::Intention::StringIntention("concurrent decision".to_string()),
+        };
+        let (first, second) = futures::try_join!(
+            service.commit_intention(command.clone()),
+            other_service.commit_intention(command),
+        )?;
+        anyhow::ensure!(first.approved && second.approved);
+        anyhow::ensure!(first.log_position != second.log_position);
+        let (entries, _) = read_linearizable_snapshot(
+            service.agent_bus(),
+            bus_id,
+            first.log_position.min(second.log_position),
+            None,
+            fixture.get_env().as_ref(),
+            Some(1),
+        )
+        .await;
+        for outcome in [first, second] {
+            let decision = entries
+                .iter()
+                .filter_map(|entry| match entry.payload.as_ref()?.payload.as_ref()? {
+                    payload::Payload::Commit(commit)
+                        if commit.intention_id == outcome.log_position =>
+                    {
+                        Some((true, &commit.reason))
+                    }
+                    payload::Payload::Abort(abort)
+                        if abort.intention_id == outcome.log_position =>
+                    {
+                        Some((false, &abort.reason))
+                    }
+                    _ => None,
+                })
+                .next();
+            anyhow::ensure!(
+                decision == Some((outcome.approved, &outcome.reason)),
+                "each concurrent request must return its first durable decision"
+            );
+        }
+        Ok(())
+    }
 
     #[scenario]
     pub async fn run_test_returned_outcome_is_persisted<F: CommitServiceTestFixture>(

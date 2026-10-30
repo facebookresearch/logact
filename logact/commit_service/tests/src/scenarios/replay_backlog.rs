@@ -155,7 +155,7 @@ mod defs {
         Ok(())
     }
 
-    #[scenario_for(CommitServiceV1LatencyFixture, suffix = v1_latency, sim_only)]
+    #[scenario(sim_only)]
     pub async fn run_test_commit_after_replay_backlog<F>(fixture: &F) -> Result<()>
     where
         F: CommitServiceTestFixture<Env = Simulator>,
@@ -191,6 +191,24 @@ mod defs {
             &seeded_intentions,
             seeded_tail,
             outcome.log_position,
+        )
+        .await?;
+        let next = service
+            .commit_intention(CommitIntentionCommand {
+                bus_id: BusId {
+                    agent_bus_id: BUS_ID.to_string(),
+                },
+                intention: intention::Intention::StringIntention("after recovery".to_string()),
+            })
+            .await?;
+        let mut previous = seeded_intentions;
+        previous.push(outcome.log_position);
+        assert_replay_decisions(
+            service.agent_bus(),
+            environment.as_ref(),
+            &previous,
+            seeded_tail,
+            next.log_position,
         )
         .await?;
         Ok(())
