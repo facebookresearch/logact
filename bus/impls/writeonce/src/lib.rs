@@ -15,12 +15,14 @@
 
 use agentbus_api::WriteOnceError;
 
+mod caching_write_once_space;
 mod channeled_write_once_space;
 mod in_memory_write_once_space;
 mod in_memory_write_once_space_state;
 mod observable_write_once_space;
 mod write_once_agentbus;
 
+pub use caching_write_once_space::CachingWriteOnceSpace;
 pub use channeled_write_once_space::ChanneledWriteOnceSpace;
 pub use channeled_write_once_space::ChanneledWriteOnceSpaceBackend;
 pub use in_memory_write_once_space::InMemoryWriteOnceSpace;

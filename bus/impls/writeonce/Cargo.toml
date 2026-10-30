@@ -14,5 +14,6 @@ agentbus_api = { version = "0.1.0", path = "../../api" }
 anyhow = "1.0.104"
 bytes = { version = "1.12.1", features = ["serde"] }
 futures = { version = "0.3.34", features = ["async-await", "compat"] }
+lru = { version = "0.18.5", default-features = false }
 prost = { version = "0.14.4", default-features = false }
 tracing = { version = "0.1.41", features = ["attributes", "valuable"] }

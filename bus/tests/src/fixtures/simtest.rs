@@ -26,6 +26,7 @@ use crate::common::fault_config::FaultConfig;
 use crate::impls::chained_agentbus::ChainedAgentBus;
 use crate::impls::fault_injecting_agentbus::FaultInjectingAgentBus;
 use crate::simulator::Simulator;
+use crate::write_once_space::fixtures::simtest::CachingWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::ChanneledWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::ConflictOnceWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::FaultInjectingWriteOnceSpaceFixture;
@@ -257,6 +258,20 @@ where
     }
 }
 
+impl<F> WithFaultConfig
+    for WriteOnceAgentBusGenericFixture<
+        CachingWriteOnceSpaceFixture<FaultInjectingWriteOnceSpaceFixture<F>>,
+    >
+where
+    F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace> + SimulatorFixture + 'static,
+    F::Impl: Clone + 'static,
+{
+    fn with_fault_config(simulator: Simulator, config: FaultConfig) -> Self {
+        let inner = FaultInjectingWriteOnceSpaceFixture::<F>::new_with_config(simulator, config);
+        Self::new(Rc::new(CachingWriteOnceSpaceFixture::from_fixture(inner)))
+    }
+}
+
 /// A fault mix encoded as a type, so it can be a `#[scenario_for]` pin parameter.
 pub trait FaultMix {
     const CONFIG: FaultConfig;
@@ -335,6 +350,11 @@ pub type BusChanneled = FaultInjectingFixture<ChanneledAgentBusFixture>;
 pub type BusChained = FaultInjectingFixture<ChainedAgentBusFixture>;
 pub type SpaceInMemory = WriteOnceAgentBusGenericFixture<
     FaultInjectingWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture>,
+>;
+pub type SpaceCaching = WriteOnceAgentBusGenericFixture<
+    CachingWriteOnceSpaceFixture<
+        FaultInjectingWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture>,
+    >,
 >;
 pub type SpaceChanneled = WriteOnceAgentBusGenericFixture<
     FaultInjectingWriteOnceSpaceFixture<ChanneledWriteOnceSpaceFixture>,

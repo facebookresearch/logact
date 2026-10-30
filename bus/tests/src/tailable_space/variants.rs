@@ -51,6 +51,13 @@ macro_rules! tailable_space_fixtures {
             sim
         ]);
         $cb!([
+            $crate::tailable_space::fixtures::WosTailableFixture<
+                $crate::write_once_space::fixtures::simtest::CachingWriteOnceSpaceFixture,
+            >,
+            tail_wos_caching,
+            sim
+        ]);
+        $cb!([
             $crate::tailable_space::fixtures::CwsTailableFixture<
                 $crate::conditional_write_space::fixtures::simtest::InMemoryConditionalWriteSpaceFixture,
             >,

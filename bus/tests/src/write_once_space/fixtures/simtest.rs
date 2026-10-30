@@ -10,6 +10,7 @@
 use std::rc::Rc;
 
 use agentbus_api::WriteOnceSpace;
+use agentbus_writeonce::CachingWriteOnceSpace;
 use agentbus_writeonce::ChanneledWriteOnceSpace;
 use agentbus_writeonce::InMemoryWriteOnceSpace;
 use conformance::ConformanceFixture;
@@ -46,6 +47,54 @@ impl SimulatorFixture for InMemoryWriteOnceSpaceFixture {
             space: InMemoryWriteOnceSpace::new(),
             env: Rc::new(simulator),
         }
+    }
+}
+
+/// Fixture for a bounded cache over another write-once-space fixture.
+pub struct CachingWriteOnceSpaceFixture<F = InMemoryWriteOnceSpaceFixture>
+where
+    F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace>,
+{
+    space: CachingWriteOnceSpace<F::Impl>,
+    env: Rc<Simulator>,
+}
+
+impl<F> CachingWriteOnceSpaceFixture<F>
+where
+    F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace>,
+{
+    pub fn from_fixture(inner: F) -> Self {
+        Self {
+            space: CachingWriteOnceSpace::new(inner.create_impl(), 2, 64 * 1024),
+            env: inner.get_env(),
+        }
+    }
+}
+
+impl<F> ConformanceFixture for CachingWriteOnceSpaceFixture<F>
+where
+    F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace>,
+    F::Impl: Clone,
+{
+    type Env = Simulator;
+    type Impl = CachingWriteOnceSpace<F::Impl>;
+
+    fn get_env(&self) -> Rc<Self::Env> {
+        self.env.clone()
+    }
+
+    fn create_impl(&self) -> Self::Impl {
+        self.space.clone()
+    }
+}
+
+impl<F> SimulatorFixture for CachingWriteOnceSpaceFixture<F>
+where
+    F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace> + SimulatorFixture,
+    F::Impl: Clone,
+{
+    fn new(simulator: Simulator) -> Self {
+        Self::from_fixture(F::new(simulator))
     }
 }
 

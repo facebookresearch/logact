@@ -7,7 +7,7 @@
 
 //! Registry of the `AgentBus` fixtures the suite runs against, in the shape
 //! `define_driver!` expects: one `$cb!([Fixture, suffix, env])` per fixture. The
-//! five simulator fixtures are tagged `sim`; the SQLite and in-process transport
+//! six simulator fixtures are tagged `sim`; the SQLite and in-process transport
 //! fixtures are tagged `integration` so the generated
 //! `agentbus_integration_suite!` drives them. Fixtures are written with absolute
 //! `$crate` paths so callers need no imports. Adding a fixture = one line here.
@@ -28,6 +28,7 @@ macro_rules! agentbus_fixtures {
         $cb!([$crate::fixtures::simtest::BusChained, bus_chained_agentbus, sim] $(, $ctx)?);
         $cb!([$crate::fixtures::simtest::SpaceInMemory, bus_write_once_in_memory, sim] $(, $ctx)?);
         $cb!([$crate::fixtures::simtest::SpaceChanneled, bus_write_once_channeled, sim] $(, $ctx)?);
+        $cb!([$crate::fixtures::simtest::SpaceCaching, bus_write_once_caching, sim] $(, $ctx)?);
         $cb!([$crate::fixtures::integration::SqliteAgentBusFixture, bus_write_once_sqlite, integration] $(, $ctx)?);
         $cb!([$crate::fixtures::integration::IntegrationTestFixture, integration, integration] $(, $ctx)?);
     };

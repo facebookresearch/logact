@@ -37,6 +37,11 @@ macro_rules! write_once_space_fixtures {
             integration
         ]);
         $cb!([
+            $crate::write_once_space::fixtures::simtest::CachingWriteOnceSpaceFixture,
+            wos_caching,
+            sim
+        ]);
+        $cb!([
             $crate::write_once_space::fixtures::simtest::ChanneledWriteOnceSpaceFixture,
             wos_channeled,
             sim

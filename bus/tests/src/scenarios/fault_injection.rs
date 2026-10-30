@@ -42,6 +42,7 @@ mod defs {
     #[scenario_for(agentbus_tests::BusChained, suffix = bus_chained, sim_only)]
     #[scenario_for(agentbus_tests::SpaceInMemory, suffix = space_in_memory, sim_only)]
     #[scenario_for(agentbus_tests::SpaceChanneled, suffix = space_channeled, sim_only)]
+    #[scenario_for(agentbus_tests::SpaceCaching, suffix = space_caching, sim_only)]
     pub async fn run_fi_success<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -100,6 +101,7 @@ mod defs {
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::BusChained, agentbus_tests::Lost>, suffix = bus_chained, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemory, agentbus_tests::Lost>, suffix = space_in_memory, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneled, agentbus_tests::Lost>, suffix = space_channeled, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCaching, agentbus_tests::Lost>, suffix = space_caching, sim_only)]
     pub async fn run_fi_lost<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -120,6 +122,7 @@ mod defs {
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::BusChained, agentbus_tests::CommitThenError>, suffix = bus_chained, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemory, agentbus_tests::CommitThenError>, suffix = space_in_memory, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneled, agentbus_tests::CommitThenError>, suffix = space_channeled, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCaching, agentbus_tests::CommitThenError>, suffix = space_caching, sim_only)]
     pub async fn run_fi_commit_then_error<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -140,6 +143,7 @@ mod defs {
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::BusChained, agentbus_tests::ErrorThenCommit>, suffix = bus_chained, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemory, agentbus_tests::ErrorThenCommit>, suffix = space_in_memory, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneled, agentbus_tests::ErrorThenCommit>, suffix = space_channeled, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCaching, agentbus_tests::ErrorThenCommit>, suffix = space_caching, sim_only)]
     pub async fn run_fi_error_then_commit<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -173,6 +177,7 @@ mod defs {
     // Mixed faults at the space layer: per-client FIFO preserved, so 12 orderings.
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemory, agentbus_tests::Mixed>, suffix = space_in_memory, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneled, agentbus_tests::Mixed>, suffix = space_channeled, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCaching, agentbus_tests::Mixed>, suffix = space_caching, sim_only)]
     pub async fn run_fi_permutations_space<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,

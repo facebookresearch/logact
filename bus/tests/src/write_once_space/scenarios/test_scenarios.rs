@@ -43,6 +43,47 @@ mod defs {
         Ok(())
     }
 
+    /// Test that a missing value becomes visible after another client writes it.
+    #[scenario]
+    pub async fn run_test_read_miss_then_write<F: WriteOnceSpaceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let reader = fixture.create_impl();
+        let mut writer = fixture.create_impl();
+
+        assert_eq!(reader.read(DEFAULT_SPACE, 0).await, None);
+        assert_eq!(reader.read(DEFAULT_SPACE, 0).await, None);
+        writer.write(DEFAULT_SPACE, 0, Bytes::from("later")).await?;
+        assert_eq!(
+            reader.read(DEFAULT_SPACE, 0).await,
+            Some(Bytes::from("later"))
+        );
+        assert_eq!(
+            reader.read(DEFAULT_SPACE, 0).await,
+            Some(Bytes::from("later"))
+        );
+
+        Ok(())
+    }
+
+    /// Test that the same address in different spaces holds independent values.
+    #[scenario]
+    pub async fn run_test_space_isolation<F: WriteOnceSpaceTestFixture>(fixture: &F) -> Result<()> {
+        let mut client1 = fixture.create_impl();
+        let mut client2 = fixture.create_impl();
+
+        client1.write("a", 7, Bytes::from("first")).await?;
+        assert_eq!(client2.read("b", 7).await, None);
+        client2.write("b", 7, Bytes::from("second")).await?;
+
+        for client in [&client1, &client2] {
+            assert_eq!(client.read("a", 7).await, Some(Bytes::from("first")));
+            assert_eq!(client.read("b", 7).await, Some(Bytes::from("second")));
+        }
+
+        Ok(())
+    }
+
     /// Test write-once semantics: first write succeeds, second fails with AddressAlreadyExists.
     #[scenario]
     pub async fn run_test_write_once_semantics<F: WriteOnceSpaceTestFixture>(

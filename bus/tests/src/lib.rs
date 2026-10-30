@@ -34,6 +34,7 @@ pub use fixtures::simtest::ErrorThenCommit;
 pub use fixtures::simtest::FaultFixture;
 pub use fixtures::simtest::Lost;
 pub use fixtures::simtest::Mixed;
+pub use fixtures::simtest::SpaceCaching;
 pub use fixtures::simtest::SpaceChanneled;
 pub use fixtures::simtest::SpaceInMemory;
 pub use fixtures::simtest::SpaceTransactionConflictEmpty;
