@@ -40,8 +40,6 @@ pub use fixtures::simtest::SpaceInMemory;
 pub use fixtures::simtest::SpaceTransactionConflictEmpty;
 pub use fixtures::simtest::SpaceTransactionConflictOccupied;
 pub mod impls;
-#[path = "scenarios/lin_test.rs"]
-pub mod legacy_lin_test;
 pub mod variants;
 pub use agentbus_simulator as simulator;
 pub mod tailable_space;

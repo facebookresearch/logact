@@ -35,8 +35,33 @@ macro_rules! wrap_agentbus_counter_fixture {
 }
 
 #[macro_export]
+macro_rules! wrap_commit_service_counter_fixture {
+    ([$fixture:ty, $suffix:ident, sim], ($cb:path)) => {
+        paste::paste! {
+            $cb!([
+                $crate::fixtures::CommitServiceCounterFixture<$fixture>,
+                [<commit_service_ $suffix>],
+                sim
+            ]);
+        }
+    };
+    ([$fixture:ty, $suffix:ident, integration], ($cb:path)) => {};
+}
+
+#[macro_export]
 macro_rules! counter_fixtures {
     ($cb:path) => {
         agentbus_tests::agentbus_fixtures!($crate::wrap_agentbus_counter_fixture, ($cb));
+        logact_commit_service_tests::commit_service_fixtures!(
+            $crate::wrap_commit_service_counter_fixture,
+            ($cb)
+        );
+    };
+}
+
+#[macro_export]
+macro_rules! counter_commit_service_fixtures {
+    ($cb:path) => {
+        logact_commit_service_tests::commit_service_fixtures!($cb);
     };
 }

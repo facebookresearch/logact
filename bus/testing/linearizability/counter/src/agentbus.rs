@@ -43,6 +43,7 @@ use crate::counter::CounterError;
 use crate::counter::CounterOperation;
 use crate::counter::CounterOutput;
 use crate::counter::CounterSpec;
+use crate::counter::counter_command;
 
 #[derive(Clone, Copy)]
 pub struct Decision {
@@ -604,22 +605,6 @@ pub fn decisions(entries: &[BusEntry]) -> HashMap<i64, Decision> {
             }
         })
         .collect()
-}
-
-pub fn counter_command(entry: &BusEntry) -> Result<Option<CounterCommand>> {
-    let Some(agent_bus_proto_rust::agent_bus::payload::Payload::Intention(intention)) = entry
-        .payload
-        .as_ref()
-        .and_then(|payload| payload.payload.as_ref())
-    else {
-        return Ok(None);
-    };
-    let Some(agent_bus_proto_rust::agent_bus::intention::Intention::StringIntention(body)) =
-        intention.intention.as_ref()
-    else {
-        return Ok(None);
-    };
-    CounterCommand::decode(body)
 }
 
 pub fn log_position(entry: &BusEntry) -> Result<i64> {

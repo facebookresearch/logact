@@ -85,6 +85,30 @@ mod defs {
     pub async fn run_test_returned_outcome_is_persisted<F: CommitServiceTestFixture>(
         fixture: &F,
     ) -> Result<()> {
+        check_returned_outcome_is_persisted(fixture).await?;
+        Ok(())
+    }
+
+    #[scenario]
+    pub async fn run_test_approved_and_denied_outcomes_are_persisted<F: DeciderPolicyFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        for (policy, approved) in [
+            (DeciderPolicy::OnByDefault, true),
+            (DeciderPolicy::OffByDefault, false),
+        ] {
+            fixture.set_decider_policy(policy).await?;
+            anyhow::ensure!(
+                check_returned_outcome_is_persisted(fixture).await? == approved,
+                "{policy:?} must return approved={approved}"
+            );
+        }
+        Ok(())
+    }
+
+    async fn check_returned_outcome_is_persisted<F: CommitServiceTestFixture>(
+        fixture: &F,
+    ) -> Result<bool> {
         let service = fixture.create_impl();
         let bus_id = format!(
             "decisions-{}",
@@ -104,7 +128,8 @@ mod defs {
             &bus_id,
             &outcome,
         )
-        .await
+        .await?;
+        Ok(outcome.approved)
     }
 
     pub async fn assert_returned_outcome_is_persisted<S: CommitSvc, E: Environment>(

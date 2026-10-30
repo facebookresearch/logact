@@ -20,19 +20,19 @@
 /// entry with a per-fixture callback (`$cb`).
 #[macro_export]
 macro_rules! commit_service_fixtures {
-    ($cb:path) => {
+    ($cb:path $(, $ctx:tt)?) => {
         $cb!([
             $crate::fixtures::GrpcCommitServiceFixture,
             grpc_sqlite,
             integration
-        ]);
+        ] $(, $ctx)?);
         // V1 over every AgentBus backend; `$cb` is forwarded through the registry to
         // `cs_bus_bridge`, which emits the V1 fixture per sim bus.
-        agentbus_tests::agentbus_fixtures!($crate::cs_bus_bridge, ($cb));
+        agentbus_tests::agentbus_fixtures!($crate::cs_bus_bridge, ($cb $(, $ctx)?));
         // Deterministic latency-only V1 fixture. Registering it here runs every
         // generic commit-service scenario against the same fixture used by the
         // replay-latency scenario.
-        $cb!([CommitServiceV1LatencyFixture, v1_latency, sim]);
+        $cb!([CommitServiceV1LatencyFixture, v1_latency, sim] $(, $ctx)?);
         // Channeled wrapper over the simple in-memory bus.
         $cb!(
             [
@@ -40,19 +40,21 @@ macro_rules! commit_service_fixtures {
                 channeled_v1_simple_memory,
                 sim
             ]
+            $(, $ctx)?
         );
         // Router over several independent v1 services (one shared bus + storage),
         // dispatching each request to a randomly-picked one.
-        $cb!([RandomRoutingCommitServiceFixture<SimpleMemoryFixture>, random_routing, sim]);
+        $cb!([RandomRoutingCommitServiceFixture<SimpleMemoryFixture>, random_routing, sim] $(, $ctx)?);
         $cb!(
             [
                 RandomRoutingCommitServiceFixture<FaultInjectingFixture<SimpleMemoryFixture>>,
                 random_routing_fault,
                 sim
             ]
+            $(, $ctx)?
         );
         // Standalone in-memory implementation with its own local bus.
-        $cb!([InMemCommitServiceFixture, inmem, sim]);
+        $cb!([InMemCommitServiceFixture, inmem, sim] $(, $ctx)?);
     };
 }
 
@@ -62,8 +64,8 @@ macro_rules! commit_service_fixtures {
 /// only.
 #[macro_export]
 macro_rules! cs_bus_bridge {
-    ([$bus:ty, $sfx:ident, sim], ($cb:path)) => {
-        $cb!([CommitServiceV1Fixture<$bus>, $sfx, sim]);
+    ([$bus:ty, $sfx:ident, sim], ($cb:path $(, $ctx:tt)?)) => {
+        $cb!([CommitServiceV1Fixture<$bus>, $sfx, sim] $(, $ctx)?);
     };
-    ([$bus:ty, $sfx:ident, integration], ($cb:path)) => {};
+    ([$bus:ty, $sfx:ident, integration], ($cb:path $(, $ctx:tt)?)) => {};
 }

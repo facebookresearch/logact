@@ -6,6 +6,7 @@
  */
 
 pub mod agentbus;
+pub mod commit_service;
 pub mod counter;
 pub mod fixtures;
 pub mod variants;

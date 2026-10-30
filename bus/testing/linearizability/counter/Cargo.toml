@@ -23,5 +23,7 @@ conformance = { version = "0.1.0", path = "../../conformance" }
 conformance_macros = { version = "0.1.0", path = "../../conformance_macros" }
 futures = { version = "0.3.34", features = ["async-await", "compat"] }
 linearizability = { version = "0.1.0", path = ".." }
+logact_commit_service_api = { version = "0.1.0", path = "../../../../logact/commit_service/api" }
+logact_commit_service_tests = { version = "0.1.0", path = "../../../../logact/commit_service/tests" }
 paste = "1.0.14"
 rand = "0.10.3"

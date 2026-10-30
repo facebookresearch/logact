@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use agent_bus_proto_rust::agent_bus::BusEntry;
 use agentbus_simulator::Simulator;
 use anyhow::Context as _;
 use anyhow::Result;
@@ -110,6 +111,22 @@ impl CounterCommandExt for CounterCommand {
         anyhow::ensure!(parts.next().is_none(), "counter command has extra fields");
         Ok(Some(Self::new(OperationId { client, sequence }, operation)))
     }
+}
+
+pub fn counter_command(entry: &BusEntry) -> Result<Option<CounterCommand>> {
+    let Some(agent_bus_proto_rust::agent_bus::payload::Payload::Intention(intention)) = entry
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.payload.as_ref())
+    else {
+        return Ok(None);
+    };
+    let Some(agent_bus_proto_rust::agent_bus::intention::Intention::StringIntention(body)) =
+        intention.intention.as_ref()
+    else {
+        return Ok(None);
+    };
+    CounterCommand::decode(body)
 }
 
 /// Pure sequential specification for an ordinary counter.

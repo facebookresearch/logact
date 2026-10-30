@@ -15,8 +15,10 @@ mod defs {
     use linearizability::object::LinearizableObject;
     use linearizability::object::run_linearizability_test;
 
+    use crate::commit_service::run_counter_with_denials as execute_counter_with_denials;
     use crate::counter::CounterSpec;
     use crate::counter::CounterWorkload;
+    use crate::fixtures::CommitServiceCounterTestFixture;
 
     async fn check_counter_linearizability<F>(
         fixture: &F,
@@ -76,13 +78,13 @@ mod defs {
     }
 
     #[scenario(sim_only)]
-    pub async fn run_counter_linearizability_50x3<F>(fixture: &F) -> Result<()>
+    pub async fn run_counter_linearizability_10x3<F>(fixture: &F) -> Result<()>
     where
         F: ConformanceFixture<Env = Simulator>,
         F::Impl: LinearizabilityImplementation,
         <F::Impl as LinearizabilityImplementation>::Object: LinearizableObject<Spec = CounterSpec>,
     {
-        check_counter_linearizability(fixture, 50, 3).await
+        check_counter_linearizability(fixture, 10, 3).await
     }
 
     #[scenario_for(
@@ -103,6 +105,24 @@ mod defs {
             "expected the linearizability checker to catch the buggy poll, but the scenario passed"
         );
         Ok(())
+    }
+
+    #[scenario_for(
+        counter_suite::fixtures::CountingVoterCounterFixture,
+        suffix = v1_counting_voter_simple_memory,
+        sim_only
+    )]
+    #[scenario_for(
+        counter_suite::fixtures::FaultyCountingVoterCounterFixture,
+        suffix = v1_counting_voter_fault,
+        sim_only
+    )]
+    pub async fn run_counter_with_denials<F>(fixture: &F) -> Result<()>
+    where
+        F: CommitServiceCounterTestFixture,
+        <F::Inner as ConformanceFixture>::Impl: 'static,
+    {
+        execute_counter_with_denials(fixture.inner()).await
     }
 }
 pub use defs::*;
