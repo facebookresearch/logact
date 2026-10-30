@@ -16,6 +16,7 @@ use agentbus_tests::fixtures::simtest::FaultInjectingFixture;
 use agentbus_tests::fixtures::simtest::SimpleMemoryFixture;
 use conformance::ConformanceFixture;
 use conformance::SimulatorFixture;
+use logact_commit_service_tests::fixtures::BuggyStalePositionCommitServiceFixture;
 use logact_commit_service_tests::fixtures::CommitServiceTestFixture;
 use logact_commit_service_tests::fixtures::CommitServiceV1CountingVoterFixture;
 use rand::RngExt as _;
@@ -166,6 +167,8 @@ where
 }
 
 pub type BuggyPollCounterFixture = SkipCommitsCounterFixture<ChainedAgentBusBuggyPollFixture>;
+pub type BuggyCommitServiceCounterFixture =
+    CommitServiceCounterFixture<BuggyStalePositionCommitServiceFixture>;
 pub type CountingVoterCounterFixture =
     CommitServiceCounterFixture<CommitServiceV1CountingVoterFixture<SimpleMemoryFixture>>;
 pub type FaultyCountingVoterCounterFixture = CommitServiceCounterFixture<

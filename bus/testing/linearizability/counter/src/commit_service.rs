@@ -126,7 +126,7 @@ pub struct CommitServiceCounter<S> {
 }
 
 impl<S> CommitServiceCounter<S> {
-    fn new(service: S, agent_id: String) -> Self {
+    pub(crate) fn new(service: S, agent_id: String) -> Self {
         Self {
             service,
             agent_id,
@@ -181,7 +181,7 @@ impl<S: CommitSvc> CommitServiceCounter<S> {
         Ok(())
     }
 
-    async fn execute_counter(
+    pub(crate) async fn execute_counter(
         &self,
         command: CounterCommand,
     ) -> Result<OperationResult<CounterOutput, i64>> {

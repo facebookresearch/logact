@@ -11,11 +11,16 @@ mod defs {
     use agentbus_simulator::Simulator;
     use anyhow::Result;
     use conformance::ConformanceFixture;
+    use linearizability::history::OperationId;
+    use linearizability::object::Client;
     use linearizability::object::LinearizabilityImplementation;
     use linearizability::object::LinearizableObject;
     use linearizability::object::run_linearizability_test;
 
+    use crate::commit_service::CommitServiceCounter;
     use crate::commit_service::run_counter_with_denials as execute_counter_with_denials;
+    use crate::counter::CounterCommand;
+    use crate::counter::CounterOperation;
     use crate::counter::CounterSpec;
     use crate::counter::CounterWorkload;
     use crate::fixtures::CommitServiceCounterTestFixture;
@@ -103,6 +108,75 @@ mod defs {
         anyhow::ensure!(
             result.is_err(),
             "expected the linearizability checker to catch the buggy poll, but the scenario passed"
+        );
+        Ok(())
+    }
+
+    async fn check_two_increments<F>(fixture: &F) -> Result<usize>
+    where
+        F: ConformanceFixture<Env = Simulator>,
+        F::Impl: LinearizabilityImplementation,
+        <F::Impl as LinearizabilityImplementation>::Object: LinearizableObject<Spec = CounterSpec>,
+    {
+        run_linearizability_test(
+            vec![Client::new("counter", vec![CounterOperation::Increment; 2])],
+            fixture.create_impl(),
+        )
+        .await
+    }
+
+    #[scenario_for(
+        counter_suite::fixtures::CommitServiceCounterFixture<
+            logact_commit_service_tests::fixtures::InMemCommitServiceFixture
+        >,
+        suffix = inmem,
+        sim_only,
+        seed = 0
+    )]
+    pub async fn run_commit_service_two_increments<F>(fixture: &F) -> Result<()>
+    where
+        F: ConformanceFixture<Env = Simulator>,
+        F::Impl: LinearizabilityImplementation,
+        <F::Impl as LinearizabilityImplementation>::Object: LinearizableObject<Spec = CounterSpec>,
+    {
+        anyhow::ensure!(check_two_increments(fixture).await? == 2);
+        Ok(())
+    }
+
+    #[scenario_for(
+        counter_suite::fixtures::BuggyCommitServiceCounterFixture,
+        suffix = buggy_commit_service_stale_position,
+        sim_only,
+        seed = 0
+    )]
+    pub async fn run_buggy_commit_service_is_caught<F>(fixture: &F) -> Result<()>
+    where
+        F: CommitServiceCounterTestFixture,
+    {
+        let counter =
+            CommitServiceCounter::new(fixture.inner().create_impl(), "counter".to_owned());
+        counter
+            .execute_counter(CounterCommand::new(
+                OperationId {
+                    client: 0,
+                    sequence: 0,
+                },
+                CounterOperation::Increment,
+            ))
+            .await?;
+        let error = counter
+            .execute_counter(CounterCommand::new(
+                OperationId {
+                    client: 0,
+                    sequence: 1,
+                },
+                CounterOperation::Increment,
+            ))
+            .await
+            .expect_err("adapter should reject the stale CommitService position");
+        anyhow::ensure!(
+            error.to_string().contains("does not match command"),
+            "expected a stale counter response failure, got {error:#}"
         );
         Ok(())
     }

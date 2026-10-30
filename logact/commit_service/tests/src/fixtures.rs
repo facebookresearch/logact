@@ -31,6 +31,7 @@ use logact_commit_service_v1::DelegatingVoterFactory;
 use logact_commit_service_v1::StaticConfigPolicyProvider;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 
+pub mod buggy_stale_position;
 pub mod channeled;
 pub mod grpc;
 pub mod inmem;
@@ -39,6 +40,7 @@ pub mod v1;
 pub mod v1_latency;
 pub mod v1_with_counting_voter;
 
+pub use buggy_stale_position::BuggyStalePositionCommitServiceFixture;
 pub use channeled::ChanneledCommitServiceFixture;
 pub use conformance::ConformanceFixture;
 pub use conformance::SimulatorFixture;
