@@ -8,6 +8,7 @@
 pub mod agentbus;
 pub mod commit_service;
 pub mod fixtures;
+pub mod gate_race;
 pub mod model;
 pub mod variants;
 
