@@ -139,8 +139,10 @@ where
     P::Controller: SettableDeciderPolicy,
     S: Storage + 'static,
 {
-    async fn set_decider_policy(&self, policy: DeciderPolicy) -> anyhow::Result<()> {
-        self.policy_controller.set_decider_policy(policy).await
+    type Controller = P::Controller;
+
+    fn policy_controller(&self) -> Self::Controller {
+        self.policy_controller.clone()
     }
 }
 

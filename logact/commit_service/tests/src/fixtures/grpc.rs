@@ -8,13 +8,11 @@
 //! CommitService conformance fixture over the local gRPC and SQLite stack.
 
 use std::path::Path;
-use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agentbus_api::RealEnvironment;
 use anyhow::Context as _;
 use anyhow::Result;
@@ -30,11 +28,10 @@ use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 
 use crate::fixtures::DeciderPolicyFixture;
-use crate::fixtures::SettableDeciderPolicy;
 
 pub struct GrpcCommitServiceFixture {
     client: GrpcCommitSvcClient,
-    sqlite_path: PathBuf,
+    policy_controller: PolicyRegister<SqliteStorage>,
     environment: Rc<RealEnvironment>,
     server: JoinHandle<Result<()>>,
     _temp: Arc<TempDir>,
@@ -90,7 +87,10 @@ impl IntegrationFixture for GrpcCommitServiceFixture {
 
         Ok(Self {
             client,
-            sqlite_path,
+            policy_controller: PolicyRegister::new(
+                Rc::new(SqliteStorage::open(sqlite_path)?),
+                "policy",
+            ),
             environment: Rc::new(RealEnvironment::new()),
             server,
             _temp: temp,
@@ -123,14 +123,9 @@ async fn connect(socket: &Path) -> Result<Channel> {
 }
 
 impl DeciderPolicyFixture for GrpcCommitServiceFixture {
-    async fn set_decider_policy(&self, policy: DeciderPolicy) -> Result<()> {
-        let path = self.sqlite_path.clone();
-        tokio::task::spawn_blocking(move || {
-            let storage = Rc::new(SqliteStorage::open(path)?);
-            let register = PolicyRegister::new(storage, "policy");
-            tokio::runtime::Handle::current().block_on(register.set_decider_policy(policy))
-        })
-        .await
-        .context("policy update task failed")?
+    type Controller = PolicyRegister<SqliteStorage>;
+
+    fn policy_controller(&self) -> Self::Controller {
+        self.policy_controller.clone()
     }
 }

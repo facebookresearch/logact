@@ -24,6 +24,7 @@ mod defs {
     use rand::RngExt as _;
 
     use crate::fixtures::DeciderPolicyFixture;
+    use crate::fixtures::SettableDeciderPolicy;
     use crate::simulator::Simulator;
 
     fn intention(agent_id: &str) -> CommitIntentionCommand {
@@ -46,10 +47,11 @@ mod defs {
     {
         let env = fixture.get_env();
         let svc = fixture.create_impl();
+        let policy_controller = fixture.policy_controller();
         let agent_id = format!("gate-{}", env.with_rng(|rng| rng.random::<u64>()));
 
         // Closed: OFF_BY_DEFAULT with no voter denies.
-        fixture
+        policy_controller
             .set_decider_policy(DeciderPolicy::OffByDefault)
             .await?;
         let denied = svc.commit_intention(intention(&agent_id)).await?;
@@ -60,7 +62,7 @@ mod defs {
         );
 
         // Open: ON_BY_DEFAULT approves.
-        fixture
+        policy_controller
             .set_decider_policy(DeciderPolicy::OnByDefault)
             .await?;
         let approved = svc.commit_intention(intention(&agent_id)).await?;

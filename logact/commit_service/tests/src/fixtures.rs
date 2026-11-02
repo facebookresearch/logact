@@ -92,10 +92,19 @@ impl<F: ConformanceFixture<Impl: CommitSvc>> CommitServiceTestFixture for F {}
 /// A fixture that can update the decider policy used by its commit service.
 /// The next `commit_intention` observes an installed policy.
 pub trait DeciderPolicyFixture: CommitServiceTestFixture {
+    type Controller: SettableDeciderPolicy;
+
+    fn policy_controller(&self) -> Self::Controller;
+
     fn set_decider_policy(
         &self,
         policy: DeciderPolicy,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>>;
+    ) -> impl std::future::Future<Output = anyhow::Result<()>> {
+        async move {
+            self.policy_controller().set_decider_policy(policy).await?;
+            Ok(())
+        }
+    }
 }
 
 /// A `PolicyProvider` and its test-only controller, constructed together.
@@ -146,15 +155,28 @@ pub trait SettableDeciderPolicy {
     fn set_decider_policy(
         &self,
         policy: DeciderPolicy,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>>;
+    ) -> impl std::future::Future<Output = anyhow::Result<i64>>;
+
+    fn read_decider_policy(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<(DeciderPolicy, i64)>>;
 }
 
 impl<S: Storage> SettableDeciderPolicy for PolicyRegister<S> {
-    async fn set_decider_policy(&self, policy: DeciderPolicy) -> anyhow::Result<()> {
+    async fn set_decider_policy(&self, policy: DeciderPolicy) -> anyhow::Result<i64> {
         let mut current = self.read_validated().await?;
         current.state.decider_policy = Some(policy as i32);
-        self.set_policy(&current.state, Some(current.version))
-            .await?;
-        Ok(())
+        Ok(self
+            .set_policy(&current.state, Some(current.version))
+            .await?)
+    }
+
+    async fn read_decider_policy(&self) -> anyhow::Result<(DeciderPolicy, i64)> {
+        let versioned = self.read_validated().await?;
+        let raw = versioned
+            .state
+            .decider_policy
+            .expect("PolicyRegister validation requires a decider policy");
+        Ok((DeciderPolicy::try_from(raw)?, versioned.version))
     }
 }

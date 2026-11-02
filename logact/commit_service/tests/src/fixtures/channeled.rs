@@ -9,7 +9,6 @@
 
 use std::rc::Rc;
 
-use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_core::ChanneledCommitService;
 
@@ -77,7 +76,9 @@ where
     CF: DeciderPolicyFixture<Env = Simulator>,
     <CF::Impl as CommitSvc>::Bus: Clone,
 {
-    async fn set_decider_policy(&self, policy: DeciderPolicy) -> anyhow::Result<()> {
-        self._inner.set_decider_policy(policy).await
+    type Controller = CF::Controller;
+
+    fn policy_controller(&self) -> Self::Controller {
+        self._inner.policy_controller()
     }
 }

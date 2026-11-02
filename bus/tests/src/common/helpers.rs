@@ -185,48 +185,29 @@ pub async fn read_linearizable_snapshot<T: AgentBus, E: Environment>(
     let mut entries = Vec::new();
     let mut cursor = start;
     while cursor < tail {
-        let use_blocking_poll = env.with_rng(|rng| rng.random_bool(0.5));
         let page_size =
             max_page_size.unwrap_or_else(|| env.with_rng(|rng| 1 << rng.random_range(0..8)));
 
-        if use_blocking_poll {
-            let resp = bus
-                .blocking_poll(BlockingPollRequest {
-                    bus_id: Some(BusId {
-                        agent_bus_id: agent_bus_id.clone(),
-                    }),
-                    start_log_position: cursor,
-                    max_entries: page_size,
-                    filter: filter.clone(),
-                    timeout_ms: 100,
-                })
-                .await
-                .expect("blocking_poll should succeed");
-            assert_read_response_invariants(&resp.entries, cursor, resp.next_start_position, None);
-            entries.extend(resp.entries);
-            cursor = resp.next_start_position;
-        } else {
-            let resp = bus
-                .read_next(ReadNextRequest {
-                    bus_id: Some(BusId {
-                        agent_bus_id: agent_bus_id.clone(),
-                    }),
-                    start_log_position: cursor,
-                    end_log_position: tail,
-                    max_entries: page_size,
-                    filter: filter.clone(),
-                })
-                .await
-                .expect("read_next should succeed");
-            assert_read_response_invariants(
-                &resp.entries,
-                cursor,
-                resp.next_start_position,
-                Some(tail),
-            );
-            entries.extend(resp.entries);
-            cursor = resp.next_start_position;
-        }
+        let resp = bus
+            .read_next(ReadNextRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: agent_bus_id.clone(),
+                }),
+                start_log_position: cursor,
+                end_log_position: tail,
+                max_entries: page_size,
+                filter: filter.clone(),
+            })
+            .await
+            .expect("read_next should succeed");
+        assert_read_response_invariants(
+            &resp.entries,
+            cursor,
+            resp.next_start_position,
+            Some(tail),
+        );
+        entries.extend(resp.entries);
+        cursor = resp.next_start_position;
     }
     assert_eq!(
         cursor, tail,

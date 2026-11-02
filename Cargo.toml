@@ -17,6 +17,7 @@ members = [
   "bus/testing/conformance_macros",
   "bus/testing/linearizability",
   "bus/testing/linearizability/counter",
+  "bus/testing/linearizability/gated_counter",
   "bus/tests",
   "bus/voters/factory",
   "bus/voters/llm",

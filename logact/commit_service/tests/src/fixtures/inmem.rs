@@ -12,7 +12,6 @@
 
 use std::rc::Rc;
 
-use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_inmem::InMemCommitService;
@@ -20,20 +19,22 @@ use logact_commit_service_v1::SynchronousRegisterProvider;
 
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::DeciderPolicyFixture;
-use crate::fixtures::SettableDeciderPolicy;
 use crate::fixtures::SimulatorFixture;
 use crate::fixtures::TestPolicyProvider;
 use crate::simulator::Simulator;
 
+type PolicyProvider = SynchronousRegisterProvider<InMemoryStorage>;
+type PolicyController = PolicyRegister<InMemoryStorage>;
+
 pub struct InMemCommitServiceFixture {
     env: Rc<Simulator>,
-    service: InMemCommitService<Simulator, SynchronousRegisterProvider<InMemoryStorage>>,
-    policy_controller: PolicyRegister<InMemoryStorage>,
+    service: InMemCommitService<Simulator, PolicyProvider>,
+    policy_controller: PolicyController,
 }
 
 impl ConformanceFixture for InMemCommitServiceFixture {
     type Env = Simulator;
-    type Impl = InMemCommitService<Simulator, SynchronousRegisterProvider<InMemoryStorage>>;
+    type Impl = InMemCommitService<Simulator, PolicyProvider>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -47,9 +48,9 @@ impl ConformanceFixture for InMemCommitServiceFixture {
 impl SimulatorFixture for InMemCommitServiceFixture {
     fn new(simulator: Simulator) -> Self {
         let env = Rc::new(simulator);
-        let (policy, policy_controller) = SynchronousRegisterProvider::for_test();
+        let (policy_provider, policy_controller) = PolicyProvider::for_test();
         Self {
-            service: InMemCommitService::with_policy_provider(env.clone(), policy),
+            service: InMemCommitService::with_policy_provider(env.clone(), policy_provider),
             policy_controller,
             env,
         }
@@ -57,7 +58,9 @@ impl SimulatorFixture for InMemCommitServiceFixture {
 }
 
 impl DeciderPolicyFixture for InMemCommitServiceFixture {
-    async fn set_decider_policy(&self, policy: DeciderPolicy) -> anyhow::Result<()> {
-        self.policy_controller.set_decider_policy(policy).await
+    type Controller = PolicyController;
+
+    fn policy_controller(&self) -> Self::Controller {
+        self.policy_controller.clone()
     }
 }

@@ -19,7 +19,6 @@
 
 use std::rc::Rc;
 
-use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agentbus_api::AgentBus;
 use agentbus_api::Environment;
 use agentbus_tests::fixtures::AgentBusTestFixture;
@@ -198,9 +197,10 @@ where
     P: TestPolicyProvider,
     P::Controller: SettableDeciderPolicy,
 {
-    /// Sets the one register every routed engine reads, so all of them switch.
-    async fn set_decider_policy(&self, policy: DeciderPolicy) -> anyhow::Result<()> {
-        self.policy_controller.set_decider_policy(policy).await
+    type Controller = P::Controller;
+
+    fn policy_controller(&self) -> Self::Controller {
+        self.policy_controller.clone()
     }
 }
 
