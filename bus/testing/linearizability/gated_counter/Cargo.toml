@@ -13,6 +13,7 @@ name = "gated_counter_sim_tests"
 path = "src/sim_tests.rs"
 
 [dependencies]
+agent_bus_proto-rust = { path = "../../../proto" }
 agentbus_api = { version = "0.1.0", path = "../../../api" }
 agentbus_core = { version = "0.1.0", path = "../../../core" }
 agentbus_simulator = { version = "0.1.0", path = "../../../simulator" }
