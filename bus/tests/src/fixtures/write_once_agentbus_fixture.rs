@@ -60,11 +60,9 @@ where
     }
 
     fn create_impl(&self) -> Self::Impl {
-        WriteOnceAgentBus::new(
-            self.space_fixture.create_impl(),
-            self.space_fixture.get_env(),
-            None,
-        )
+        let space = self.space_fixture.create_impl();
+        let environment = self.space_fixture.get_env();
+        WriteOnceAgentBus::new(space, environment, None)
     }
 }
 

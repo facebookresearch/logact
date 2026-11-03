@@ -19,6 +19,10 @@ use logact_commit_service_tests::fixtures::CommitServiceV1LatencyFixture;
 use logact_commit_service_tests::fixtures::CommitServiceV1StorageConflictFixture;
 use logact_commit_service_tests::fixtures::InMemCommitServiceFixture;
 use logact_commit_service_tests::fixtures::RandomRoutingCommitServiceFixture;
+use logact_commit_service_tests::scenarios::ThreadHeapCounter;
 use logact_commit_service_v1::StaticConfigPolicyProvider;
+
+#[global_allocator]
+static ALLOC: ThreadHeapCounter = ThreadHeapCounter;
 
 commit_service_sim_suite!();

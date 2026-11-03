@@ -8,8 +8,10 @@
 //! Test fixtures for different AgentBus implementations
 
 use std::marker::PhantomData;
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 
+use agentbus_api::InMemoryMetrics;
 use agentbus_api::NoopLogger;
 use agentbus_api::NoopMetrics;
 use agentbus_api::WriteOnceSpace;
@@ -17,6 +19,9 @@ use agentbus_api::metrics::AgentBusMetrics;
 use agentbus_core::ChanneledAgentBus;
 use agentbus_observable::ObservableAgentBus;
 use agentbus_simple::InMemoryAgentBus;
+use agentbus_writeonce::InMemoryWriteOnceSpace;
+use agentbus_writeonce::ObservableWriteOnceSpace;
+use agentbus_writeonce::WriteOnceAgentBus;
 use conformance::ConformanceFixture;
 use rand::distr::Uniform;
 
@@ -31,6 +36,59 @@ use crate::write_once_space::fixtures::simtest::ChanneledWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::ConflictOnceWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::FaultInjectingWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::InMemoryWriteOnceSpaceFixture;
+
+/// A write-once AgentBus over in-memory storage, with an explicit cache capacity.
+/// Instances created by the fixture have independent caches and share storage
+/// and operation metrics. Cloning a bus shares its cache.
+pub struct InMemoryWriteOnceAgentBusFixture<const CACHE_CAPACITY: usize> {
+    space_fixture: InMemoryWriteOnceSpaceFixture,
+    metrics: Rc<InMemoryMetrics>,
+}
+
+impl<const CACHE_CAPACITY: usize> InMemoryWriteOnceAgentBusFixture<CACHE_CAPACITY> {
+    pub fn metrics(&self) -> &InMemoryMetrics {
+        &self.metrics
+    }
+}
+
+impl<const CACHE_CAPACITY: usize> ConformanceFixture
+    for InMemoryWriteOnceAgentBusFixture<CACHE_CAPACITY>
+{
+    type Env = Simulator;
+    type Impl =
+        WriteOnceAgentBus<ObservableWriteOnceSpace<InMemoryWriteOnceSpace, Simulator>, Simulator>;
+
+    fn get_env(&self) -> Rc<Self::Env> {
+        self.space_fixture.get_env()
+    }
+
+    fn create_impl(&self) -> Self::Impl {
+        let environment = self.get_env();
+        let space = ObservableWriteOnceSpace::new(
+            self.space_fixture.create_impl(),
+            self.metrics.clone(),
+            Rc::new(NoopLogger),
+            environment.clone(),
+        );
+        WriteOnceAgentBus::new_with_cache_capacity(
+            space,
+            environment,
+            None,
+            NonZeroUsize::new(CACHE_CAPACITY).expect("cache capacity must be nonzero"),
+        )
+    }
+}
+
+impl<const CACHE_CAPACITY: usize> SimulatorFixture
+    for InMemoryWriteOnceAgentBusFixture<CACHE_CAPACITY>
+{
+    fn new(simulator: Simulator) -> Self {
+        Self {
+            space_fixture: InMemoryWriteOnceSpaceFixture::new(simulator),
+            metrics: Rc::new(InMemoryMetrics::new()),
+        }
+    }
+}
 
 /// Fixture for testing InMemoryAgentBus
 /// Owns an InMemoryAgentBus instance that can be cloned to share state

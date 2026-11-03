@@ -11,7 +11,7 @@
 //! instances can share the same WriteOnceSpace, enabling testing of contention and retry-on-conflict.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 
 use agent_bus_proto_rust::agent_bus::*;
@@ -25,6 +25,7 @@ use agentbus_api::environment::Environment;
 use agentbus_api::payload_matches_filter;
 use agentbus_api::validate_bus_id;
 use bytes::Bytes;
+use lru::LruCache;
 use prost::Message as ProstMessage;
 use tracing::debug;
 use tracing::error;
@@ -35,6 +36,8 @@ const MAX_POLL_ENTRIES: usize = 64;
 const TAIL_WINDOW_SIZE: u64 = 1;
 const DEFAULT_BLOCKING_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 const SPACE_PREFIX: &str = "bus/";
+const DEFAULT_NEXT_POSITIONS_CACHE_CAPACITY: NonZeroUsize =
+    NonZeroUsize::new(100_000).expect("default cache capacity is nonzero");
 
 fn prefixed_space_id(bus_id: &str) -> String {
     format!("{}{}", SPACE_PREFIX, bus_id)
@@ -48,17 +51,17 @@ fn tail_error_to_bus(error: TailError) -> AgentBusError {
 struct WriteOnceAgentBusState<W: WriteOnceSpace, E: Environment> {
     space: W,
     environment: Rc<E>,
-    next_positions: HashMap<String, u64>,
+    next_positions: LruCache<String, u64>,
     blocking_poll_interval: std::time::Duration,
 }
 
 impl<W: WriteOnceSpace, E: Environment> WriteOnceAgentBusState<W, E> {
     fn get_next_position(&mut self, bus_id: &str) -> u64 {
-        *self.next_positions.entry(bus_id.to_string()).or_insert(0)
+        *self.next_positions.get_or_insert_ref(bus_id, || 0)
     }
 
     fn set_next_position(&mut self, bus_id: &str, position: u64) {
-        self.next_positions.insert(bus_id.to_string(), position);
+        self.next_positions.put(bus_id.to_string(), position);
     }
 }
 
@@ -92,11 +95,27 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment> WriteOnceAgentBus<W, E
         environment: Rc<E>,
         blocking_poll_interval: Option<std::time::Duration>,
     ) -> Self {
+        Self::new_with_cache_capacity(
+            space,
+            environment,
+            blocking_poll_interval,
+            DEFAULT_NEXT_POSITIONS_CACHE_CAPACITY,
+        )
+    }
+
+    /// Construct a bus with a bounded LRU cache of append-position hints.
+    /// Evicted positions are rediscovered through the existing write-conflict retry.
+    pub fn new_with_cache_capacity(
+        space: W,
+        environment: Rc<E>,
+        blocking_poll_interval: Option<std::time::Duration>,
+        next_positions_capacity: NonZeroUsize,
+    ) -> Self {
         Self {
             state: Rc::new(RefCell::new(WriteOnceAgentBusState {
                 space,
                 environment,
-                next_positions: HashMap::new(),
+                next_positions: LruCache::new(next_positions_capacity),
                 blocking_poll_interval: blocking_poll_interval
                     .unwrap_or(DEFAULT_BLOCKING_POLL_INTERVAL),
             })),
