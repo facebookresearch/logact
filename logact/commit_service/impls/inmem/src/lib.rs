@@ -238,16 +238,23 @@ impl ReplayState {
                     Some(control::Control::BaseEngineControl(BaseEngineControl {
                         control: Some(base_engine_control::Control::PolicyBatch(batch)),
                     })),
-            })) if batch.expected_current_version == self.policy.map(|(version, _)| version) => {
-                let raw = batch
-                    .decider_policy
-                    .context("policy batch has no decider policy")
-                    .map_err(CommitError::Internal)?;
-                let policy = DeciderPolicy::try_from(raw)
-                    .context("policy batch has unrecognized decider policy")
-                    .map_err(CommitError::Internal)?;
+            })) if batch.expected_current_version == self.policy.map(|(version, _)| version)
+                && batch
+                    .expected_current_version
+                    .is_none_or(|current| batch.new_version > current) =>
+            {
+                let policy = match batch.decider_policy {
+                    Some(raw) => {
+                        self.pending = None;
+                        DeciderPolicy::try_from(raw)
+                            .context("policy batch has unrecognized decider policy")
+                            .map_err(CommitError::Internal)?
+                    }
+                    None => self
+                        .policy
+                        .map_or(DeciderPolicy::OnByDefault, |(_, policy)| policy),
+                };
                 self.policy = Some((batch.new_version, policy));
-                self.pending = None;
                 None
             }
             Some(payload::Payload::Intention(intention)) => {
