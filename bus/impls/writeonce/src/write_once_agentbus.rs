@@ -47,6 +47,23 @@ fn tail_error_to_bus(error: TailError) -> AgentBusError {
     AgentBusError::Unavailable(anyhow::Error::new(error).context("Failed to find tail"))
 }
 
+fn read_error_to_bus(error: WriteOnceError) -> AgentBusError {
+    match error {
+        error @ WriteOnceError::Timeout(_) => {
+            AgentBusError::Timeout(anyhow::Error::new(error).context("WriteOnceSpace read failed"))
+        }
+        error
+        @ (WriteOnceError::BackendUnavailable(_) | WriteOnceError::TransactionConflict(_)) => {
+            AgentBusError::Unavailable(
+                anyhow::Error::new(error).context("WriteOnceSpace read failed"),
+            )
+        }
+        error @ (WriteOnceError::InternalError(_) | WriteOnceError::AddressAlreadyExists(_)) => {
+            AgentBusError::Internal(anyhow::Error::new(error).context("WriteOnceSpace read failed"))
+        }
+    }
+}
+
 /// Shared state across all clones of a WriteOnceAgentBus
 struct WriteOnceAgentBusState<W: WriteOnceSpace, E: Environment> {
     space: W,
@@ -249,7 +266,10 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
         let mut pos = start_position;
 
         while pos < end_position {
-            let serialized = space.read(&prefixed_space_id(&bus_id), pos).await;
+            let serialized = space
+                .read(&prefixed_space_id(&bus_id), pos)
+                .await
+                .map_err(read_error_to_bus)?;
 
             if let Some(serialized) = serialized {
                 if let Some(stored_entry) = deserialize_entry(&serialized) {
@@ -393,7 +413,10 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> WriteOnceAgentBus<W, E
         let mut pos = start_position;
 
         while pos < end_position {
-            let serialized = space.read(&prefixed_space_id(agent_bus_id), pos).await;
+            let serialized = space
+                .read(&prefixed_space_id(agent_bus_id), pos)
+                .await
+                .map_err(read_error_to_bus)?;
 
             if let Some(serialized) = serialized {
                 if let Some(stored_entry) = deserialize_entry(&serialized) {

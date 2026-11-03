@@ -210,7 +210,7 @@ impl<W: WriteOnceSpace, E: Environment> WriteOnceSpace for ObservableWriteOnceSp
         result
     }
 
-    async fn read(&self, space_id: &str, address: u64) -> Option<Bytes> {
+    async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
         let logger = self.logger.clone();
         self.metrics
             .record_counter(&self.metric_key("read", "num_calls"), 1, NO_TAGS);
@@ -224,23 +224,36 @@ impl<W: WriteOnceSpace, E: Environment> WriteOnceSpace for ObservableWriteOnceSp
             &self.metric_key("read", "latency_us"),
             elapsed,
         );
-        if result.is_none() {
+        if matches!(&result, Ok(None)) {
             self.metrics
                 .record_counter(&self.metric_key("read", "num_misses"), 1, NO_TAGS);
         }
+        if result.is_err() {
+            self.metrics
+                .record_counter(&self.metric_key("read", "num_errors"), 1, NO_TAGS);
+        }
 
         let mut row = self.base_row(
-            LogRow::default()
-                .add_i64_field("position", address as i64)
-                .add_i64_field("success", 1)
-                .add_i64_field("hit", if result.is_some() { 1 } else { 0 }),
+            LogRow::default().add_i64_field("position", address as i64),
             "read",
             space_id,
             elapsed,
         );
-        if let Some(value) = &result {
-            row = row.add_i64_field("value_bytes", value.len() as i64);
-        }
+        row = match &result {
+            Ok(value) => {
+                let row = row
+                    .add_i64_field("success", 1)
+                    .add_i64_field("hit", if value.is_some() { 1 } else { 0 });
+                match value {
+                    Some(value) => row.add_i64_field("value_bytes", value.len() as i64),
+                    None => row,
+                }
+            }
+            Err(error) => row
+                .add_i64_field("success", 0)
+                .error_code(write_once_error_code(error))
+                .error_message(write_once_error_message(error)),
+        };
         logger.log_row(row);
 
         result
@@ -295,10 +308,10 @@ mod tests {
                     .expect("initial write should succeed");
                 for _ in 0..2 {
                     assert_eq!(
-                        space.clone().read("space", 0).await,
+                        space.clone().read("space", 0).await.unwrap(),
                         Some(Bytes::from_static(b"value"))
                     );
-                    assert_eq!(space.read("space", 1).await, None);
+                    assert_eq!(space.read("space", 1).await.unwrap(), None);
                 }
                 assert_eq!(space.tail("space", 10).await.unwrap(), 1);
                 assert!(matches!(
@@ -418,10 +431,10 @@ mod tests {
             assert_eq!(metrics.counter("write.write_once_space.num_conflicts"), 1);
 
             assert_eq!(
-                space.read("space", 0).await,
+                space.read("space", 0).await.unwrap(),
                 Some(Bytes::from_static(b"value"))
             );
-            assert_eq!(space.read("space", 1).await, None);
+            assert_eq!(space.read("space", 1).await.unwrap(), None);
             assert_eq!(metrics.counter("read.write_once_space.num_calls"), 2);
             assert_eq!(metrics.counter("read.write_once_space.num_misses"), 1);
 

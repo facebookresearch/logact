@@ -38,7 +38,7 @@ pub type WriteOnceResult<T> = std::result::Result<T, WriteOnceError>;
 /// Implementations provide storage where:
 /// - `write` succeeds only if the address is empty
 /// - `write` fails with `AddressAlreadyExists` if the address has a value
-/// - `read` returns the value at an address, or None if not present
+/// - `read` returns the value at an address, or an error if the read fails
 ///
 /// The `space_id` parameter allows a single implementation to handle multiple
 /// logical spaces. Implementations route operations based on space_id.
@@ -56,11 +56,12 @@ pub trait WriteOnceSpace: TailableSpace {
 
     /// Read the value at the given address within a space.
     ///
-    /// Returns `Some(value)` if the address has a value.
-    /// Returns `None` if the address is empty.
+    /// Returns `Ok(Some(value))` if the address has a value.
+    /// Returns `Ok(None)` if the address is empty.
+    /// Returns `Err` if the backend read fails.
     fn read(
         &self,
         space_id: &str,
         address: u64,
-    ) -> impl std::future::Future<Output = Option<Bytes>>;
+    ) -> impl std::future::Future<Output = WriteOnceResult<Option<Bytes>>>;
 }

@@ -55,7 +55,7 @@ impl WriteOnceSpace for InMemoryWriteOnceSpace {
         self.state.borrow_mut().write(space_id, address, value)
     }
 
-    async fn read(&self, space_id: &str, address: u64) -> Option<Bytes> {
-        self.state.borrow().read(space_id, address)
+    async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
+        Ok(self.state.borrow().read(space_id, address))
     }
 }

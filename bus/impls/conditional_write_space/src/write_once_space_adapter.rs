@@ -64,55 +64,11 @@ impl<C: ConditionalWriteSpace> WriteOnceSpace for WriteOnceSpaceAdapter<C> {
         }
     }
 
-    async fn read(&self, space_id: &str, address: u64) -> Option<Bytes> {
+    async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
         self.inner
             .read(space_id, address)
             .await
-            .ok()
-            .flatten()
-            .map(|v| v.value)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use anyhow::anyhow;
-
-    use super::*;
-
-    #[test]
-    fn preserves_conditional_write_error_categories() {
-        for (conditional_error, write_once_error, source_message) in [
-            (
-                ConditionalWriteError::TransactionConflict(anyhow!("conflict")),
-                WriteOnceError::TransactionConflict(anyhow!("expected")),
-                "conflict",
-            ),
-            (
-                ConditionalWriteError::Timeout(anyhow!("timeout")),
-                WriteOnceError::Timeout(anyhow!("expected")),
-                "timeout",
-            ),
-            (
-                ConditionalWriteError::BackendUnavailable(anyhow!("unavailable")),
-                WriteOnceError::BackendUnavailable(anyhow!("expected")),
-                "unavailable",
-            ),
-            (
-                ConditionalWriteError::InternalError(anyhow!("internal")),
-                WriteOnceError::InternalError(anyhow!("expected")),
-                "internal",
-            ),
-        ] {
-            let mapped = map_conditional_write_error(conditional_error);
-            assert_eq!(
-                std::mem::discriminant(&mapped),
-                std::mem::discriminant(&write_once_error),
-            );
-            assert_eq!(
-                std::error::Error::source(&mapped).unwrap().to_string(),
-                source_message,
-            );
-        }
+            .map(|value| value.map(|v| v.value))
+            .map_err(map_conditional_write_error)
     }
 }

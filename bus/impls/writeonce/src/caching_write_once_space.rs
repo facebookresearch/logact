@@ -148,21 +148,23 @@ impl<W: WriteOnceSpace> WriteOnceSpace for CachingWriteOnceSpace<W> {
         Ok(())
     }
 
-    async fn read(&self, space_id: &str, address: u64) -> Option<Bytes> {
+    async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
         if let Some(value) = self
             .cache
             .borrow_mut()
             .get(space_id, address, Instant::now())
         {
-            return Some(value);
+            return Ok(Some(value));
         }
-        let value = self.inner.read(space_id, address).await?;
+        let Some(value) = self.inner.read(space_id, address).await? else {
+            return Ok(None);
+        };
         if self.cache.borrow().write_ttl.is_none() {
             self.cache
                 .borrow_mut()
                 .insert(space_id, address, value.clone(), None);
         }
-        Some(value)
+        Ok(Some(value))
     }
 }
 
@@ -184,6 +186,7 @@ mod tests {
         writes: Rc<Cell<usize>>,
         tails: Rc<Cell<usize>>,
         fail_next_write: Rc<Cell<Option<bool>>>,
+        fail_next_read: Rc<Cell<bool>>,
     }
 
     impl TailableSpace for CountingSpace {
@@ -212,10 +215,49 @@ mod tests {
             }
         }
 
-        async fn read(&self, space_id: &str, address: u64) -> Option<Bytes> {
+        async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
             self.reads.set(self.reads.get() + 1);
+            if self.fail_next_read.replace(false) {
+                return Err(WriteOnceError::Timeout(anyhow::anyhow!(
+                    "injected read timeout"
+                )));
+            }
             self.inner.read(space_id, address).await
         }
+    }
+
+    #[test]
+    fn failed_reads_do_not_populate_the_cache() {
+        block_on(async {
+            let mut backing = CountingSpace::default();
+            backing.write("a", 0, Bytes::from("value")).await.unwrap();
+            let space = CachingWriteOnceSpace::new(backing.clone(), 16, 1024);
+            backing.fail_next_read.set(true);
+            assert!(matches!(
+                space.read("a", 0).await,
+                Err(WriteOnceError::Timeout(_))
+            ));
+            assert_eq!(
+                space.read("a", 0).await.unwrap(),
+                Some(Bytes::from("value"))
+            );
+            assert_eq!(backing.reads.get(), 2);
+            backing.fail_next_read.set(true);
+            assert_eq!(
+                space.read("a", 0).await.unwrap(),
+                Some(Bytes::from("value"))
+            );
+            assert_eq!(
+                backing.reads.get(),
+                2,
+                "a cache hit must not reach the failing backend"
+            );
+            assert!(matches!(
+                space.read("a", 1).await,
+                Err(WriteOnceError::Timeout(_))
+            ));
+            assert_eq!(space.read("a", 1).await.unwrap(), None);
+        });
     }
 
     #[test]
@@ -226,11 +268,17 @@ mod tests {
             let mut space = CachingWriteOnceSpace::new(backing.clone(), 16, 1024)
                 .with_write_ttl(Duration::from_secs(60));
             for _ in 0..2 {
-                assert_eq!(space.read("a", 0).await, Some(Bytes::from("remote")));
+                assert_eq!(
+                    space.read("a", 0).await.unwrap(),
+                    Some(Bytes::from("remote"))
+                );
             }
             assert_eq!(backing.reads.get(), 2);
             space.write("a", 1, Bytes::from("local")).await.unwrap();
-            assert_eq!(space.clone().read("a", 1).await, Some(Bytes::from("local")));
+            assert_eq!(
+                space.clone().read("a", 1).await.unwrap(),
+                Some(Bytes::from("local"))
+            );
             assert_eq!(backing.reads.get(), 2);
 
             let deadline = space
@@ -260,7 +308,10 @@ mod tests {
                 .with_write_ttl(Duration::ZERO);
             space.write("a", 0, Bytes::from("local")).await.unwrap();
             for _ in 0..2 {
-                assert_eq!(space.read("a", 0).await, Some(Bytes::from("local")));
+                assert_eq!(
+                    space.read("a", 0).await.unwrap(),
+                    Some(Bytes::from("local"))
+                );
             }
             assert_eq!(backing.reads.get(), 2);
         });
@@ -272,7 +323,10 @@ mod tests {
             let mut backing = CountingSpace::default();
             let mut space = CachingWriteOnceSpace::new(backing.clone(), 16, 1024);
             space.write("a", 7, Bytes::from("local")).await.unwrap();
-            assert_eq!(space.clone().read("a", 7).await, Some(Bytes::from("local")));
+            assert_eq!(
+                space.clone().read("a", 7).await.unwrap(),
+                Some(Bytes::from("local"))
+            );
             assert_eq!(
                 backing.reads.get(),
                 0,
@@ -280,9 +334,12 @@ mod tests {
             );
 
             backing.write("a", 6, Bytes::from("remote")).await.unwrap();
-            assert_eq!(space.read("a", 6).await, Some(Bytes::from("remote")));
             assert_eq!(
-                space.clone().read("a", 6).await,
+                space.read("a", 6).await.unwrap(),
+                Some(Bytes::from("remote"))
+            );
+            assert_eq!(
+                space.clone().read("a", 6).await.unwrap(),
                 Some(Bytes::from("remote"))
             );
             assert_eq!(
@@ -290,10 +347,16 @@ mod tests {
                 1,
                 "a positive backing read populates the shared cache"
             );
-            assert_eq!(space.read("a", 7).await, Some(Bytes::from("local")));
+            assert_eq!(
+                space.read("a", 7).await.unwrap(),
+                Some(Bytes::from("local"))
+            );
 
             let independent = CachingWriteOnceSpace::new(backing.clone(), 16, 1024);
-            assert_eq!(independent.read("a", 7).await, Some(Bytes::from("local")));
+            assert_eq!(
+                independent.read("a", 7).await.unwrap(),
+                Some(Bytes::from("local"))
+            );
             assert_eq!(
                 backing.reads.get(),
                 2,
@@ -318,14 +381,17 @@ mod tests {
         block_on(async {
             let mut backing = CountingSpace::default();
             let mut space = CachingWriteOnceSpace::new(backing.clone(), 16, 1024);
-            assert_eq!(space.read("a", 0).await, None);
-            assert_eq!(space.read("a", 0).await, None);
+            assert_eq!(space.read("a", 0).await.unwrap(), None);
+            assert_eq!(space.read("a", 0).await.unwrap(), None);
             backing.write("a", 0, Bytes::from("winner")).await.unwrap();
             assert!(matches!(
                 space.write("a", 0, Bytes::from("loser")).await,
                 Err(WriteOnceError::AddressAlreadyExists(0))
             ));
-            assert_eq!(space.read("a", 0).await, Some(Bytes::from("winner")));
+            assert_eq!(
+                space.read("a", 0).await.unwrap(),
+                Some(Bytes::from("winner"))
+            );
             assert_eq!(
                 backing.reads.get(),
                 3,
@@ -335,7 +401,10 @@ mod tests {
                 space.write("a", 0, Bytes::from("loser")).await,
                 Err(WriteOnceError::AddressAlreadyExists(0))
             ));
-            assert_eq!(space.read("a", 0).await, Some(Bytes::from("winner")));
+            assert_eq!(
+                space.read("a", 0).await.unwrap(),
+                Some(Bytes::from("winner"))
+            );
             assert_eq!(backing.reads.get(), 3);
 
             for commit in [false, true] {
@@ -347,7 +416,7 @@ mod tests {
                 ));
                 let reads = backing.reads.get();
                 assert_eq!(
-                    space.read("a", address).await,
+                    space.read("a", address).await.unwrap(),
                     commit.then(|| Bytes::from("uncertain"))
                 );
                 assert_eq!(
@@ -367,16 +436,16 @@ mod tests {
                 let mut space = CachingWriteOnceSpace::new(backing.clone(), entries, bytes);
                 space.write("a", 0, Bytes::from("aa")).await.unwrap();
                 space.write("a", 1, Bytes::from("bb")).await.unwrap();
-                assert_eq!(space.read("a", 0).await, Some(Bytes::from("aa")));
+                assert_eq!(space.read("a", 0).await.unwrap(), Some(Bytes::from("aa")));
                 space.write("a", 2, Bytes::from("cc")).await.unwrap();
-                assert_eq!(space.read("a", 0).await, Some(Bytes::from("aa")));
-                assert_eq!(space.read("a", 2).await, Some(Bytes::from("cc")));
+                assert_eq!(space.read("a", 0).await.unwrap(), Some(Bytes::from("aa")));
+                assert_eq!(space.read("a", 2).await.unwrap(), Some(Bytes::from("cc")));
                 assert_eq!(
                     backing.reads.get(),
                     0,
                     "recently used values should remain cached"
                 );
-                assert_eq!(space.read("a", 1).await, Some(Bytes::from("bb")));
+                assert_eq!(space.read("a", 1).await.unwrap(), Some(Bytes::from("bb")));
                 assert_eq!(
                     backing.reads.get(),
                     1,
@@ -397,13 +466,19 @@ mod tests {
             space.write("a", 0, Bytes::from("aa")).await.unwrap();
             space.write("a", 1, Bytes::from("bb")).await.unwrap();
             space.write("a", 2, Bytes::from("large")).await.unwrap();
-            assert_eq!(space.read("a", 2).await, Some(Bytes::from("large")));
-            assert_eq!(space.read("a", 2).await, Some(Bytes::from("large")));
-            assert_eq!(space.read("a", 0).await, Some(Bytes::from("aa")));
-            assert_eq!(space.read("a", 1).await, Some(Bytes::from("bb")));
+            assert_eq!(
+                space.read("a", 2).await.unwrap(),
+                Some(Bytes::from("large"))
+            );
+            assert_eq!(
+                space.read("a", 2).await.unwrap(),
+                Some(Bytes::from("large"))
+            );
+            assert_eq!(space.read("a", 0).await.unwrap(), Some(Bytes::from("aa")));
+            assert_eq!(space.read("a", 1).await.unwrap(), Some(Bytes::from("bb")));
             assert_eq!(backing.reads.get(), 2);
             space.write("a", 3, Bytes::from("four")).await.unwrap();
-            assert_eq!(space.read("a", 3).await, Some(Bytes::from("four")));
+            assert_eq!(space.read("a", 3).await.unwrap(), Some(Bytes::from("four")));
             assert_eq!(
                 backing.reads.get(),
                 2,
@@ -413,7 +488,7 @@ mod tests {
             let mut disabled =
                 CachingWriteOnceSpace::new_with_entry_limit(backing.clone(), 16, 32, 0);
             disabled.write("b", 0, Bytes::new()).await.unwrap();
-            assert_eq!(disabled.read("b", 0).await, Some(Bytes::new()));
+            assert_eq!(disabled.read("b", 0).await.unwrap(), Some(Bytes::new()));
             assert_eq!(
                 backing.reads.get(),
                 3,
@@ -431,9 +506,9 @@ mod tests {
             let large = Bytes::from(vec![1; DEFAULT_MAX_ENTRY_VALUE_BYTES + 1]);
             space.write("a", 0, small.clone()).await.unwrap();
             space.write("a", 1, large.clone()).await.unwrap();
-            assert_eq!(space.read("a", 0).await, Some(small));
+            assert_eq!(space.read("a", 0).await.unwrap(), Some(small));
             assert_eq!(backing.reads.get(), 0);
-            assert_eq!(space.read("a", 1).await, Some(large));
+            assert_eq!(space.read("a", 1).await.unwrap(), Some(large));
             assert_eq!(backing.reads.get(), 1);
         });
     }
@@ -446,7 +521,7 @@ mod tests {
                 let mut space = CachingWriteOnceSpace::new(backing.clone(), entries, bytes);
                 space.write("a", 0, Bytes::from("aa")).await.unwrap();
                 space.write("a", 1, Bytes::from("bb")).await.unwrap();
-                assert_eq!(space.read("a", 0).await, Some(Bytes::from("aa")));
+                assert_eq!(space.read("a", 0).await.unwrap(), Some(Bytes::from("aa")));
                 assert_eq!(
                     backing.reads.get(),
                     1,
@@ -457,9 +532,15 @@ mod tests {
             let mut space = CachingWriteOnceSpace::new(backing.clone(), 16, 3);
             space.write("a", 0, Bytes::from("aa")).await.unwrap();
             space.write("a", 1, Bytes::from("oversized")).await.unwrap();
-            assert_eq!(space.read("a", 1).await, Some(Bytes::from("oversized")));
-            assert_eq!(space.read("a", 1).await, Some(Bytes::from("oversized")));
-            assert_eq!(space.read("a", 0).await, Some(Bytes::from("aa")));
+            assert_eq!(
+                space.read("a", 1).await.unwrap(),
+                Some(Bytes::from("oversized"))
+            );
+            assert_eq!(
+                space.read("a", 1).await.unwrap(),
+                Some(Bytes::from("oversized"))
+            );
+            assert_eq!(space.read("a", 0).await.unwrap(), Some(Bytes::from("aa")));
             assert_eq!(
                 backing.reads.get(),
                 2,

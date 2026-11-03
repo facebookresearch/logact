@@ -36,7 +36,7 @@ enum Message {
     Read {
         space_id: String,
         address: u64,
-        response_tx: oneshot::Sender<Option<Bytes>>,
+        response_tx: oneshot::Sender<WriteOnceResult<Option<Bytes>>>,
     },
     Tail {
         space_id: String,
@@ -95,22 +95,20 @@ impl ChanneledWriteOnceSpace {
     }
 
     /// Helper for read calls.
-    async fn call_read(&self, space_id: &str, address: u64) -> Option<Bytes> {
+    async fn call_read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
         let (response_tx, response_rx) = oneshot::channel();
 
-        if self
-            .tx
+        self.tx
             .unbounded_send(Message::Read {
                 space_id: space_id.to_string(),
                 address,
                 response_tx,
             })
-            .is_err()
-        {
-            return None;
-        }
+            .map_err(|e| WriteOnceError::BackendUnavailable(AnyhowError::new(e)))?;
 
-        response_rx.await.unwrap_or(None)
+        response_rx
+            .await
+            .map_err(|e| WriteOnceError::BackendUnavailable(AnyhowError::new(e)))?
     }
 
     /// Helper for tail calls.
@@ -144,7 +142,7 @@ impl WriteOnceSpace for ChanneledWriteOnceSpace {
         self.call_write(space_id, address, value).await
     }
 
-    async fn read(&self, space_id: &str, address: u64) -> Option<Bytes> {
+    async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
         self.call_read(space_id, address).await
     }
 }
@@ -185,5 +183,21 @@ impl<W: WriteOnceSpace> ChanneledWriteOnceSpaceBackend<W> {
             }
         }
         tracing::debug!("ChanneledWriteOnceSpaceBackend: channel closed, shutting down");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::InMemoryWriteOnceSpace;
+
+    #[test]
+    fn a_closed_channel_returns_a_read_error() {
+        let (space, backend) = ChanneledWriteOnceSpace::new(InMemoryWriteOnceSpace::new());
+        drop(backend);
+        assert!(matches!(
+            futures::executor::block_on(space.read("a", 0)),
+            Err(WriteOnceError::BackendUnavailable(_))
+        ));
     }
 }

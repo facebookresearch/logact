@@ -64,7 +64,7 @@ impl<W: WriteOnceSpace> WriteOnceSpace for ConflictOnceWriteOnceSpace<W> {
         self.inner.write(space_id, address, value).await
     }
 
-    async fn read(&self, space_id: &str, address: u64) -> Option<Bytes> {
+    async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
         self.inner.read(space_id, address).await
     }
 }
@@ -161,7 +161,7 @@ impl<W: WriteOnceSpace + Clone + 'static, LatencyMs: Distribution<u64> + Clone +
         }
     }
 
-    async fn read(&self, space_id: &str, address: u64) -> Option<Bytes> {
+    async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
         let ms = self.env.with_rng(|rng| self.read_latency_ms.sample(rng));
         self.env.sleep(Duration::from_millis(ms)).await;
 

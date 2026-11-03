@@ -24,7 +24,7 @@ mod defs {
         let mut client = fixture.create_impl();
 
         client.write(DEFAULT_SPACE, 0, Bytes::from("hello")).await?;
-        let value = client.read(DEFAULT_SPACE, 0).await;
+        let value = client.read(DEFAULT_SPACE, 0).await?;
         assert_eq!(value, Some(Bytes::from("hello")));
 
         Ok(())
@@ -37,7 +37,7 @@ mod defs {
     ) -> Result<()> {
         let client = fixture.create_impl();
 
-        let value = client.read(DEFAULT_SPACE, 999).await;
+        let value = client.read(DEFAULT_SPACE, 999).await?;
         assert_eq!(value, None);
 
         Ok(())
@@ -51,15 +51,15 @@ mod defs {
         let reader = fixture.create_impl();
         let mut writer = fixture.create_impl();
 
-        assert_eq!(reader.read(DEFAULT_SPACE, 0).await, None);
-        assert_eq!(reader.read(DEFAULT_SPACE, 0).await, None);
+        assert_eq!(reader.read(DEFAULT_SPACE, 0).await?, None);
+        assert_eq!(reader.read(DEFAULT_SPACE, 0).await?, None);
         writer.write(DEFAULT_SPACE, 0, Bytes::from("later")).await?;
         assert_eq!(
-            reader.read(DEFAULT_SPACE, 0).await,
+            reader.read(DEFAULT_SPACE, 0).await?,
             Some(Bytes::from("later"))
         );
         assert_eq!(
-            reader.read(DEFAULT_SPACE, 0).await,
+            reader.read(DEFAULT_SPACE, 0).await?,
             Some(Bytes::from("later"))
         );
 
@@ -73,12 +73,12 @@ mod defs {
         let mut client2 = fixture.create_impl();
 
         client1.write("a", 7, Bytes::from("first")).await?;
-        assert_eq!(client2.read("b", 7).await, None);
+        assert_eq!(client2.read("b", 7).await?, None);
         client2.write("b", 7, Bytes::from("second")).await?;
 
         for client in [&client1, &client2] {
-            assert_eq!(client.read("a", 7).await, Some(Bytes::from("first")));
-            assert_eq!(client.read("b", 7).await, Some(Bytes::from("second")));
+            assert_eq!(client.read("a", 7).await?, Some(Bytes::from("first")));
+            assert_eq!(client.read("b", 7).await?, Some(Bytes::from("second")));
         }
 
         Ok(())
@@ -99,7 +99,7 @@ mod defs {
             Err(WriteOnceError::AddressAlreadyExists(0))
         ));
 
-        let value = client.read(DEFAULT_SPACE, 0).await;
+        let value = client.read(DEFAULT_SPACE, 0).await?;
         assert_eq!(value, Some(Bytes::from("first")));
 
         Ok(())
@@ -121,11 +121,11 @@ mod defs {
 
         for client in [&mut client1, &mut client2] {
             assert_eq!(
-                client.read(DEFAULT_SPACE, 0).await,
+                client.read(DEFAULT_SPACE, 0).await?,
                 Some(Bytes::from("val-0"))
             );
             assert_eq!(
-                client.read(DEFAULT_SPACE, 1).await,
+                client.read(DEFAULT_SPACE, 1).await?,
                 Some(Bytes::from("val-1"))
             );
             for i in 0..2 {

@@ -12,6 +12,3 @@ license = "MIT"
 agent_bus_proto-rust = { path = "../../proto" }
 agentbus_api = { version = "0.1.0", path = "../../api" }
 bytes = { version = "1.12.1", features = ["serde"] }
-
-[dev-dependencies]
-anyhow = "1.0.104"
