@@ -122,7 +122,12 @@ async fn save_policy_state(
 
 #[async_trait::async_trait(?Send)]
 impl Applicator for OnByDefaultApplicator {
-    async fn apply(&self, _bus_id: &str, entry: &BusEntry) -> Result<Option<Payload>, ApplyError> {
+    async fn apply(
+        &self,
+        _bus_id: &str,
+        entry: &BusEntry,
+        _context: &mut (),
+    ) -> Result<Option<Payload>, ApplyError> {
         let position = entry
             .header
             .as_ref()
@@ -144,7 +149,12 @@ impl Applicator for OnByDefaultApplicator {
 
 #[async_trait::async_trait(?Send)]
 impl Applicator for OffByDefaultApplicator {
-    async fn apply(&self, _bus_id: &str, entry: &BusEntry) -> Result<Option<Payload>, ApplyError> {
+    async fn apply(
+        &self,
+        _bus_id: &str,
+        entry: &BusEntry,
+        _context: &mut (),
+    ) -> Result<Option<Payload>, ApplyError> {
         let position = entry
             .header
             .as_ref()
@@ -166,7 +176,12 @@ impl Applicator for OffByDefaultApplicator {
 
 #[async_trait::async_trait(?Send)]
 impl<S: Storage> Applicator for FirstBooleanWinsApplicator<S> {
-    async fn apply(&self, bus_id: &str, entry: &BusEntry) -> Result<Option<Payload>, ApplyError> {
+    async fn apply(
+        &self,
+        bus_id: &str,
+        entry: &BusEntry,
+        _context: &mut (),
+    ) -> Result<Option<Payload>, ApplyError> {
         let position = entry
             .header
             .as_ref()
@@ -367,7 +382,7 @@ mod tests {
     #[test]
     fn on_by_default_auto_commits_intention() {
         let (_, d) = decider(DeciderPolicy::OnByDefault);
-        let out = block_on(d.apply("bus", &entry(0, intention_payload("x")))).unwrap();
+        let out = block_on(d.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
         assert!(
             is_commit(&out),
             "ON_BY_DEFAULT should auto-commit an intention"
@@ -381,12 +396,13 @@ mod tests {
     #[test]
     fn first_boolean_wins_waits_for_a_vote_then_commits_on_true() {
         let (_, d) = decider(DeciderPolicy::FirstBooleanWins);
-        let on_intention = block_on(d.apply("bus", &entry(0, intention_payload("x")))).unwrap();
+        let on_intention =
+            block_on(d.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
         assert!(
             on_intention.is_none(),
             "FIRST_BOOLEAN_WINS must not decide on the intention alone"
         );
-        let on_vote = block_on(d.apply("bus", &entry(1, vote_payload(0, true)))).unwrap();
+        let on_vote = block_on(d.apply("bus", &entry(1, vote_payload(0, true)), &mut ())).unwrap();
         assert!(is_commit(&on_vote), "first true vote should commit");
     }
 
@@ -397,13 +413,13 @@ mod tests {
             Some(0),
             DeciderPolicy::FirstBooleanWins,
         ));
-        block_on(first.apply("bus", &entry(0, intention_payload("x")))).unwrap();
+        block_on(first.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
 
         let second = DeciderFactoryImpl::new(storage).create_decider(StateMachineSpec::new(
             Some(0),
             DeciderPolicy::FirstBooleanWins,
         ));
-        let out = block_on(second.apply("bus", &entry(1, vote_payload(0, true)))).unwrap();
+        let out = block_on(second.apply("bus", &entry(1, vote_payload(0, true)), &mut ())).unwrap();
 
         assert!(is_commit(&out));
     }
@@ -411,8 +427,8 @@ mod tests {
     #[test]
     fn first_boolean_wins_aborts_on_false_vote() {
         let (_, d) = decider(DeciderPolicy::FirstBooleanWins);
-        block_on(d.apply("bus", &entry(0, intention_payload("x")))).unwrap();
-        let on_vote = block_on(d.apply("bus", &entry(1, vote_payload(0, false)))).unwrap();
+        block_on(d.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
+        let on_vote = block_on(d.apply("bus", &entry(1, vote_payload(0, false)), &mut ())).unwrap();
         assert!(is_abort(&on_vote), "first false vote should abort");
     }
 
@@ -422,15 +438,16 @@ mod tests {
         let first = FirstBooleanWinsApplicator::new(storage.clone(), Some(10));
         let second = FirstBooleanWinsApplicator::new(storage, Some(20));
 
-        block_on(first.apply("bus", &entry(0, intention_payload("x")))).unwrap();
+        block_on(first.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
         let second_id_vote =
-            block_on(second.apply("bus", &entry(1, vote_payload(0, true)))).unwrap();
+            block_on(second.apply("bus", &entry(1, vote_payload(0, true)), &mut ())).unwrap();
         assert!(
             second_id_vote.is_none(),
             "a new id must not see an earlier id's pending intention"
         );
 
-        let first_id_vote = block_on(first.apply("bus", &entry(1, vote_payload(0, true)))).unwrap();
+        let first_id_vote =
+            block_on(first.apply("bus", &entry(1, vote_payload(0, true)), &mut ())).unwrap();
         assert!(
             is_commit(&first_id_vote),
             "the original id should retain its pending intention"
@@ -442,7 +459,7 @@ mod tests {
         // OFF_BY_DEFAULT decides at the intention: abort outright. The decision
         // is sticky and needs no per-intention state, so later votes are ignored.
         let (_, d) = decider(DeciderPolicy::OffByDefault);
-        let out = block_on(d.apply("bus", &entry(0, intention_payload("x")))).unwrap();
+        let out = block_on(d.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
         assert!(
             is_abort(&out),
             "OFF_BY_DEFAULT aborts the intention outright"
@@ -451,7 +468,8 @@ mod tests {
             decision_reason(&out).as_deref(),
             Some("OFF_BY_DEFAULT policy")
         );
-        let after_vote = block_on(d.apply("bus", &entry(1, vote_payload(0, true)))).unwrap();
+        let after_vote =
+            block_on(d.apply("bus", &entry(1, vote_payload(0, true)), &mut ())).unwrap();
         assert!(
             after_vote.is_none(),
             "votes do not affect an already-decided OFF_BY_DEFAULT intention"
@@ -469,7 +487,7 @@ mod tests {
         };
         assert!(
             matches!(
-                block_on(d.apply("bus", &entry)).unwrap_err(),
+                block_on(d.apply("bus", &entry, &mut ())).unwrap_err(),
                 ApplyError::MissingHeader
             ),
             "an entry without a header must be rejected"
@@ -481,10 +499,10 @@ mod tests {
         // FIRST_BOOLEAN_WINS: the first vote decides and GCs the intention, so a
         // later vote for the same id finds nothing in flight and is ignored.
         let (_, d) = decider(DeciderPolicy::FirstBooleanWins);
-        block_on(d.apply("bus", &entry(0, intention_payload("x")))).unwrap();
-        let first = block_on(d.apply("bus", &entry(1, vote_payload(0, true)))).unwrap();
+        block_on(d.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
+        let first = block_on(d.apply("bus", &entry(1, vote_payload(0, true)), &mut ())).unwrap();
         assert!(is_commit(&first), "first vote should commit");
-        let second = block_on(d.apply("bus", &entry(2, vote_payload(0, false)))).unwrap();
+        let second = block_on(d.apply("bus", &entry(2, vote_payload(0, false)), &mut ())).unwrap();
         assert!(
             second.is_none(),
             "a vote for an already-decided (GC'd) intention is ignored"
@@ -495,7 +513,7 @@ mod tests {
     fn vote_for_unknown_intention_is_ignored() {
         let (_, d) = decider(DeciderPolicy::FirstBooleanWins);
         // No intention was ever registered for id 7.
-        let out = block_on(d.apply("bus", &entry(0, vote_payload(7, true)))).unwrap();
+        let out = block_on(d.apply("bus", &entry(0, vote_payload(7, true)), &mut ())).unwrap();
         assert!(
             out.is_none(),
             "a vote for a never-registered intention is ignored"
@@ -508,9 +526,9 @@ mod tests {
         // the persisted payload — not re-run the decision, which would now find
         // the intention GC'd and return None.
         let (_, d) = decider(DeciderPolicy::FirstBooleanWins);
-        block_on(d.apply("bus", &entry(0, intention_payload("x")))).unwrap();
-        let first = block_on(d.apply("bus", &entry(1, vote_payload(0, true)))).unwrap();
-        let replay = block_on(d.apply("bus", &entry(1, vote_payload(0, true)))).unwrap();
+        block_on(d.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
+        let first = block_on(d.apply("bus", &entry(1, vote_payload(0, true)), &mut ())).unwrap();
+        let replay = block_on(d.apply("bus", &entry(1, vote_payload(0, true)), &mut ())).unwrap();
         assert_eq!(
             first, replay,
             "replaying the last entry must return the identical payload"
@@ -525,14 +543,16 @@ mod tests {
         // abandons the first (simply never decided, which the contract permits);
         // the second still decides normally on its first vote.
         let (_, d) = decider(DeciderPolicy::FirstBooleanWins);
-        block_on(d.apply("bus", &entry(0, intention_payload("first")))).unwrap();
-        block_on(d.apply("bus", &entry(1, intention_payload("second")))).unwrap();
-        let first_vote = block_on(d.apply("bus", &entry(2, vote_payload(0, true)))).unwrap();
+        block_on(d.apply("bus", &entry(0, intention_payload("first")), &mut ())).unwrap();
+        block_on(d.apply("bus", &entry(1, intention_payload("second")), &mut ())).unwrap();
+        let first_vote =
+            block_on(d.apply("bus", &entry(2, vote_payload(0, true)), &mut ())).unwrap();
         assert!(
             first_vote.is_none(),
             "a superseded intention is abandoned, not decided"
         );
-        let second_vote = block_on(d.apply("bus", &entry(3, vote_payload(1, true)))).unwrap();
+        let second_vote =
+            block_on(d.apply("bus", &entry(3, vote_payload(1, true)), &mut ())).unwrap();
         assert!(
             is_commit(&second_vote),
             "the most recent intention still decides on its first vote"
@@ -542,10 +562,11 @@ mod tests {
     #[test]
     fn deciding_vote_reason_is_carried_into_decision() {
         let (_, d) = decider(DeciderPolicy::FirstBooleanWins);
-        block_on(d.apply("bus", &entry(0, intention_payload("x")))).unwrap();
+        block_on(d.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
         let committed = block_on(d.apply(
             "bus",
             &entry(1, vote_payload_with_reason(0, true, "looks safe")),
+            &mut (),
         ))
         .unwrap();
         assert!(is_commit(&committed));
@@ -556,10 +577,11 @@ mod tests {
         );
 
         // A false vote's reason is carried into the abort.
-        block_on(d.apply("bus", &entry(2, intention_payload("y")))).unwrap();
+        block_on(d.apply("bus", &entry(2, intention_payload("y")), &mut ())).unwrap();
         let aborted = block_on(d.apply(
             "bus",
             &entry(3, vote_payload_with_reason(2, false, "dangerous")),
+            &mut (),
         ))
         .unwrap();
         assert!(is_abort(&aborted));
@@ -569,9 +591,9 @@ mod tests {
     #[test]
     fn empty_vote_reason_falls_back_to_generic() {
         let (_, d) = decider(DeciderPolicy::FirstBooleanWins);
-        block_on(d.apply("bus", &entry(0, intention_payload("x")))).unwrap();
+        block_on(d.apply("bus", &entry(0, intention_payload("x")), &mut ())).unwrap();
         // `vote_payload` carries no reason — the decision falls back to a generic one.
-        let out = block_on(d.apply("bus", &entry(1, vote_payload(0, true)))).unwrap();
+        let out = block_on(d.apply("bus", &entry(1, vote_payload(0, true)), &mut ())).unwrap();
         assert_eq!(
             decision_reason(&out).as_deref(),
             Some("decided by policy"),
@@ -582,8 +604,11 @@ mod tests {
     #[test]
     fn storage_errors_remain_typed() {
         let get_error = block_on(
-            FirstBooleanWinsApplicator::new(Rc::new(FaultyStorage::GetTimeout), Some(0))
-                .apply("bus", &entry(7, intention_payload("x"))),
+            FirstBooleanWinsApplicator::new(Rc::new(FaultyStorage::GetTimeout), Some(0)).apply(
+                "bus",
+                &entry(7, intention_payload("x")),
+                &mut (),
+            ),
         )
         .expect_err("storage get should fail");
         assert!(
@@ -591,11 +616,12 @@ mod tests {
             "get error category should be preserved, got {get_error:?}"
         );
 
-        let put_error = block_on(
-            FirstBooleanWinsApplicator::new(Rc::new(FaultyStorage::PutUnavailable), Some(0))
-                .apply("bus", &entry(7, intention_payload("x"))),
-        )
-        .expect_err("storage put should fail");
+        let put_error =
+            block_on(
+                FirstBooleanWinsApplicator::new(Rc::new(FaultyStorage::PutUnavailable), Some(0))
+                    .apply("bus", &entry(7, intention_payload("x")), &mut ()),
+            )
+            .expect_err("storage put should fail");
         assert!(
             matches!(
                 put_error,
@@ -608,8 +634,11 @@ mod tests {
     #[test]
     fn storage_concurrency_is_classified_as_decider() {
         let cas_error = block_on(
-            FirstBooleanWinsApplicator::new(Rc::new(FaultyStorage::RejectPut), Some(0))
-                .apply("bus", &entry(7, intention_payload("x"))),
+            FirstBooleanWinsApplicator::new(Rc::new(FaultyStorage::RejectPut), Some(0)).apply(
+                "bus",
+                &entry(7, intention_payload("x")),
+                &mut (),
+            ),
         )
         .expect_err("storage CAS should be rejected");
         assert_eq!(
@@ -628,11 +657,12 @@ mod tests {
             "CAS rejection should retain its context, got {cas_error:?}"
         );
 
-        let conflict_error = block_on(
-            FirstBooleanWinsApplicator::new(Rc::new(FaultyStorage::PutConflict), Some(0))
-                .apply("bus", &entry(7, intention_payload("x"))),
-        )
-        .expect_err("storage transaction should conflict");
+        let conflict_error =
+            block_on(
+                FirstBooleanWinsApplicator::new(Rc::new(FaultyStorage::PutConflict), Some(0))
+                    .apply("bus", &entry(7, intention_payload("x")), &mut ()),
+            )
+            .expect_err("storage transaction should conflict");
         assert!(
             matches!(
                 conflict_error,

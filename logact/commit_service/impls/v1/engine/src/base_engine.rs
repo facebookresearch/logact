@@ -289,6 +289,28 @@ impl Default for BaseEngineConfig {
     }
 }
 
+#[derive(Clone)]
+struct EngineSnapshot {
+    state: PerBusEngineState,
+    position: Option<i64>,
+}
+
+impl EngineSnapshot {
+    async fn load(
+        storage: &impl Storage,
+        bus_id: &str,
+    ) -> std::result::Result<Self, EngineStateLoadError> {
+        let (state, position) = PerBusEngineState::load(storage, bus_id).await?;
+        Ok(Self { state, position })
+    }
+}
+
+/// Mutable playback state retained for one engine proposal.
+pub struct EngineContext {
+    snapshot: EngineSnapshot,
+    highest_append: Cell<i64>,
+}
+
 struct EngineRuntime<T, F, S, D, E> {
     bus: T,
     voter_factory: F,
@@ -298,13 +320,9 @@ struct EngineRuntime<T, F, S, D, E> {
     config: BaseEngineConfig,
 }
 
-struct EngineEntryApplicator<T, F, S, D, E> {
-    runtime: Rc<EngineRuntime<T, F, S, D, E>>,
-}
-
 pub struct BaseEngine<T, F, S, P, D, E> {
     runtime: Rc<EngineRuntime<T, F, S, D, E>>,
-    playback: Rc<dyn Applicator<i64>>,
+    playback: Rc<dyn Applicator<EngineContext>>,
     policy_provider: P,
 }
 
@@ -377,7 +395,7 @@ async fn apply_tolerating_stale<E: Environment>(
         environment,
         retry_config,
         || async {
-            match applicator.apply(bus_id, entry).await {
+            match applicator.apply(bus_id, entry, &mut ()).await {
                 Err(ApplyError::StalePosition { .. }) => Ok(None),
                 result => result,
             }
@@ -548,12 +566,9 @@ where
             environment,
             config,
         });
-        let playback = Rc::new(EngineEntryApplicator {
-            runtime: runtime.clone(),
-        });
         Self {
+            playback: runtime.clone(),
             runtime,
-            playback,
             policy_provider,
         }
     }
@@ -561,7 +576,7 @@ where
     /// Decorate the applicator used for entry playback.
     pub fn with_playback_wrapper<W>(mut self, wrap: W) -> Self
     where
-        W: FnOnce(Rc<dyn Applicator<i64>>) -> Rc<dyn Applicator<i64>>,
+        W: FnOnce(Rc<dyn Applicator<EngineContext>>) -> Rc<dyn Applicator<EngineContext>>,
     {
         self.playback = wrap(self.playback);
         self
@@ -576,6 +591,7 @@ where
     P: PolicyProvider,
     P::Error: Into<anyhow::Error>,
     D: DeciderFactory,
+    E: Environment,
 {
     /// Append the initial policy and optimistically checkpoint a fresh bus.
     pub async fn create_bus(&self, bus_id: &str) -> EngineResult<()> {
@@ -655,10 +671,12 @@ where
             )));
         }
 
-        let (state, state_pos) = PerBusEngineState::load(&self.runtime.engine_storage, bus_id)
+        let engine_snapshot = EngineSnapshot::load(&self.runtime.engine_storage, bus_id)
             .await
             .map_err(EngineError::from)?;
-        let policy_version = self.append_resolved_policy(bus_id, &state).await?;
+        let policy_version = self
+            .append_resolved_policy(bus_id, &engine_snapshot.state)
+            .await?;
         if let Some(policy_version) = policy_version {
             let Some(payload::Payload::Intention(proposed_intention)) = intention.payload.as_mut()
             else {
@@ -681,8 +699,11 @@ where
             .map_err(EngineError::Bus)?
             .log_position;
 
-        self.sync_and_apply(bus_id, position, state_pos.map_or(0, |p| p + 1))
-            .await
+        let mut context = EngineContext {
+            snapshot: engine_snapshot,
+            highest_append: Cell::new(position),
+        };
+        self.sync_and_apply(bus_id, position, &mut context).await
     }
 
     async fn append_resolved_policy(
@@ -750,11 +771,12 @@ where
         &self,
         bus_id: &str,
         proposed_position: i64,
-        cursor: i64,
+        context: &mut EngineContext,
     ) -> EngineResult<ProposalOutcome> {
         let bus_id_owned = bus_id.to_string();
+        let cursor = context.snapshot.position.map_or(0, |position| position + 1);
         let mut pos = proposed_position.min(cursor);
-        let mut known_position = proposed_position;
+        let mut known_position = context.highest_append.get();
 
         loop {
             if pos > known_position {
@@ -817,14 +839,10 @@ where
                 }
 
                 if requires_application(entry) {
-                    if let Some(position) = self
-                        .playback
-                        .apply(bus_id, entry)
+                    self.apply(bus_id, entry, context)
                         .await
-                        .map_err(EngineError::Playback)?
-                    {
-                        known_position = known_position.max(position);
-                    }
+                        .map_err(EngineError::Playback)?;
+                    known_position = known_position.max(context.highest_append.get());
                 }
             }
             pos = next_cursor;
@@ -832,7 +850,8 @@ where
     }
 }
 
-impl<T, F, S, D, E> EngineRuntime<T, F, S, D, E>
+#[async_trait::async_trait(?Send)]
+impl<T, F, S, D, E> Applicator<EngineContext> for EngineRuntime<T, F, S, D, E>
 where
     T: AgentBus,
     F: VoterFactory,
@@ -845,19 +864,31 @@ where
     /// An entry already behind the cursor is skipped, so re-reading applied
     /// entries while searching for an outcome neither re-drives them nor moves the
     /// cursor backward.
-    async fn apply_entry(
+    async fn apply(
         &self,
         bus_id: &str,
         entry: &BusEntry,
-    ) -> std::result::Result<Option<i64>, ApplyError> {
-        let highest_append = Cell::new(None);
+        context: &mut EngineContext,
+    ) -> std::result::Result<Option<Payload>, ApplyError> {
+        let mut initial_snapshot = Some(context.snapshot.clone());
+        let highest_append = &context.highest_append;
         // human: retry on concurrency errors to ensure forward progress. We
         // cannot wait on a competing drive and cannot assume it will finish.
         let mut retry_policy = ConcurrencyRetryPolicy::default();
-        retry(
+        let updated_snapshot = retry(
             self.environment.as_ref(),
             self.config.retry_config,
-            || self.apply_entry_once(bus_id, entry, &highest_append),
+            || {
+                let initial_snapshot = initial_snapshot.take();
+                async move {
+                    let snapshot = match initial_snapshot {
+                        Some(snapshot) => snapshot,
+                        None => EngineSnapshot::load(&self.engine_storage, bus_id).await?,
+                    };
+                    self.apply_entry_once(bus_id, entry, snapshot, highest_append)
+                        .await
+                }
+            },
             |error| match error {
                 ApplyError::Concurrency(error @ ConcurrencyError::Engine { .. }) => {
                     retry_policy.decide(error)
@@ -867,27 +898,55 @@ where
         )
         .await
         .map_err(RetryFailure::into_last_error)?;
-        Ok(highest_append.get())
+        context.snapshot = updated_snapshot;
+        Ok(None)
     }
+}
 
+#[async_trait::async_trait(?Send)]
+impl<T, F, S, P, D, E> Applicator<EngineContext> for BaseEngine<T, F, S, P, D, E> {
+    async fn apply(
+        &self,
+        bus_id: &str,
+        entry: &BusEntry,
+        context: &mut EngineContext,
+    ) -> std::result::Result<Option<Payload>, ApplyError> {
+        self.playback.apply(bus_id, entry, context).await
+    }
+}
+
+impl<T, F, S, D, E> EngineRuntime<T, F, S, D, E>
+where
+    T: AgentBus,
+    F: VoterFactory,
+    S: Storage + 'static,
+    D: DeciderFactory,
+    E: Environment,
+{
     async fn apply_entry_once(
         &self,
         bus_id: &str,
         entry: &BusEntry,
-        highest_append: &Cell<Option<i64>>,
-    ) -> std::result::Result<(), ApplyError> {
+        engine_snapshot: EngineSnapshot,
+        highest_append: &Cell<i64>,
+    ) -> std::result::Result<EngineSnapshot, ApplyError> {
         let entry_position = entry
             .header
             .as_ref()
             .map(|h| h.log_position)
             .ok_or(ApplyError::MissingHeader)?;
 
-        let (mut state, state_position) =
-            PerBusEngineState::load(&self.engine_storage, bus_id).await?;
+        let EngineSnapshot {
+            mut state,
+            position: state_position,
+        } = engine_snapshot;
         if entry_position < state_position.map_or(0, |position| position + 1) {
             // Already applied (e.g. re-read while searching for the outcome). The
             // cursor is the slot position + 1.
-            return Ok(());
+            return Ok(EngineSnapshot {
+                state,
+                position: state_position,
+            });
         }
 
         // 1. Dispatch the entry to every matching applicator (each persists its own
@@ -945,13 +1004,7 @@ where
                 .await
                 .map_err(ApplyError::Bus)?;
             // Retain confirmed writes even if the following cursor CAS needs a retry.
-            highest_append.set(Some(
-                highest_append
-                    .get()
-                    .map_or(response.log_position, |position| {
-                        position.max(response.log_position)
-                    }),
-            ));
+            highest_append.set(highest_append.get().max(response.log_position));
         }
 
         // 3. Advance the engine state last — recording decider policy and
@@ -996,37 +1049,10 @@ where
             .save(&self.engine_storage, bus_id, state_position, entry_position)
             .await
             .into_engine_apply_result(bus_id, entry_position)?;
-        Ok(())
-    }
-}
-
-#[async_trait::async_trait(?Send)]
-impl<T, F, S, D, E> Applicator<i64> for EngineEntryApplicator<T, F, S, D, E>
-where
-    T: AgentBus,
-    F: VoterFactory,
-    S: Storage + 'static,
-    D: DeciderFactory,
-    E: Environment + 'static,
-{
-    async fn apply(
-        &self,
-        bus_id: &str,
-        entry: &BusEntry,
-    ) -> std::result::Result<Option<i64>, ApplyError> {
-        self.runtime.apply_entry(bus_id, entry).await
-    }
-}
-
-#[async_trait::async_trait(?Send)]
-impl<T, F, S, P, D, E> Applicator for BaseEngine<T, F, S, P, D, E> {
-    async fn apply(
-        &self,
-        bus_id: &str,
-        entry: &BusEntry,
-    ) -> std::result::Result<Option<Payload>, ApplyError> {
-        self.playback.apply(bus_id, entry).await?;
-        Ok(None)
+        Ok(EngineSnapshot {
+            state,
+            position: Some(entry_position),
+        })
     }
 }
 
@@ -1161,6 +1187,7 @@ mod tests {
             &self,
             _bus_id: &str,
             _entry: &BusEntry,
+            _context: &mut (),
         ) -> std::result::Result<Option<Payload>, ApplyError> {
             self.calls.set(self.calls.get() + 1);
             self.results

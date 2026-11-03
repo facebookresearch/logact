@@ -35,6 +35,7 @@ pub use base_engine::BaseEngine;
 pub use base_engine::BaseEngineConfig;
 pub use base_engine::DeciderFactory;
 pub use base_engine::DeciderFactoryImpl;
+pub use base_engine::EngineContext;
 pub use base_engine::EngineError;
 pub use base_engine::EngineResult;
 pub use base_engine::ProposalOutcome;

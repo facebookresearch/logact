@@ -424,7 +424,7 @@ mod tests {
         let voter = factory
             .create_voter(&voter_spec("1", rule_based_voter_config(config)))
             .unwrap();
-        block_on(voter.apply("bus-1", &intention_entry(7, "echo this"))).unwrap();
+        block_on(voter.apply("bus-1", &intention_entry(7, "echo this"), &mut ())).unwrap();
 
         assert_eq!(
             metrics.counter("apply.applicator.num_calls"),

@@ -100,6 +100,7 @@ impl agentbus_api::voter::Voter for PlaceholderVoter {
 
 struct RetryTestStorage {
     inner: InMemoryStorage,
+    engine_reads: Cell<usize>,
     engine_cas_pending: Cell<bool>,
     engine_transaction_conflict_pending: Cell<bool>,
     voter_cas_pending: Cell<bool>,
@@ -110,6 +111,7 @@ impl RetryTestStorage {
     fn new() -> Self {
         Self {
             inner: InMemoryStorage::new(),
+            engine_reads: Cell::new(0),
             engine_cas_pending: Cell::new(true),
             engine_transaction_conflict_pending: Cell::new(true),
             voter_cas_pending: Cell::new(true),
@@ -121,6 +123,9 @@ impl RetryTestStorage {
 #[async_trait::async_trait(?Send)]
 impl Storage for RetryTestStorage {
     async fn get(&self, key: &str) -> StorageResult<Option<(Bytes, i64)>> {
+        if key.starts_with("engine:state:") {
+            self.engine_reads.set(self.engine_reads.get() + 1);
+        }
         self.inner.get(key).await
     }
 
@@ -349,7 +354,12 @@ impl RandomVoter {
 
 #[async_trait::async_trait(?Send)]
 impl Applicator for RandomVoter {
-    async fn apply(&self, bus_id: &str, entry: &BusEntry) -> Result<Option<Payload>, ApplyError> {
+    async fn apply(
+        &self,
+        bus_id: &str,
+        entry: &BusEntry,
+        _context: &mut (),
+    ) -> Result<Option<Payload>, ApplyError> {
         let position = entry.header.as_ref().map(|h| h.log_position).unwrap_or(0);
         let inner = match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
             Some(p) => p,
@@ -810,6 +820,7 @@ where
     P: PolicyProvider,
     P::Error: Into<anyhow::Error>,
     D: DeciderFactory,
+    E: Environment,
 {
     engine
         .propose_intention(agent_id, string_intention(body))
@@ -979,6 +990,11 @@ fn engine_voter_and_decider_storage_conflicts_are_retried() {
         assert!(
             !storage.voter_cas_pending.get(),
             "the voter CAS rejection should be injected"
+        );
+        assert_eq!(
+            storage.engine_reads.get(),
+            3,
+            "only proposal initialization and the two engine CAS retries reload the checkpoint"
         );
         assert_eq!(
             metrics.counter("poll.agent_bus.num_calls"),
@@ -1443,7 +1459,7 @@ fn missing_policy_register_fails_before_appending() {
 }
 
 #[test]
-fn corrupt_persisted_decider_state_fails_playback() {
+fn corrupt_persisted_decider_state_rejects_proposal() {
     let seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(seed);
     let fixture = SimpleMemoryFixture::new(simulator);
@@ -1464,21 +1480,21 @@ fn corrupt_persisted_decider_state_fails_playback() {
             fixture.get_env(),
         );
 
-        let error = match engine.apply(agent, &intention_entry(1, "must fail")).await {
-            Ok(_) => panic!("playback should fail on corrupt persisted decider state"),
+        let error = match propose_intention(&engine, agent, "must fail").await {
+            Ok(_) => panic!("a proposal should fail on corrupt persisted decider state"),
             Err(error) => error,
         };
         assert!(matches!(
             error,
-            ApplyError::InvalidEngineState { ref message }
-                if message.contains("unrecognized decider policy 99")
+            EngineError::InvalidEngineState(ref source)
+                if source.to_string().contains("engine state has an invalid decider policy")
         ));
 
         let (_, stored_position) = PerBusEngineState::load(storage.as_ref(), agent).await?;
         assert_eq!(
             stored_position,
             Some(0),
-            "failed playback must not advance the engine cursor"
+            "a rejected proposal must not advance the engine cursor"
         );
 
         anyhow::Ok(())
@@ -1767,39 +1783,21 @@ fn invalid_policy_batch_is_atomic_and_wedges_playback() {
             DefaultPolicyProvider,
             fixture.get_env(),
         );
-        let malformed_entry = bus
-            .poll(PollRequest {
-                bus_id: Some(BusId {
-                    agent_bus_id: agent.to_string(),
-                }),
-                start_log_position: 0,
-                max_entries: 1,
-                filter: None,
-            })
-            .await?
-            .entries
-            .into_iter()
-            .next()
-            .expect("the malformed batch was appended");
-        let apply_error = match engine.apply(agent, &malformed_entry).await {
-            Ok(_) => panic!("invalid PolicyBatch should fail direct playback"),
-            Err(error) => error,
-        };
-        assert!(
-            matches!(
-                apply_error,
-                ApplyError::MalformedPolicy {
-                    kind: MalformedPolicyBatchKind::PolicyBatch,
-                    ref message,
-                } if message.contains("has no operation")
-            ),
-            "engine playback should return the typed malformed-entry error"
-        );
-
         let error = match propose_intention(&engine, agent, "reports invalid batch").await {
             Ok(_) => panic!("invalid PolicyBatch should be reported"),
             Err(error) => error,
         };
+        assert!(
+            matches!(
+                &error,
+                EngineError::Playback(ApplyError::MalformedPolicy {
+                    kind: MalformedPolicyBatchKind::PolicyBatch,
+                    message,
+                }) if message.contains("has no operation")
+            ),
+            "engine playback should return the typed malformed-entry error"
+        );
+
         assert!(
             error.to_string().contains("has no operation"),
             "unexpected error: {error:#}"
@@ -1859,31 +1857,17 @@ fn malformed_batch_add_voter_has_add_voter_kind() {
             DefaultPolicyProvider,
             fixture.get_env(),
         );
-        let malformed_entry = bus
-            .poll(PollRequest {
-                bus_id: Some(BusId {
-                    agent_bus_id: agent.to_string(),
-                }),
-                start_log_position: 0,
-                max_entries: 1,
-                filter: None,
-            })
-            .await?
-            .entries
-            .into_iter()
-            .next()
-            .expect("the malformed batch was appended");
-        let apply_error = engine
-            .apply(agent, &malformed_entry)
-            .await
-            .expect_err("the malformed batch add must fail playback");
+        let error = match propose_intention(&engine, agent, "reports malformed add").await {
+            Ok(_) => panic!("the malformed batch add must fail playback"),
+            Err(error) => error,
+        };
         assert!(
             matches!(
-                apply_error,
-                ApplyError::MalformedPolicy {
+                error,
+                EngineError::Playback(ApplyError::MalformedPolicy {
                     kind: MalformedPolicyBatchKind::AddVoter,
                     ref message,
-                } if message.contains("missing voter config")
+                }) if message.contains("missing voter config")
             ),
             "a malformed batch AddVoterOp should use the AddVoter kind"
         );
@@ -1930,31 +1914,17 @@ fn malformed_batch_remove_voter_has_remove_voter_kind() {
             DefaultPolicyProvider,
             fixture.get_env(),
         );
-        let malformed_entry = bus
-            .poll(PollRequest {
-                bus_id: Some(BusId {
-                    agent_bus_id: agent.to_string(),
-                }),
-                start_log_position: 0,
-                max_entries: 1,
-                filter: None,
-            })
-            .await?
-            .entries
-            .into_iter()
-            .next()
-            .expect("the malformed batch was appended");
-        let apply_error = engine
-            .apply(agent, &malformed_entry)
-            .await
-            .expect_err("the malformed batch remove must fail playback");
+        let error = match propose_intention(&engine, agent, "reports malformed remove").await {
+            Ok(_) => panic!("the malformed batch remove must fail playback"),
+            Err(error) => error,
+        };
         assert!(
             matches!(
-                apply_error,
-                ApplyError::MalformedPolicy {
+                error,
+                EngineError::Playback(ApplyError::MalformedPolicy {
                     kind: MalformedPolicyBatchKind::RemoveVoter,
                     ref message,
-                } if message.contains("unknown voter 'unknown-voter'")
+                }) if message.contains("unknown voter 'unknown-voter'")
             ),
             "a malformed batch RemoveVoterOp should use the RemoveVoter kind"
         );
@@ -2620,38 +2590,20 @@ fn standalone_policy_controls_are_rejected() {
         })
         .await?;
 
-        let malformed_entry = bus
-            .poll(PollRequest {
-                bus_id: Some(BusId {
-                    agent_bus_id: add_agent.to_string(),
-                }),
-                start_log_position: 0,
-                max_entries: 1,
-                filter: None,
-            })
-            .await?
-            .entries
-            .into_iter()
-            .next()
-            .expect("the malformed standalone add was appended");
-        let apply_error = engine
-            .apply(add_agent, &malformed_entry)
-            .await
-            .expect_err("the malformed standalone add must fail playback");
-        assert!(
-            matches!(
-                apply_error,
-                ApplyError::DeprecatedOperation {
-                    operation: DeprecatedOperationKind::AddVoter,
-                }
-            ),
-            "a standalone AddVoter should use the deprecated-operation kind"
-        );
-
         let error = match propose_intention(&engine, add_agent, "reports standalone add").await {
             Ok(_) => panic!("standalone AddVoter should be reported"),
             Err(error) => error,
         };
+        assert!(
+            matches!(
+                &error,
+                EngineError::Playback(ApplyError::DeprecatedOperation {
+                    operation: DeprecatedOperationKind::AddVoter,
+                })
+            ),
+            "a standalone AddVoter should use the deprecated-operation kind"
+        );
+
         assert!(
             error
                 .to_string()
@@ -3081,24 +3033,24 @@ fn counting_voter_honors_duplication_contract() {
 
     // Forward: counts 1 and 2 (both n % 3 != 0 -> approved).
     let v_at_10 = vote_bool(
-        futures::executor::block_on(voter.apply(bus, &intention_entry(10, "a"))).unwrap(),
+        futures::executor::block_on(voter.apply(bus, &intention_entry(10, "a"), &mut ())).unwrap(),
     );
     let v_at_11 = vote_bool(
-        futures::executor::block_on(voter.apply(bus, &intention_entry(11, "b"))).unwrap(),
+        futures::executor::block_on(voter.apply(bus, &intention_entry(11, "b"), &mut ())).unwrap(),
     );
     assert_eq!(v_at_10, Some(true));
     assert_eq!(v_at_11, Some(true));
 
     // Replay of the last position returns the same vote without re-counting.
     let replay = vote_bool(
-        futures::executor::block_on(voter.apply(bus, &intention_entry(11, "b"))).unwrap(),
+        futures::executor::block_on(voter.apply(bus, &intention_entry(11, "b"), &mut ())).unwrap(),
     );
     assert_eq!(replay, v_at_11, "replay must return the last vote");
 
     // The next forward apply is count 3 (-> not approved), proving the replay
     // did not advance the counter.
     let v_at_12 = vote_bool(
-        futures::executor::block_on(voter.apply(bus, &intention_entry(12, "c"))).unwrap(),
+        futures::executor::block_on(voter.apply(bus, &intention_entry(12, "c"), &mut ())).unwrap(),
     );
     assert_eq!(
         v_at_12,
@@ -3107,8 +3059,8 @@ fn counting_voter_honors_duplication_contract() {
     );
 
     // Stale re-application of an older position is rejected.
-    let err =
-        futures::executor::block_on(voter.apply(bus, &intention_entry(5, "old"))).unwrap_err();
+    let err = futures::executor::block_on(voter.apply(bus, &intention_entry(5, "old"), &mut ()))
+        .unwrap_err();
     assert!(
         matches!(
             err,

@@ -106,7 +106,12 @@ impl<S: Storage> CountingVoter<S> {
 
 #[async_trait::async_trait(?Send)]
 impl<S: Storage> Applicator for CountingVoter<S> {
-    async fn apply(&self, bus_id: &str, entry: &BusEntry) -> Result<Option<Payload>, ApplyError> {
+    async fn apply(
+        &self,
+        bus_id: &str,
+        entry: &BusEntry,
+        _context: &mut (),
+    ) -> Result<Option<Payload>, ApplyError> {
         let position = entry.header.as_ref().map(|h| h.log_position).unwrap_or(0);
         let inner = match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
             Some(p) => p,

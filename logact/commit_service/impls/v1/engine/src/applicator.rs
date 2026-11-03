@@ -119,11 +119,12 @@ pub enum ApplyError {
     Backend(#[from] anyhow::Error),
 }
 
-/// An applicator consumes a single `BusEntry` and may produce an output.
-/// `Output` defaults to a follow-up `Payload` for voters and deciders. Engine
-/// playback returns the highest confirmed append position instead. The engine
-/// dispatches every polled entry that matches the applicator's bound payload
-/// types to `apply`.
+/// An applicator consumes a single `BusEntry` and may produce a follow-up
+/// `Payload` to be appended to the bus. The engine dispatches every polled
+/// entry that matches the applicator's bound payload types to `apply`.
+///
+/// The caller owns the mutable context and retains it across entry applications.
+/// Voters and deciders use `()`; engine playback carries its checkpoint snapshot.
 ///
 /// # Duplication tolerance contract for payload-producing applicators
 ///
@@ -145,6 +146,11 @@ pub enum ApplyError {
 /// result for its single last position. The generic conformance suite in
 /// `logact_commit_service_engine_tests` (`applicator_tests!`) exercises this.
 #[async_trait::async_trait(?Send)]
-pub trait Applicator<Output = Payload> {
-    async fn apply(&self, bus_id: &str, entry: &BusEntry) -> Result<Option<Output>, ApplyError>;
+pub trait Applicator<Context = ()> {
+    async fn apply(
+        &self,
+        bus_id: &str,
+        entry: &BusEntry,
+        context: &mut Context,
+    ) -> Result<Option<Payload>, ApplyError>;
 }

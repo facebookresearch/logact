@@ -11,6 +11,7 @@ use agent_bus_proto_rust::agent_bus::intention;
 use agent_bus_proto_rust::agent_bus::payload;
 use agentbus_api::AgentBus;
 use agentbus_api::AgentBusError;
+use agentbus_api::Environment;
 use logact_commit_service_api::CommitError;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
@@ -68,6 +69,7 @@ where
     P: PolicyProvider,
     P::Error: Into<anyhow::Error>,
     D: DeciderFactory,
+    E: Environment,
 {
     type Bus = T;
 

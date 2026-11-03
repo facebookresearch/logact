@@ -123,7 +123,12 @@ impl<S: Storage> StatelessVoterAdapter<S> {
 
 #[async_trait::async_trait(?Send)]
 impl<S: Storage> Applicator for StatelessVoterAdapter<S> {
-    async fn apply(&self, bus_id: &str, entry: &BusEntry) -> Result<Option<Payload>, ApplyError> {
+    async fn apply(
+        &self,
+        bus_id: &str,
+        entry: &BusEntry,
+        _context: &mut (),
+    ) -> Result<Option<Payload>, ApplyError> {
         let position = entry
             .header
             .as_ref()
@@ -296,7 +301,7 @@ mod tests {
     #[test]
     fn intention_produces_vote_carrying_voter_verdict() {
         let adapter = test_adapter(FixedVoter(true), "42");
-        let out = block_on(adapter.apply("bus-1", &intention_entry(7, "do X"))).unwrap();
+        let out = block_on(adapter.apply("bus-1", &intention_entry(7, "do X"), &mut ())).unwrap();
         let vote = match out.and_then(|p| p.payload) {
             Some(payload::Payload::Vote(v)) => v,
             other => panic!("expected a Vote payload, got {other:?}"),
@@ -328,15 +333,17 @@ mod tests {
     #[test]
     fn rejecting_voter_produces_false_vote() {
         let adapter = test_adapter(FixedVoter(false), "42");
-        let out = block_on(adapter.apply("bus-1", &intention_entry(1, "do Y"))).unwrap();
+        let out = block_on(adapter.apply("bus-1", &intention_entry(1, "do Y"), &mut ())).unwrap();
         assert_eq!(vote_verdict(out), Some(false));
     }
 
     #[test]
     fn voter_receives_bus_id() {
         let adapter = test_adapter(BusIdVoter, "42");
-        let allowed = block_on(adapter.apply("allowed-bus", &intention_entry(1, "do Y"))).unwrap();
-        let denied = block_on(adapter.apply("other-bus", &intention_entry(1, "do Y"))).unwrap();
+        let allowed =
+            block_on(adapter.apply("allowed-bus", &intention_entry(1, "do Y"), &mut ())).unwrap();
+        let denied =
+            block_on(adapter.apply("other-bus", &intention_entry(1, "do Y"), &mut ())).unwrap();
         assert_eq!(vote_verdict(allowed), Some(true));
         assert_eq!(vote_verdict(denied), Some(false));
     }
@@ -360,7 +367,7 @@ mod tests {
                 })),
             }),
         };
-        let out = block_on(adapter.apply("bus-1", &entry)).unwrap();
+        let out = block_on(adapter.apply("bus-1", &entry, &mut ())).unwrap();
         assert!(
             out.is_none(),
             "non-Intention entries should produce no payload"
@@ -385,7 +392,9 @@ mod tests {
             }),
         };
         assert!(
-            block_on(adapter.apply("bus-1", &entry)).unwrap().is_none(),
+            block_on(adapter.apply("bus-1", &entry, &mut ()))
+                .unwrap()
+                .is_none(),
             "a non-string intention should produce no payload"
         );
     }
@@ -404,7 +413,7 @@ mod tests {
         };
         assert!(
             matches!(
-                block_on(adapter.apply("bus-1", &entry)).unwrap_err(),
+                block_on(adapter.apply("bus-1", &entry, &mut ())).unwrap_err(),
                 ApplyError::MissingHeader
             ),
             "an entry without a header must be rejected"
@@ -419,8 +428,8 @@ mod tests {
             },
             "7",
         );
-        let first = block_on(adapter.apply("bus-1", &intention_entry(4, "x"))).unwrap();
-        let replay = block_on(adapter.apply("bus-1", &intention_entry(4, "x"))).unwrap();
+        let first = block_on(adapter.apply("bus-1", &intention_entry(4, "x"), &mut ())).unwrap();
+        let replay = block_on(adapter.apply("bus-1", &intention_entry(4, "x"), &mut ())).unwrap();
 
         // The full payload is replayed verbatim. If the replay had re-invoked
         // the voter, the reason would carry the second call's value and this
@@ -441,18 +450,22 @@ mod tests {
 
     #[test]
     fn storage_errors_remain_typed() {
-        let get_error = block_on(
-            fixed_adapter(FaultyStorage::GetTimeout).apply("bus-1", &intention_entry(7, "x")),
-        )
+        let get_error = block_on(fixed_adapter(FaultyStorage::GetTimeout).apply(
+            "bus-1",
+            &intention_entry(7, "x"),
+            &mut (),
+        ))
         .expect_err("storage get should fail");
         assert!(
             matches!(get_error, ApplyError::Storage(StorageError::Timeout(_))),
             "get error category should be preserved, got {get_error:?}"
         );
 
-        let put_error = block_on(
-            fixed_adapter(FaultyStorage::PutUnavailable).apply("bus-1", &intention_entry(7, "x")),
-        )
+        let put_error = block_on(fixed_adapter(FaultyStorage::PutUnavailable).apply(
+            "bus-1",
+            &intention_entry(7, "x"),
+            &mut (),
+        ))
         .expect_err("storage put should fail");
         assert!(
             matches!(
@@ -465,9 +478,11 @@ mod tests {
 
     #[test]
     fn storage_concurrency_is_classified_as_voter() {
-        let cas_error = block_on(
-            fixed_adapter(FaultyStorage::RejectPut).apply("bus-1", &intention_entry(7, "x")),
-        )
+        let cas_error = block_on(fixed_adapter(FaultyStorage::RejectPut).apply(
+            "bus-1",
+            &intention_entry(7, "x"),
+            &mut (),
+        ))
         .expect_err("storage CAS should be rejected");
         assert_eq!(
             cas_error.to_string(),
@@ -485,9 +500,11 @@ mod tests {
             "CAS rejection should retain its context, got {cas_error:?}"
         );
 
-        let conflict_error = block_on(
-            fixed_adapter(FaultyStorage::PutConflict).apply("bus-1", &intention_entry(7, "x")),
-        )
+        let conflict_error = block_on(fixed_adapter(FaultyStorage::PutConflict).apply(
+            "bus-1",
+            &intention_entry(7, "x"),
+            &mut (),
+        ))
         .expect_err("storage transaction should conflict");
         assert!(
             matches!(
