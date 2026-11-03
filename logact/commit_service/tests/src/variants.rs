@@ -9,9 +9,10 @@
 //!
 //! V1 runs over the full AgentBus backend matrix — reusing agentbus's
 //! `agentbus_fixtures!` registry (with a forwarded callback) so the matrix stays in
-//! one place — plus channeled and buffered stacks over the simple in-memory bus
-//! and the random-routing fixtures. The standalone `InMemCommitService` runs as
-//! a single fixture. The local gRPC and SQLite stack runs in the integration suite.
+//! one place — plus channeled and buffered stacks over the simple in-memory bus,
+//! the random-routing fixtures, and the observability decorator over a single V1
+//! service and over a router. The standalone `InMemCommitService` runs as a single
+//! fixture. The local gRPC and SQLite stack runs in the integration suite.
 //! `define_driver!` calls `commit_service_fixtures!` with a per-fixture callback;
 //! `cs_bus_bridge` adapts each AgentBus fixture into the V1 commit-service fixture.
 
@@ -45,6 +46,23 @@ macro_rules! commit_service_fixtures {
             [
                 $crate::fixtures::BufferingCommitServiceFixture<CommitServiceV1Fixture<FaultInjectingFixture<SimpleMemoryFixture>>>,
                 buffered_v1_simple_memory,
+                sim
+            ]
+            $(, $ctx)?
+        );
+        // Observability decorator over a single V1 service and over a router.
+        $cb!(
+            [
+                ObservableCommitServiceFixture<CommitServiceV1Fixture<FaultInjectingFixture<SimpleMemoryFixture>>>,
+                observable_v1_simple_memory,
+                sim
+            ]
+            $(, $ctx)?
+        );
+        $cb!(
+            [
+                ObservableCommitServiceFixture<RandomRoutingCommitServiceFixture<SimpleMemoryFixture>>,
+                observable_random_routing,
                 sim
             ]
             $(, $ctx)?

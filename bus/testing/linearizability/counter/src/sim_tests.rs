@@ -12,6 +12,7 @@ use logact_commit_service_tests::fixtures::ChanneledCommitServiceFixture;
 use logact_commit_service_tests::fixtures::CommitServiceV1Fixture;
 use logact_commit_service_tests::fixtures::CommitServiceV1LatencyFixture;
 use logact_commit_service_tests::fixtures::InMemCommitServiceFixture;
+use logact_commit_service_tests::fixtures::ObservableCommitServiceFixture;
 use logact_commit_service_tests::fixtures::RandomRoutingCommitServiceFixture;
 
 counter_sim_suite!();

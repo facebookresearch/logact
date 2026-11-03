@@ -31,6 +31,7 @@ members = [
   "logact/commit_service/grpc/local_server",
   "logact/commit_service/grpc/proto",
   "logact/commit_service/impls/inmem",
+  "logact/commit_service/impls/observable",
   "logact/commit_service/impls/sqlite",
   "logact/commit_service/impls/static_config",
   "logact/commit_service/impls/v1",
