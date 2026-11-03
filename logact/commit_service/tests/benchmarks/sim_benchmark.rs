@@ -10,6 +10,9 @@
 //! replay, but exclude the linearizability check and its final snapshot read.
 //! Each service instance has its own AgentBus client and bounded write-once
 //! cache over shared backing storage. `--no-cache` disables caching for comparison.
+//! `independent-buses-concurrent` releases four counter clients per bus across a
+//! randomized 5–10 ms window in each of ten rounds, with one policy writer per bus.
+//! Counter latencies include the round barrier and launch delay; commit spans exclude them.
 
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -38,6 +41,7 @@ use agentbus_api::MonotonicInstant;
 use agentbus_api::PrefixedMetrics;
 use agentbus_observable::ObservableAgentBus;
 use agentbus_simulator::Simulator;
+use agentbus_simulator::SimulatorBarrier;
 use agentbus_tests::common::fault_config::FaultConfig;
 use agentbus_tests::fixtures::ConformanceFixture;
 use agentbus_tests::fixtures::WriteOnceAgentBusGenericFixture;
@@ -49,6 +53,7 @@ use anyhow::Result;
 use counter_suite::counter::CounterOperation;
 use gated_counter_suite::commit_service::CommitServiceGatedCounterImplementation;
 use gated_counter_suite::model::GatedCounterOperation;
+use gated_counter_suite::model::GatedCounterOutput;
 use gated_counter_suite::model::GatedCounterSpec;
 use linearizability::history::OperationId;
 use linearizability::object::Client;
@@ -56,6 +61,7 @@ use linearizability::object::HistoryFor;
 use linearizability::object::LinearizabilityImplementation;
 use linearizability::object::LinearizableObject;
 use linearizability::object::run_linearizability_test;
+use linearizability::operation::OperationResult;
 use logact_commit_service_api::PolicyProvider;
 use logact_commit_service_api::PolicyState;
 use logact_commit_service_api::VersionedPolicyState;
@@ -78,12 +84,16 @@ use rand::RngExt as _;
 use rand::SeedableRng as _;
 use rand::distr::Uniform;
 use rand::rngs::StdRng;
+use rand::seq::SliceRandom as _;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::json;
 
 const OPERATION_LATENCY_MS: u64 = 50;
 const COUNTER_CLIENTS: usize = 3;
+const CONCURRENT_CLIENTS_PER_BUS: usize = 4;
+const BURST_MIN_SPREAD_MS: u64 = 5;
+const BURST_MAX_SPREAD_MS: u64 = 10;
 const COUNTER_OPERATIONS: usize = 40;
 const GATE_WRITES: usize = 4;
 const SERVICE_INSTANCES: usize = 3;
@@ -106,6 +116,7 @@ enum WorkloadKind {
     #[default]
     SharedBus,
     IndependentBuses,
+    IndependentBusesConcurrent,
 }
 
 impl WorkloadKind {
@@ -113,21 +124,45 @@ impl WorkloadKind {
         match self {
             Self::SharedBus => "shared-bus",
             Self::IndependentBuses => "independent-buses",
+            Self::IndependentBusesConcurrent => "independent-buses-concurrent",
         }
     }
 
     fn routing(self, sticky: bool) -> &'static str {
         match self {
             Self::SharedBus => "uniform random service per commit",
-            Self::IndependentBuses if sticky => "one fixed service per bus",
-            Self::IndependentBuses => "uniform random service per commit",
+            Self::IndependentBuses | Self::IndependentBusesConcurrent if sticky => {
+                "one fixed service per bus"
+            }
+            Self::IndependentBuses | Self::IndependentBusesConcurrent => {
+                "uniform random service per commit"
+            }
         }
+    }
+
+    fn counter_clients_per_bus(self) -> usize {
+        match self {
+            Self::SharedBus => COUNTER_CLIENTS,
+            Self::IndependentBuses => 1,
+            Self::IndependentBusesConcurrent => CONCURRENT_CLIENTS_PER_BUS,
+        }
+    }
+
+    fn counter_operations(self) -> usize {
+        match self {
+            Self::IndependentBusesConcurrent => COUNTER_OPERATIONS / CONCURRENT_CLIENTS_PER_BUS,
+            _ => COUNTER_OPERATIONS,
+        }
+    }
+
+    fn counter_clients(self) -> usize {
+        self.bus_ids().len() * self.counter_clients_per_bus()
     }
 
     fn bus_ids(self) -> Vec<String> {
         match self {
             Self::SharedBus => vec!["gated-counter-benchmark".to_string()],
-            Self::IndependentBuses => (0..COUNTER_CLIENTS)
+            Self::IndependentBuses | Self::IndependentBusesConcurrent => (0..COUNTER_CLIENTS)
                 .map(|client| format!("gated-counter-benchmark-{client}"))
                 .collect(),
         }
@@ -176,7 +211,12 @@ fn parse_options(args: &[String]) -> Result<BenchmarkOptions> {
                 kind = match args.next().map(String::as_str) {
                     Some("shared-bus") => WorkloadKind::SharedBus,
                     Some("independent-buses") => WorkloadKind::IndependentBuses,
-                    _ => anyhow::bail!("--workload requires shared-bus or independent-buses"),
+                    Some("independent-buses-concurrent") => {
+                        WorkloadKind::IndependentBusesConcurrent
+                    }
+                    _ => anyhow::bail!(
+                        "--workload requires shared-bus, independent-buses, or independent-buses-concurrent"
+                    ),
                 };
             }
             "--rows" => {
@@ -456,10 +496,49 @@ struct Measurements {
     gate_write: Vec<Duration>,
 }
 
+struct CounterRound {
+    barrier: Rc<SimulatorBarrier>,
+    delays_ms: RefCell<[u64; CONCURRENT_CLIENTS_PER_BUS]>,
+}
+
+impl CounterRound {
+    fn new() -> Rc<Self> {
+        Rc::new(Self {
+            barrier: SimulatorBarrier::new(CONCURRENT_CLIENTS_PER_BUS),
+            delays_ms: RefCell::new([0; CONCURRENT_CLIENTS_PER_BUS]),
+        })
+    }
+
+    async fn wait(&self, environment: &Simulator, client: usize) -> u64 {
+        if client == 0 {
+            let delays = environment.with_rng(|rng| {
+                let spread = rng.random_range(BURST_MIN_SPREAD_MS..=BURST_MAX_SPREAD_MS);
+                let mut delays = [
+                    0,
+                    rng.random_range(0..=spread),
+                    rng.random_range(0..=spread),
+                    spread,
+                ];
+                delays.shuffle(rng);
+                delays
+            });
+            *self.delays_ms.borrow_mut() = delays;
+        }
+        self.barrier.wait().await;
+        let delay_ms = self.delays_ms.borrow()[client];
+        environment.sleep(Duration::from_millis(delay_ms)).await;
+        delay_ms
+    }
+}
+
 struct Measured<I> {
     inner: I,
     start: MonotonicInstant,
     measurements: Rc<RefCell<Measurements>>,
+    sinks: Rc<Sinks>,
+    bus_id: String,
+    client_offset: usize,
+    counter_barrier: Option<Rc<CounterRound>>,
 }
 
 impl<I> LinearizabilityImplementation for Measured<I>
@@ -467,14 +546,21 @@ where
     I: LinearizabilityImplementation,
     I::Object: LinearizableObject<Spec = GatedCounterSpec>,
 {
-    type Object = I::Object;
+    type Object = MeasuredObject<I::Object>;
 
     fn environment(&self) -> Rc<Simulator> {
         self.inner.environment()
     }
 
     fn create(&self, client: usize) -> Rc<Self::Object> {
-        self.inner.create(client)
+        Rc::new(MeasuredObject {
+            inner: self.inner.create(client),
+            environment: self.inner.environment(),
+            sinks: self.sinks.clone(),
+            bus_id: self.bus_id.clone(),
+            client_offset: self.client_offset,
+            counter_barrier: self.counter_barrier.clone(),
+        })
     }
 
     async fn candidate(&self, history: &HistoryFor<Self::Object>) -> Result<Vec<OperationId>> {
@@ -495,6 +581,52 @@ where
 
     fn on_complete(&self) -> Option<Rc<dyn Fn()>> {
         self.inner.on_complete()
+    }
+}
+
+struct MeasuredObject<O> {
+    inner: Rc<O>,
+    environment: Rc<Simulator>,
+    sinks: Rc<Sinks>,
+    bus_id: String,
+    client_offset: usize,
+    counter_barrier: Option<Rc<CounterRound>>,
+}
+
+impl<O> LinearizableObject for MeasuredObject<O>
+where
+    O: LinearizableObject<Spec = GatedCounterSpec>,
+{
+    type Spec = GatedCounterSpec;
+    type Tag = O::Tag;
+
+    async fn execute(
+        &self,
+        id: OperationId,
+        operation: GatedCounterOperation,
+    ) -> OperationResult<GatedCounterOutput, Self::Tag> {
+        if let GatedCounterOperation::Counter(_) = operation
+            && let Some(barrier) = &self.counter_barrier
+        {
+            let start_us = now_us(&self.environment);
+            let delay_ms = barrier.wait(&self.environment, id.client).await;
+            let end_us = now_us(&self.environment);
+            let scope = format!("counter_{}", id.client + self.client_offset);
+            self.sinks.scopes.borrow_mut().insert(scope.clone());
+            self.sinks.timeline.rows.borrow_mut().push(TimedRow {
+                scope: scope.into(),
+                start_us,
+                end_us,
+                row: LogRow::default()
+                    .api_call_name("counter.round_wait")
+                    .latency_ms((end_us - start_us) / 1000)
+                    .add_string_field("bus_id", self.bus_id.clone())
+                    .add_i64_field("client", (id.client + self.client_offset) as i64)
+                    .add_i64_field("sequence", id.sequence as i64)
+                    .add_i64_field("launch_delay_ms", delay_ms as i64),
+            });
+        }
+        self.inner.execute(id, operation).await
     }
 }
 
@@ -573,7 +705,7 @@ impl BenchmarkRun {
                     router,
                     verification_bus,
                     controller,
-                    bus_id,
+                    bus_id.clone(),
                     environment.clone(),
                 );
                 run_linearizability_test(
@@ -582,16 +714,26 @@ impl BenchmarkRun {
                         inner: implementation,
                         start,
                         measurements: self.measurements,
+                        sinks: self.sinks,
+                        bus_id,
+                        client_offset: 0,
+                        counter_barrier: None,
                     },
                 )
                 .await?;
             }
-            WorkloadKind::IndependentBuses => {
+            WorkloadKind::IndependentBuses | WorkloadKind::IndependentBusesConcurrent => {
                 let services: Vec<_> = (1..=SERVICE_INSTANCES).map(make_service).collect();
-                let runs = self.workload.into_iter().zip(controllers).enumerate().map(
-                    |(client, (workload, (bus_id, controller)))| {
+                let clients_per_bus = self.kind.counter_clients_per_bus();
+                let workloads: Vec<_> = self
+                    .workload
+                    .chunks(clients_per_bus)
+                    .map(<[_]>::to_vec)
+                    .collect();
+                let runs = workloads.into_iter().zip(controllers).enumerate().map(
+                    |(bus_index, (workload, (bus_id, controller)))| {
                         let client_services = if self.sticky {
-                            vec![services[client % services.len()].clone()]
+                            vec![services[bus_index % services.len()].clone()]
                         } else {
                             services.clone()
                         };
@@ -606,15 +748,24 @@ impl BenchmarkRun {
                             router,
                             verification_bus,
                             controller,
-                            bus_id,
+                            bus_id.clone(),
                             environment.clone(),
                         );
                         let measured = Measured {
                             inner: implementation,
                             start,
                             measurements: self.measurements.clone(),
+                            sinks: self.sinks.clone(),
+                            bus_id,
+                            client_offset: bus_index * clients_per_bus,
+                            counter_barrier: match self.kind {
+                                WorkloadKind::IndependentBusesConcurrent => {
+                                    Some(CounterRound::new())
+                                }
+                                _ => None,
+                            },
                         };
-                        async move { run_linearizability_test(vec![workload], measured).await }
+                        async move { run_linearizability_test(workload, measured).await }
                     },
                 );
                 let handles: Vec<_> = runs.map(|run| environment.spawn(run)).collect();
@@ -680,7 +831,9 @@ fn run_one(
         for (index, bus_id) in kind.bus_ids().into_iter().enumerate() {
             let key = match kind {
                 WorkloadKind::SharedBus => "benchmark-policy".to_string(),
-                WorkloadKind::IndependentBuses => format!("benchmark-policy-{index}"),
+                WorkloadKind::IndependentBuses | WorkloadKind::IndependentBusesConcurrent => {
+                    format!("benchmark-policy-{index}")
+                }
             };
             // Initialization bypasses the observable storage so metrics cover only the workload.
             PolicyRegister::new(policy_storage.clone(), key.clone())
@@ -769,7 +922,7 @@ fn run(args: &[String]) -> Result<()> {
     } = parse_options(args)?;
     anyhow::ensure!(
         args.len() <= 1,
-        "usage: sim_benchmark [seed] [--workload shared-bus|independent-buses] [--rows PATH] [--trace PATH] [--sticky] [--no-cache]"
+        "usage: sim_benchmark [seed] [--workload shared-bus|independent-buses|independent-buses-concurrent] [--rows PATH] [--trace PATH] [--sticky] [--no-cache]"
     );
     let seed = args
         .first()
@@ -777,11 +930,13 @@ fn run(args: &[String]) -> Result<()> {
         .transpose()?
         .unwrap_or(1);
     let mut rng = StdRng::seed_from_u64(seed);
-    let counters: Vec<_> = (0..COUNTER_CLIENTS)
+    let counter_clients = kind.counter_clients();
+    let counter_operations = kind.counter_operations();
+    let counters: Vec<_> = (0..counter_clients)
         .map(|client| {
             Client::new(
                 format!("counter-{client}"),
-                (0..COUNTER_OPERATIONS)
+                (0..counter_operations)
                     .map(|_| {
                         GatedCounterOperation::Counter(if rng.random() {
                             CounterOperation::Increment
@@ -794,10 +949,15 @@ fn run(args: &[String]) -> Result<()> {
         })
         .collect();
     println!(
-        "seed={seed}; workload={}; {SERVICE_INSTANCES} service instances; {COUNTER_CLIENTS} counter clients x {COUNTER_OPERATIONS} operations; write-once/storage/policy operations={OPERATION_LATENCY_MS} ms; no faults",
+        "seed={seed}; workload={}; {SERVICE_INSTANCES} service instances; {counter_clients} counter clients x {counter_operations} operations; write-once/storage/policy operations={OPERATION_LATENCY_MS} ms; no faults",
         kind.name()
     );
-    println!("Routing: {}", kind.routing(sticky));
+    println!(
+        "{} buses; {} counter clients per bus; Routing: {}",
+        kind.bus_ids().len(),
+        kind.counter_clients_per_bus(),
+        kind.routing(sticky)
+    );
     println!(
         "Counter latencies include adapter replay. Initialization and final verification are excluded. The policy provider reads the backing register synchronously on each commit."
     );
@@ -828,18 +988,23 @@ fn run(args: &[String]) -> Result<()> {
                         .map(|index| GatedCounterOperation::SetGate(index % 2 != 0))
                         .collect(),
                 )),
-                WorkloadKind::IndependentBuses => {
-                    for client in &mut workload {
+                WorkloadKind::IndependentBuses | WorkloadKind::IndependentBusesConcurrent => {
+                    for (client_index, client) in workload.iter_mut().enumerate() {
+                        if matches!(kind, WorkloadKind::IndependentBusesConcurrent)
+                            && !client_index.is_multiple_of(kind.counter_clients_per_bus())
+                        {
+                            continue;
+                        }
                         client.operations = client
                             .operations
                             .iter()
                             .enumerate()
                             .flat_map(|(index, operation)| {
                                 let mut operations = vec![operation.clone()];
-                                if (index + 1).is_multiple_of(COUNTER_OPERATIONS / GATE_WRITES) {
+                                let gate_write = (index + 1) * GATE_WRITES / counter_operations;
+                                if gate_write != index * GATE_WRITES / counter_operations {
                                     operations.push(GatedCounterOperation::SetGate(
-                                        ((index + 1) / (COUNTER_OPERATIONS / GATE_WRITES))
-                                            .is_multiple_of(2),
+                                        gate_write.is_multiple_of(2),
                                     ));
                                 }
                                 operations
@@ -885,8 +1050,11 @@ fn run(args: &[String]) -> Result<()> {
 
     let metadata = json!({
         "seed": seed, "workload": kind.name(), "service_instances": SERVICE_INSTANCES, "bus_ids": kind.bus_ids(),
-        "operation_latency_ms": OPERATION_LATENCY_MS, "counter_clients": COUNTER_CLIENTS,
-        "counter_operations_per_client": COUNTER_OPERATIONS, "gate_writes": GATE_WRITES,
+        "operation_latency_ms": OPERATION_LATENCY_MS, "counter_clients": counter_clients,
+        "counter_clients_per_bus": kind.counter_clients_per_bus(),
+        "synchronized_counter_rounds": matches!(kind, WorkloadKind::IndependentBusesConcurrent),
+        "counter_launch_window_ms": if matches!(kind, WorkloadKind::IndependentBusesConcurrent) { Some(json!({"min": BURST_MIN_SPREAD_MS, "max": BURST_MAX_SPREAD_MS, "order": "shuffled per bus and round", "scheduler_jitter": "additional"})) } else { None },
+        "counter_operations_per_client": counter_operations, "gate_writes": GATE_WRITES,
         "clock": "simulator monotonic microseconds", "backing_bus": "write-once AgentBus over in-memory WriteOnceSpace with backing-operation delays",
         "services": "separately constructed persistent instances with independent AgentBus clients; shared backing storage",
         "write_once_cache": {"enabled": cache_enabled, "scope": "private per service instance; shared only by that client's clones", "eviction": "LRU", "max_entries": CACHE_MAX_ENTRIES, "max_value_bytes": CACHE_MAX_VALUE_BYTES, "backing_read_delay": "cache misses only"},
