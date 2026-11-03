@@ -7,12 +7,11 @@
 
 //! The concrete `CommitSvc` implementations the conformance suite runs against.
 //!
-//! V1 is run over the full AgentBus backend matrix — reusing agentbus's
+//! V1 runs over the full AgentBus backend matrix — reusing agentbus's
 //! `agentbus_fixtures!` registry (with a forwarded callback) so the matrix stays in
-//! one place — plus a channeled
-//! stack over the simple in-memory bus and the random-routing fixtures. The
-//! standalone `InMemCommitService` runs as a single fixture. The local gRPC and
-//! SQLite stack runs in the integration suite.
+//! one place — plus channeled and buffered stacks over the simple in-memory bus
+//! and the random-routing fixtures. The standalone `InMemCommitService` runs as
+//! a single fixture. The local gRPC and SQLite stack runs in the integration suite.
 //! `define_driver!` calls `commit_service_fixtures!` with a per-fixture callback;
 //! `cs_bus_bridge` adapts each AgentBus fixture into the V1 commit-service fixture.
 
@@ -38,6 +37,14 @@ macro_rules! commit_service_fixtures {
             [
                 ChanneledCommitServiceFixture<CommitServiceV1Fixture<FaultInjectingFixture<SimpleMemoryFixture>>>,
                 channeled_v1_simple_memory,
+                sim
+            ]
+            $(, $ctx)?
+        );
+        $cb!(
+            [
+                $crate::fixtures::BufferingCommitServiceFixture<CommitServiceV1Fixture<FaultInjectingFixture<SimpleMemoryFixture>>>,
+                buffered_v1_simple_memory,
                 sim
             ]
             $(, $ctx)?

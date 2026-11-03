@@ -5,9 +5,11 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! Channel-backed wrapper for the LogAct commit service.
+//! Wrappers for the LogAct commit service.
 
+pub mod buffering;
 pub mod channeled;
 
+pub use buffering::BufferingCommitService;
 pub use channeled::ChanneledCommitService;
 pub use channeled::ChanneledCommitServiceHandle;
