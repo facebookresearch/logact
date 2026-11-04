@@ -19,6 +19,7 @@ use std::rc::Rc;
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agentbus_tests::fixtures::AgentBusTestFixture;
 use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
+use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::validate_voter_configs;
@@ -49,7 +50,7 @@ where
     type Impl = CommitServiceV1<
         BF::Impl,
         CountingVoterFactory,
-        InMemoryStorage,
+        CachingStorage<InMemoryStorage, BF::Env>,
         StaticConfigPolicyProvider,
         DeciderFactoryImpl,
         BF::Env,

@@ -9,6 +9,7 @@
 
 pub mod applicator;
 pub mod base_engine;
+mod caching_storage;
 pub mod decider_state;
 pub mod engine_state;
 pub mod observable_applicator;
@@ -41,6 +42,8 @@ pub use base_engine::EngineResult;
 pub use base_engine::ProposalOutcome;
 pub use base_engine::VoterFactory;
 pub use base_engine::validate_voter_configs;
+pub use caching_storage::CachingStorage;
+pub use caching_storage::CachingStorageConfig;
 pub use decider_state::DeciderState;
 pub use engine_state::ENGINE_STORAGE_PREFIX;
 pub use engine_state::EngineStateLoadError;

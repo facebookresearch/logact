@@ -16,7 +16,7 @@ use agentbus_api::NoopLogger;
 use agentbus_api::RealEnvironment;
 use agentbus_tests::fixtures::AgentBusTestFixture;
 use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
-use logact_commit_service_engine::BaseEngine;
+use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::Storage;
@@ -98,7 +98,7 @@ where
     type Impl = CommitServiceV1<
         BF::Impl,
         DelegatingVoterFactory<NoopLogger, RealEnvironment, S>,
-        S,
+        CachingStorage<S, BF::Env>,
         P,
         DeciderFactoryImpl<S>,
         BF::Env,
@@ -161,7 +161,7 @@ where
     type Impl = CommitServiceV1<
         BF::Impl,
         CountingVoterFactory<FaultInjectingStorage<InMemoryStorage, Simulator>>,
-        FaultInjectingStorage<InMemoryStorage, Simulator>,
+        CachingStorage<FaultInjectingStorage<InMemoryStorage, Simulator>, Simulator>,
         StaticConfigPolicyProvider,
         DeciderFactoryImpl<FaultInjectingStorage<InMemoryStorage, Simulator>>,
         Simulator,
@@ -180,20 +180,10 @@ where
             vec![counting_voter_config(COUNTING_VOTER_MODULUS)],
             move |policy| validate_voter_configs(&policy_validator, policy),
         );
-        let decider_factory = DeciderFactoryImpl::new(storage.clone());
         let environment = self.bus_fixture.get_env();
         let bus = self.bus_fixture.create_impl();
 
-        CommitServiceV1::new(bus, move |bus| {
-            BaseEngine::new(
-                bus,
-                storage,
-                voter_factory,
-                policy,
-                decider_factory,
-                environment,
-            )
-        })
+        build_v1(bus, storage, |_| voter_factory, policy, environment)
     }
 }
 

@@ -32,6 +32,7 @@ async-trait = "0.1.92"
 bytes = { version = "1.12.1", features = ["serde"] }
 logact_commit_service_api = { version = "0.1.0", path = "../../../api" }
 logact_commit_service_static_config = { version = "0.1.0", path = "../../static_config" }
+lru = { version = "0.18.5", default-features = false }
 prost = { version = "0.14.4", default-features = false }
 prost-types = { version = "0.14.4", features = ["std"], default-features = false }
 strum = { version = "0.28.0", features = ["derive"] }

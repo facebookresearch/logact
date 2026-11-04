@@ -12,12 +12,15 @@
 //! environment-agnostic traits live in the shared `conformance` crate.
 
 use std::rc::Rc;
+use std::time::Duration;
 
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agentbus_api::AgentBus;
 use agentbus_api::Environment;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_engine::BaseEngine;
+use logact_commit_service_engine::CachingStorage;
+use logact_commit_service_engine::CachingStorageConfig;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::PolicyProvider;
@@ -57,14 +60,15 @@ pub use v1_latency::CommitServiceV1LatencyFixture;
 pub use v1_with_counting_voter::CommitServiceV1CountingVoterFixture;
 
 /// Build a `CommitServiceV1` over `bus` and `storage` with the engine's default
-/// decider, leaving only the voter factory and policy to vary.
+/// decider and cached engine storage, leaving only the voter factory and policy
+/// to vary.
 pub fn build_v1<B, VF, S, P, E>(
     bus: B,
     storage: Rc<S>,
     make_voter_factory: impl FnOnce(Rc<S>) -> VF,
     policy: P,
     environment: Rc<E>,
-) -> CommitServiceV1<B, VF, S, P, DeciderFactoryImpl<S>, E>
+) -> CommitServiceV1<B, VF, CachingStorage<S, E>, P, DeciderFactoryImpl<S>, E>
 where
     B: AgentBus + Clone + 'static,
     VF: VoterFactory + 'static,
@@ -77,7 +81,15 @@ where
     CommitServiceV1::new(bus, |bus| {
         BaseEngine::new(
             bus,
-            storage,
+            Rc::new(CachingStorage::new(
+                storage,
+                environment.clone(),
+                CachingStorageConfig {
+                    ttl: Duration::from_secs(60),
+                    max_entries: 128,
+                    max_value_bytes: 8 * 1024 * 1024,
+                },
+            )),
             voter_factory,
             policy,
             decider_factory,

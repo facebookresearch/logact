@@ -28,7 +28,7 @@ use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_api::CreateBusCommand;
-use logact_commit_service_engine::BaseEngine;
+use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_v1::CommitServiceV1;
@@ -41,6 +41,7 @@ use crate::fixtures::DeciderPolicyFixture;
 use crate::fixtures::SettableDeciderPolicy;
 use crate::fixtures::SimulatorFixture;
 use crate::fixtures::TestPolicyProvider;
+use crate::fixtures::build_v1;
 use crate::simulator::Simulator;
 
 /// Routes each commit request to one of `services`, picked uniformly at random.
@@ -103,8 +104,14 @@ impl<S: CommitSvc, E: Environment> CommitSvc for RandomRoutingCommitService<S, E
 /// Number of underlying instances to route across.
 const NUM_SERVICES: usize = 3;
 
-type RoutedV1<T, P> =
-    CommitServiceV1<T, DelegatingVoterFactory, InMemoryStorage, P, DeciderFactoryImpl, Simulator>;
+type RoutedV1<T, P> = CommitServiceV1<
+    T,
+    DelegatingVoterFactory,
+    CachingStorage<InMemoryStorage, Simulator>,
+    P,
+    DeciderFactoryImpl,
+    Simulator,
+>;
 
 /// Runs the generic suite against a router over `NUM_SERVICES` v1 services, with
 /// the bus from the injected `AgentBusTestFixture`, a shared in-memory storage, and
@@ -130,16 +137,13 @@ fn make_v1<T: AgentBus + Clone + 'static, P: TestPolicyProvider>(
     policy: P,
     environment: Rc<Simulator>,
 ) -> RoutedV1<T, P> {
-    CommitServiceV1::new(bus, |bus| {
-        BaseEngine::new(
-            bus,
-            storage.clone(),
-            DelegatingVoterFactory::with_storage(storage.clone()),
-            policy,
-            DeciderFactoryImpl::new(storage),
-            environment,
-        )
-    })
+    build_v1(
+        bus,
+        storage,
+        DelegatingVoterFactory::with_storage,
+        policy,
+        environment,
+    )
 }
 
 impl<BF, P> ConformanceFixture for RandomRoutingCommitServiceFixture<BF, P>
