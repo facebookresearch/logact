@@ -118,6 +118,12 @@ pub fn parse_entry(entry: &BusEntry) -> ParsedEntry {
                 Some(agent_bus_proto_rust::agent_bus::intention::Intention::StringIntention(s)) => {
                     s.clone()
                 }
+                Some(agent_bus_proto_rust::agent_bus::intention::Intention::GroupIntention(
+                    group,
+                )) => serde_json::json!({
+                    "group_intention": group.intentions
+                })
+                .to_string(),
                 None => String::new(),
             };
             ParsedEntry {

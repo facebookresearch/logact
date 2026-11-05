@@ -187,6 +187,9 @@ impl<T: AgentBus, E: Environment> VoterLoop<T, E> {
     ) -> Result<(), VoterError> {
         let code = match &intention.intention {
             Some(IntentionEnum::StringIntention(s)) => s.as_str(),
+            Some(IntentionEnum::GroupIntention(_)) => {
+                return Err(VoterError::UnknownPayloadType(log_position));
+            }
             None => "",
         };
 

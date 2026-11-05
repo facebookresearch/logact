@@ -10,6 +10,7 @@ license = "MIT"
 
 [dependencies]
 agent_bus_proto-rust = { path = "../../../bus/proto" }
+agentbus_api = { version = "0.1.0", path = "../../../bus/api" }
 agentbus_core = { version = "0.1.0", path = "../../../bus/core" }
 logact_commit_service_api = { version = "0.1.0", path = "../api" }
 logact_commit_service_core = { version = "0.1.0", path = "../core" }

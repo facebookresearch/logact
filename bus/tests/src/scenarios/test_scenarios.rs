@@ -30,6 +30,50 @@ mod defs {
     use crate::fixtures::AgentBusTestFixture;
 
     #[scenario]
+    pub async fn run_test_group_intention<F: AgentBusTestFixture>(
+        fixture: &F,
+    ) -> anyhow::Result<()> {
+        let bus = fixture.create_impl();
+        let bus_id = BusId {
+            agent_bus_id: "group-intention".into(),
+        };
+        let group = GroupIntention {
+            intentions: ["first", "second"].into_iter().map(str::to_owned).collect(),
+        };
+        let payload = Payload {
+            payload: Some(payload::Payload::Intention(Intention {
+                intention: Some(intention::Intention::GroupIntention(group.clone())),
+                ..Default::default()
+            })),
+        };
+        let position = bus
+            .append(AppendRequest {
+                bus_id: Some(bus_id.clone()),
+                payload: Some(payload.clone()),
+            })
+            .await?
+            .log_position;
+        let entries = bus
+            .poll(PollRequest {
+                bus_id: Some(bus_id.clone()),
+                start_log_position: position,
+                max_entries: 64,
+                filter: Some(PayloadTypeFilter {
+                    payload_types: vec![SelectivePollType::Intention as i32],
+                }),
+            })
+            .await?
+            .entries;
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].payload.as_ref(), Some(&payload));
+        assert_eq!(
+            agentbus_api::parse_entry(&entries[0]).content,
+            r#"{"group_intention":["first","second"]}"#
+        );
+        Ok(())
+    }
+
+    #[scenario]
     pub async fn run_test_typed_bus_id<F: AgentBusTestFixture>(fixture: &F) -> anyhow::Result<()> {
         let environment = fixture.get_env();
         let bus = fixture.create_impl();

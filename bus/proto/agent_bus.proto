@@ -104,7 +104,8 @@ message PolicyBatch {
 // Types of Intentions in the AgentBus
 message Intention {
   oneof intention {
-    string string_intention = 1; // string-based intention
+    string string_intention = 1;
+    GroupIntention group_intention = 4;
   }
   oneof policy_version_constraint {
     // Execute only under this exact policy generation.
@@ -112,6 +113,12 @@ message Intention {
     // Execute under this policy generation or a later one.
     int64 minimum_policy_version = 3;
   }
+}
+
+// One ordered, nonempty proposal with a shared decision. The outer Intention
+// owns the group's policy constraint and log position.
+message GroupIntention {
+  repeated string intentions = 1;
 }
 
 // LLM inference input

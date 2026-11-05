@@ -350,6 +350,12 @@ fn print_entry(entry: &BusEntry) {
                                 println!("\t{}", line.white().on_black());
                             }
                         }
+                        intention::Intention::GroupIntention(_) => {
+                            println!(
+                                "\t{}",
+                                agentbus_api::parse_entry(entry).content.white().on_black()
+                            );
+                        }
                     }
                 } else {
                     println!("<unknown>");

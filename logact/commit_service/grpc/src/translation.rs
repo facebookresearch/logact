@@ -27,7 +27,6 @@ pub mod create_bus {
 
 /// Translation helpers for the `commit_intention` RPC.
 pub mod commit_intention {
-    use agent_bus_proto_rust::agent_bus::BusId;
     use agent_bus_proto_rust::agent_bus::Intention;
     use logact_commit_service_api::CommitIntentionCommand;
     use logact_commit_service_api::CommitIntentionOutcome;
@@ -66,10 +65,13 @@ pub mod commit_intention {
             ));
         }
 
+        let intention =
+            intention.ok_or_else(|| Status::invalid_argument("intention variant is required"))?;
+        agentbus_api::intention_texts(&intention)
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
         Ok(CommitIntentionCommand {
             bus_id: bus_id.ok_or_else(|| Status::invalid_argument("bus_id is required"))?,
-            intention: intention
-                .ok_or_else(|| Status::invalid_argument("intention variant is required"))?,
+            intention,
         })
     }
 
@@ -97,6 +99,7 @@ pub mod commit_intention {
 
     #[cfg(test)]
     mod tests {
+        use agent_bus_proto_rust::agent_bus::BusId;
         use agent_bus_proto_rust::agent_bus::intention;
         use tonic::Code;
 
@@ -112,12 +115,34 @@ pub mod commit_intention {
         }
 
         #[test]
+        fn group_request_round_trips_and_rejects_empty_group() {
+            let mut command = command();
+            command.intention = intention::Intention::GroupIntention(
+                agent_bus_proto_rust::agent_bus::GroupIntention {
+                    intentions: vec!["run tool".into()],
+                },
+            );
+            let request = proto_from_native_request(command.clone());
+            assert_eq!(native_from_proto_request(request.clone()).unwrap(), command);
+            let mut invalid = request;
+            let Some(intention::Intention::GroupIntention(group)) =
+                invalid.intention.as_mut().unwrap().intention.as_mut()
+            else {
+                unreachable!()
+            };
+            group.intentions.clear();
+            assert_eq!(
+                native_from_proto_request(invalid).unwrap_err().code(),
+                Code::InvalidArgument
+            );
+        }
+
+        #[test]
         fn request_round_trips_through_proto() {
             let command = command();
             let round_tripped =
                 native_from_proto_request(proto_from_native_request(command.clone()))
                     .expect("generated request should be valid");
-
             assert_eq!(round_tripped, command);
         }
 
