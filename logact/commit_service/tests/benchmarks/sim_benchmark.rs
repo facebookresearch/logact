@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! `sim_benchmark [seed] [--workload KIND] [--rows PATH] [--trace PATH] [--sticky] [--no-cache]` runs synchronous workloads.
+//! `sim_benchmark [seed] [--workload KIND] [--rows PATH] [--trace PATH] [--sticky] [--no-cache] [--buffered]` runs synchronous workloads.
 //! Latencies include commit-service processing and the GatedCounter adapter's
 //! replay, but exclude the linearizability check and its final snapshot read.
 //! Each service instance has its own AgentBus client and bounded write-once
@@ -13,6 +13,7 @@
 //! `independent-buses-concurrent` releases four counter clients per bus across a
 //! randomized 5–10 ms window in each of ten rounds, with one policy writer per bus.
 //! Counter latencies include the round barrier and launch delay; commit spans exclude them.
+//! `--buffered` queues commits per bus within each service instance; commit spans include queue waits.
 
 use std::cell::Cell;
 use std::cell::RefCell;
@@ -62,9 +63,15 @@ use linearizability::object::LinearizabilityImplementation;
 use linearizability::object::LinearizableObject;
 use linearizability::object::run_linearizability_test;
 use linearizability::operation::OperationResult;
+use logact_commit_service_api::CommitIntentionCommand;
+use logact_commit_service_api::CommitIntentionOutcome;
+use logact_commit_service_api::CommitResult;
+use logact_commit_service_api::CommitSvc;
+use logact_commit_service_api::CreateBusCommand;
 use logact_commit_service_api::PolicyProvider;
 use logact_commit_service_api::PolicyState;
 use logact_commit_service_api::VersionedPolicyState;
+use logact_commit_service_core::BufferingCommitService;
 use logact_commit_service_engine::BaseEngine;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
@@ -193,6 +200,7 @@ struct BenchmarkOptions {
     trace_path: Option<PathBuf>,
     sticky: bool,
     cache_enabled: bool,
+    buffered: bool,
 }
 
 fn parse_options(args: &[String]) -> Result<BenchmarkOptions> {
@@ -202,11 +210,13 @@ fn parse_options(args: &[String]) -> Result<BenchmarkOptions> {
     let mut trace = None;
     let mut sticky = false;
     let mut cache_enabled = true;
+    let mut buffered = false;
     let mut args = args.iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--sticky" => sticky = true,
             "--no-cache" => cache_enabled = false,
+            "--buffered" => buffered = true,
             "--workload" => {
                 kind = match args.next().map(String::as_str) {
                     Some("shared-bus") => WorkloadKind::SharedBus,
@@ -244,7 +254,42 @@ fn parse_options(args: &[String]) -> Result<BenchmarkOptions> {
         trace_path: trace,
         sticky,
         cache_enabled,
+        buffered,
     })
+}
+
+#[derive(Clone)]
+enum BenchmarkService<S> {
+    Direct(S),
+    Buffered(BufferingCommitService<S>),
+}
+
+impl<S: CommitSvc> CommitSvc for BenchmarkService<S> {
+    type Bus = S::Bus;
+
+    fn agent_bus(&self) -> &Self::Bus {
+        match self {
+            Self::Direct(service) => service.agent_bus(),
+            Self::Buffered(service) => service.agent_bus(),
+        }
+    }
+
+    async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
+        match self {
+            Self::Direct(service) => service.create_bus(request).await,
+            Self::Buffered(service) => service.create_bus(request).await,
+        }
+    }
+
+    async fn commit_intention(
+        &self,
+        request: CommitIntentionCommand,
+    ) -> CommitResult<CommitIntentionOutcome> {
+        match self {
+            Self::Direct(service) => service.commit_intention(request).await,
+            Self::Buffered(service) => service.commit_intention(request).await,
+        }
+    }
 }
 
 type BenchStorage = FaultInjectingStorage<InMemoryStorage, Simulator>;
@@ -647,6 +692,7 @@ struct BenchmarkRun {
     workload: Vec<Client<GatedCounterOperation>>,
     kind: WorkloadKind,
     sticky: bool,
+    buffered: bool,
     measurements: Rc<RefCell<Measurements>>,
     sinks: Rc<Sinks>,
 }
@@ -669,6 +715,7 @@ impl BenchmarkRun {
         let service_space = self.space_fixture.clone();
         let service_environment = environment.clone();
         let service_sinks = self.sinks.clone();
+        let buffered = self.buffered;
         let make_service = move |instance| {
             let bus = WriteOnceAgentBusGenericFixture::new(service_space.clone()).create_impl();
             let service = CommitServiceV1::new(service_sinks.bus("service_bus", bus), |bus| {
@@ -681,6 +728,11 @@ impl BenchmarkRun {
                     service_environment.clone(),
                 )
             });
+            let service = if buffered {
+                BenchmarkService::Buffered(BufferingCommitService::new(service))
+            } else {
+                BenchmarkService::Direct(service)
+            };
             let Observability {
                 metrics,
                 logger,
@@ -783,6 +835,7 @@ struct RunConfig {
     kind: WorkloadKind,
     sticky: bool,
     cache_enabled: bool,
+    buffered: bool,
 }
 
 fn run_one(
@@ -794,6 +847,7 @@ fn run_one(
         kind,
         sticky,
         cache_enabled,
+        buffered,
     } = config;
     let fixed_latency = Uniform::new(OPERATION_LATENCY_MS, OPERATION_LATENCY_MS + 1)?;
     let space_fixture = SpaceFixture::new_with_config_and_latency(
@@ -849,6 +903,7 @@ fn run_one(
             workload,
             kind,
             sticky,
+            buffered,
             measurements: task_measurements,
             sinks: task_sinks,
         };
@@ -919,10 +974,11 @@ fn run(args: &[String]) -> Result<()> {
         trace_path,
         sticky,
         cache_enabled,
+        buffered,
     } = parse_options(args)?;
     anyhow::ensure!(
         args.len() <= 1,
-        "usage: sim_benchmark [seed] [--workload shared-bus|independent-buses|independent-buses-concurrent] [--rows PATH] [--trace PATH] [--sticky] [--no-cache]"
+        "usage: sim_benchmark [seed] [--workload shared-bus|independent-buses|independent-buses-concurrent] [--rows PATH] [--trace PATH] [--sticky] [--no-cache] [--buffered]"
     );
     let seed = args
         .first()
@@ -963,6 +1019,9 @@ fn run(args: &[String]) -> Result<()> {
     );
     println!(
         "Separate AgentBus clients and caches per service instance; shared backing storage. Cache enabled={cache_enabled}; limits={CACHE_MAX_ENTRIES} entries / {CACHE_MAX_VALUE_BYTES} value bytes; backing read delay only on misses."
+    );
+    println!(
+        "Buffered={buffered}; commit queues are private per service instance and keyed by bus. Service commit latencies include queue waits."
     );
     println!(
         "{:<12} {:<12} {:<12} {:>5} {:>10} {:>10} {:>10} {:>10} {:>12}",
@@ -1021,6 +1080,7 @@ fn run(args: &[String]) -> Result<()> {
                 kind,
                 sticky,
                 cache_enabled,
+                buffered,
             },
             workload,
         )?;
@@ -1059,6 +1119,7 @@ fn run(args: &[String]) -> Result<()> {
         "services": "separately constructed persistent instances with independent AgentBus clients; shared backing storage",
         "write_once_cache": {"enabled": cache_enabled, "scope": "private per service instance; shared only by that client's clones", "eviction": "LRU", "max_entries": CACHE_MAX_ENTRIES, "max_value_bytes": CACHE_MAX_VALUE_BYTES, "backing_read_delay": "cache misses only"},
         "routing": kind.routing(sticky),
+        "buffered": buffered,
         "timing": "end = simulator clock when the observable wrapper logs its row; start = end - its latency_us sample",
     });
     if let Some(path) = rows_path {
@@ -1074,7 +1135,11 @@ fn run(args: &[String]) -> Result<()> {
             .iter()
             .enumerate()
             .flat_map(|(index, (name, sinks))| {
-                sinks.export_trace(index + 1, &format!("{}/{name}/synchronous", kind.name()))
+                let buffering = if buffered { "buffered" } else { "direct" };
+                sinks.export_trace(
+                    index + 1,
+                    &format!("{}/{name}/synchronous/{buffering}", kind.name()),
+                )
             })
             .collect();
         write_json(

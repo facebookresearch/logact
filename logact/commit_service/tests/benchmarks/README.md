@@ -6,7 +6,7 @@ Run the GatedCounter workload with the synchronous policy provider:
 buck2 run fbcode//msl_infra/experimental/agentic/logact/commit_service/tests:sim_benchmark -- 1 --trace /tmp/commit-service-trace.json
 ```
 
-Arguments are `[seed] [--workload KIND] [--rows PATH] [--trace PATH] [--sticky] [--no-cache]`. The default seed is `1`.
+Arguments are `[seed] [--workload KIND] [--rows PATH] [--trace PATH] [--sticky] [--no-cache] [--buffered]`. The default seed is `1`.
 Omit `--rows PATH` and `--trace PATH` to print only the latency and
 observable-metrics reports.
 
@@ -57,6 +57,27 @@ per entry), shared only by that client's clones. Cache hits skip the backing
 call and its delay; writes, misses, and tail discovery reach the backing space.
 `--no-cache` sets the entry limit to zero, which disables caching while keeping
 the same client topology and workload.
+
+## Buffered commits
+
+`--buffered` wraps each persistent service instance in `BufferingCommitService`.
+Commit calls to the same instance and bus share a FIFO queue across all router
+handles. Different buses have separate queues; calls routed to different service
+instances can still overlap on the same bus. The wrapper caches up to 1,024 bus
+queues, which covers all buses in these workloads. Policy reads remain synchronous.
+
+Buffering is disabled by default and works with every workload, `--sticky`, and
+`--no-cache`. To queue a concurrent burst on each bus's fixed service:
+
+```bash
+buck2 run fbcode//msl_infra/experimental/agentic/logact/commit_service/tests:sim_benchmark -- 1 --workload independent-buses-concurrent --sticky --buffered --rows /tmp/buffered.json --trace /tmp/buffered-trace.json
+```
+
+The `service_1`..`service_3` observable decorators wrap the buffering layer, so
+their commit latencies and trace spans include queue waits and service processing.
+Counter latencies also include the adapter replay.
+`create_bus` and AgentBus calls bypass the commit queues. Console output and the
+`buffered` metadata in both JSON exports record whether buffering is enabled.
 
 Policy-register and engine-storage `get`/`put` calls each have a 50 ms delay.
 AgentBus uses `WriteOnceAgentBus` over an in-memory `WriteOnceSpace`. Each
