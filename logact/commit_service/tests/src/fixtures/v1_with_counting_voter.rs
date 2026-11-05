@@ -39,6 +39,7 @@ const MODULUS: u64 = 2;
 /// A `CommitServiceV1` fixture that denies every `MODULUS`-th intention.
 pub struct CommitServiceV1CountingVoterFixture<BF: AgentBusTestFixture> {
     bus_fixture: BF,
+    storage: Rc<InMemoryStorage>,
 }
 
 impl<BF> ConformanceFixture for CommitServiceV1CountingVoterFixture<BF>
@@ -68,7 +69,7 @@ where
         );
         build_v1(
             self.bus_fixture.create_impl(),
-            Rc::new(InMemoryStorage::new()),
+            self.storage.clone(),
             CountingVoterFactory::new,
             policy,
             self.bus_fixture.get_env(),
@@ -83,6 +84,7 @@ where
     fn new(simulator: Simulator) -> Self {
         Self {
             bus_fixture: BF::new(simulator),
+            storage: Rc::new(InMemoryStorage::new()),
         }
     }
 }

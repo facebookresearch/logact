@@ -125,6 +125,7 @@ where
     bus_fixture: BF,
     policy: P,
     policy_controller: P::Controller,
+    storage: Rc<InMemoryStorage>,
 }
 
 /// Build a v1 engine over a `bus` front-end, the shared `storage`, and the shared
@@ -161,15 +162,13 @@ where
 
     fn create_impl(&self) -> Self::Impl {
         let env = self.bus_fixture.get_env();
-        // One shared storage, cloned into every engine.
-        let storage = Rc::new(InMemoryStorage::new());
         // Each `bus_fixture.create_impl()` is a fresh front-end onto the same
         // shared log, so the N engines behave as one logical service.
         let services = (0..NUM_SERVICES)
             .map(|_| {
                 make_v1(
                     self.bus_fixture.create_impl(),
-                    storage.clone(),
+                    self.storage.clone(),
                     self.policy.clone(),
                     env.clone(),
                 )
@@ -190,6 +189,7 @@ where
             bus_fixture: <BF as BusSimulatorFixture>::new(simulator),
             policy,
             policy_controller,
+            storage: Rc::new(InMemoryStorage::new()),
         }
     }
 }

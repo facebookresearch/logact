@@ -55,7 +55,7 @@ pub struct CommitServiceV1Fixture<
     bus_fixture: BF,
     policy: P,
     policy_controller: P::Controller,
-    make_storage: Rc<dyn Fn(Rc<BF::Env>) -> S>,
+    storage: Rc<S>,
 }
 
 impl<BF, P, S> CommitServiceV1Fixture<BF, P, S>
@@ -63,16 +63,19 @@ where
     BF: AgentBusTestFixture,
     P: TestPolicyProvider,
 {
+    /// Every service the fixture creates shares the one engine storage that
+    /// `make_storage` builds, as replicas share durable storage.
     pub fn new_with_bus_fixture_and_storage(
         bus_fixture: BF,
-        make_storage: impl Fn(Rc<BF::Env>) -> S + 'static,
+        make_storage: impl FnOnce(Rc<BF::Env>) -> S,
     ) -> Self {
         let (policy, policy_controller) = P::for_test();
+        let storage = Rc::new(make_storage(bus_fixture.get_env()));
         Self {
             bus_fixture,
             policy,
             policy_controller,
-            make_storage: Rc::new(make_storage),
+            storage,
         }
     }
 }
@@ -110,10 +113,9 @@ where
 
     fn create_impl(&self) -> Self::Impl {
         let environment = self.bus_fixture.get_env();
-        let storage = Rc::new((self.make_storage)(environment.clone()));
         build_v1(
             self.bus_fixture.create_impl(),
-            storage,
+            self.storage.clone(),
             DelegatingVoterFactory::with_storage,
             self.policy.clone(),
             environment,
