@@ -16,6 +16,7 @@ use agentbus_api::WriteOnceSpace;
 use agentbus_writeonce::WriteOnceAgentBus;
 use anyhow::Result;
 use conformance::ConformanceFixture;
+use conformance::TestConfig;
 use fbinit::FacebookInit;
 use rand::distr::Uniform;
 
@@ -74,6 +75,11 @@ where
     fn new(simulator: Simulator) -> Self {
         let space_fixture = Rc::new(WOF::new(simulator));
         Self::new(space_fixture)
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        let space_fixture = Rc::new(WOF::try_new_with_config(simulator, config)?);
+        Ok(Self::new(space_fixture))
     }
 }
 

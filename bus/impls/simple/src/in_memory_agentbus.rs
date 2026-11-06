@@ -7,11 +7,13 @@
 
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::time::Duration;
 
 use agent_bus_proto_rust::agent_bus::*;
 use agentbus_api::AgentBus;
 use agentbus_api::AgentBusError;
 use agentbus_api::BusResult;
+use agentbus_api::MonotonicInstant;
 use agentbus_api::environment::Clock;
 use agentbus_api::environment::Environment;
 use agentbus_api::validate_bus_id;
@@ -23,6 +25,7 @@ use crate::in_memory_agentbus_state::InMemoryAgentBusState;
 pub struct InMemoryAgentBus<E: Environment> {
     state: Rc<RefCell<InMemoryAgentBusState>>,
     environment: Rc<E>,
+    ttl: Option<Duration>,
 }
 
 impl<E: Environment> InMemoryAgentBus<E> {
@@ -30,7 +33,22 @@ impl<E: Environment> InMemoryAgentBus<E> {
         Self {
             state: Rc::new(RefCell::new(InMemoryAgentBusState::new())),
             environment,
+            ttl: None,
         }
+    }
+
+    /// Expire each entry `ttl` after it is appended, measured on the environment's
+    /// monotonic clock. Expired entries keep their positions but are skipped by reads.
+    pub fn with_ttl(environment: Rc<E>, ttl: Duration) -> Self {
+        Self {
+            ttl: Some(ttl),
+            ..Self::new(environment)
+        }
+    }
+
+    fn now(&self) -> Option<MonotonicInstant> {
+        self.ttl
+            .map(|_| self.environment.with_clock(|clock| clock.monotonic_time()))
     }
 
     pub fn environment(&self) -> Rc<E> {
@@ -43,6 +61,7 @@ impl<E: Environment> Clone for InMemoryAgentBus<E> {
         Self {
             state: self.state.clone(),
             environment: self.environment.clone(),
+            ttl: self.ttl,
         }
     }
 }
@@ -54,10 +73,11 @@ impl<E: Environment> InMemoryAgentBus<E> {
         let rt_timestamp_ms = self
             .environment
             .with_clock(|c| c.unsafe_wall_time().as_millis() as i64);
+        let expires_at = self.now().zip(self.ttl).map(|(now, ttl)| now + ttl);
         let result = self
             .state
             .borrow_mut()
-            .append(request.clone(), rt_timestamp_ms);
+            .append(request.clone(), rt_timestamp_ms, expires_at);
 
         match &result {
             Ok(response) => {
@@ -83,7 +103,7 @@ impl<E: Environment> InMemoryAgentBus<E> {
     pub async fn poll(&self, request: PollRequest) -> BusResult<PollResponse> {
         let bus_id = validate_bus_id(request.bus_id.as_ref())?;
         let bus_id = bus_id.agent_bus_id.clone();
-        let result = self.state.borrow().poll(request.clone());
+        let result = self.state.borrow().poll(request.clone(), self.now());
 
         match &result {
             Ok(response) => {
@@ -162,6 +182,7 @@ impl<E: Environment + 'static> AgentBus for InMemoryAgentBus<E> {
                 max_entries,
                 &payload_types,
                 request.end_log_position,
+                self.now(),
             )
             .map_err(AgentBusError::Internal)?;
         Ok(ReadNextResponse {

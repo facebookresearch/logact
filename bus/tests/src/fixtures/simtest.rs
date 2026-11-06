@@ -10,6 +10,7 @@
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
+use std::time::Duration;
 
 use agentbus_api::InMemoryMetrics;
 use agentbus_api::NoopLogger;
@@ -22,13 +23,16 @@ use agentbus_simple::InMemoryAgentBus;
 use agentbus_writeonce::InMemoryWriteOnceSpace;
 use agentbus_writeonce::ObservableWriteOnceSpace;
 use agentbus_writeonce::WriteOnceAgentBus;
+use anyhow::Result;
 use conformance::ConformanceFixture;
+use conformance::TestConfig;
 use rand::distr::Uniform;
 
 use super::SimulatorFixture;
 use super::WriteOnceAgentBusGenericFixture;
 use crate::common::fault_config::FaultConfig;
 use crate::impls::chained_agentbus::ChainedAgentBus;
+use crate::impls::chained_agentbus::ChainedMode;
 use crate::impls::fault_injecting_agentbus::FaultInjectingAgentBus;
 use crate::simulator::Simulator;
 use crate::write_once_space::fixtures::simtest::CachingWriteOnceSpaceFixture;
@@ -83,10 +87,15 @@ impl<const CACHE_CAPACITY: usize> SimulatorFixture
     for InMemoryWriteOnceAgentBusFixture<CACHE_CAPACITY>
 {
     fn new(simulator: Simulator) -> Self {
-        Self {
-            space_fixture: InMemoryWriteOnceSpaceFixture::new(simulator),
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            space_fixture: InMemoryWriteOnceSpaceFixture::try_new_with_config(simulator, config)?,
             metrics: Rc::new(InMemoryMetrics::new()),
-        }
+        })
     }
 }
 
@@ -110,11 +119,23 @@ impl ConformanceFixture for SimpleMemoryFixture {
     }
 }
 
+fn in_memory_agentbus(env: Rc<Simulator>, ttl: Option<Duration>) -> InMemoryAgentBus<Simulator> {
+    match ttl {
+        Some(ttl) => InMemoryAgentBus::with_ttl(env, ttl),
+        None => InMemoryAgentBus::new(env),
+    }
+}
+
 impl SimulatorFixture for SimpleMemoryFixture {
     fn new(simulator: Simulator) -> Self {
-        Self {
-            agentbus: InMemoryAgentBus::new(Rc::new(simulator)),
-        }
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            agentbus: in_memory_agentbus(Rc::new(simulator), config.ttl),
+        })
     }
 }
 
@@ -141,12 +162,18 @@ impl ConformanceFixture for ChanneledAgentBusFixture {
 
 impl SimulatorFixture for ChanneledAgentBusFixture {
     fn new(simulator: Simulator) -> Self {
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        let ttl = config.ttl;
         let env = Rc::new(simulator);
         let worker_env = env.clone();
         let agentbus = ChanneledAgentBus::new_on_environment(env.clone(), move || {
-            InMemoryAgentBus::new(worker_env.clone())
+            in_memory_agentbus(worker_env.clone(), ttl)
         });
-        Self { agentbus, env }
+        Ok(Self { agentbus, env })
     }
 }
 
@@ -228,8 +255,14 @@ where
         + ConformanceFixture<Env = Simulator, Impl: agentbus_api::AgentBus + 'static>,
 {
     fn new(simulator: Simulator) -> Self {
-        Self {
-            inner: F::new(simulator),
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    /// The scenario's config goes to the wrapped bus fixture.
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: F::try_new_with_config(simulator, config)?,
             config: FaultConfig {
                 prob_lost: 0.0,
                 prob_commit_then_error: 0.0,
@@ -238,7 +271,7 @@ where
             append_latency_ms: Uniform::new(0, 10).unwrap(),
             poll_latency_ms: Uniform::new(0, 10).unwrap(),
             metrics: Rc::new(NoopMetrics),
-        }
+        })
     }
 }
 
@@ -262,13 +295,19 @@ impl<const MODE: u8> ConformanceFixture for ChainedAgentBusGenericFixture<MODE> 
 
 impl<const MODE: u8> SimulatorFixture for ChainedAgentBusGenericFixture<MODE> {
     fn new(simulator: Simulator) -> Self {
-        let env = Rc::new(simulator);
-        let agentbus = match MODE {
-            0 => ChainedAgentBus::new_correct(env),
-            1 => ChainedAgentBus::new_buggy_poll(env),
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        let mode = match MODE {
+            0 => ChainedMode::Correct,
+            1 => ChainedMode::BuggyPoll,
             _ => panic!("Invalid mode"),
         };
-        Self { agentbus }
+        Ok(Self {
+            agentbus: ChainedAgentBus::new(Rc::new(simulator), mode, config.ttl),
+        })
     }
 }
 

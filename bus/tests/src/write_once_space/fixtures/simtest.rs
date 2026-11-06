@@ -274,15 +274,21 @@ where
     F::Impl: Clone + 'static,
 {
     fn new(simulator: Simulator) -> Self {
-        Self::new_with_config_and_latency(
-            simulator,
-            FaultConfig {
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    /// The scenario's config goes to the wrapped space fixture.
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: F::try_new_with_config(simulator, config)?,
+            config: FaultConfig {
                 prob_lost: 0.0,
                 prob_commit_then_error: 0.0,
                 prob_error_then_commit: 0.0,
             },
-            Uniform::new(0, 10).unwrap(),
-            Uniform::new(0, 10).unwrap(),
-        )
+            write_latency_ms: Uniform::new(0, 10).unwrap(),
+            read_latency_ms: Uniform::new(0, 10).unwrap(),
+        })
     }
 }

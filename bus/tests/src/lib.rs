@@ -59,7 +59,7 @@ pub use futures;
 conformance::define_driver! {
     $,
     root = agentbus_tests,
-    scenario_mods = [test_scenarios, appserver, mailbox, voter_e2e, sim_only_scenarios, multi_node, fault_injection],
+    scenario_mods = [test_scenarios, appserver, mailbox, voter_e2e, sim_only_scenarios, multi_node, fault_injection, ttl],
     fixtures = agentbus_fixtures,
     suite = agentbus,
 }

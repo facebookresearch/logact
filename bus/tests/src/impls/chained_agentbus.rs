@@ -47,11 +47,12 @@ struct SharedState {
 }
 
 impl SharedState {
-    fn new(env: Rc<Simulator>) -> Self {
-        let buses = vec![
-            InMemoryAgentBus::new(env.clone()),
-            InMemoryAgentBus::new(env.clone()),
-        ];
+    fn new(env: Rc<Simulator>, ttl: Option<Duration>) -> Self {
+        let bus = || match ttl {
+            Some(ttl) => InMemoryAgentBus::with_ttl(env.clone(), ttl),
+            None => InMemoryAgentBus::new(env.clone()),
+        };
+        let buses = vec![bus(), bus()];
         Self {
             buses,
             next_client_id: 0,
@@ -74,25 +75,16 @@ pub struct ChainedAgentBus {
 }
 
 impl ChainedAgentBus {
-    pub fn new_correct(env: Rc<Simulator>) -> Self {
-        let state = Rc::new(RefCell::new(SharedState::new(env.clone())));
+    /// Build a chain in `mode`. With a TTL, its buses expire each entry `ttl` after
+    /// it is appended.
+    pub fn new(env: Rc<Simulator>, mode: ChainedMode, ttl: Option<Duration>) -> Self {
+        let state = Rc::new(RefCell::new(SharedState::new(env.clone(), ttl)));
         let client_id = state.borrow_mut().next_client();
         Self {
             state,
             env,
             client_id,
-            mode: ChainedMode::Correct,
-        }
-    }
-
-    pub fn new_buggy_poll(env: Rc<Simulator>) -> Self {
-        let state = Rc::new(RefCell::new(SharedState::new(env.clone())));
-        let client_id = state.borrow_mut().next_client();
-        Self {
-            state,
-            env,
-            client_id,
-            mode: ChainedMode::BuggyPoll,
+            mode,
         }
     }
 
