@@ -36,7 +36,7 @@ paste = "1.0.14"
 rand = "0.10.3"
 tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["full", "test-util", "tracing"] }
-tonic = { version = "0.14.6", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
+tonic = { version = "0.14.9", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
 
 [dev-dependencies]
 fbinit-tokio = { version = "0.1.2", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "main" }

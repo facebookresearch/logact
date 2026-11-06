@@ -15,4 +15,4 @@ agentbus_core = { version = "0.1.0", path = "../../../bus/core" }
 logact_commit_service_api = { version = "0.1.0", path = "../api" }
 logact_commit_service_core = { version = "0.1.0", path = "../core" }
 logact_commit_service_grpc_proto-rust = { path = "proto" }
-tonic = { version = "0.14.6", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
+tonic = { version = "0.14.9", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
