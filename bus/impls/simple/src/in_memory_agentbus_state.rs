@@ -10,7 +10,8 @@ use std::collections::HashMap;
 use agent_bus_proto_rust::agent_bus::*;
 use agentbus_api::AgentBusError;
 use agentbus_api::BusResult;
-use agentbus_api::MonotonicInstant;
+use agentbus_api::TtlCheck;
+use agentbus_api::UnsafeWallTime;
 use agentbus_api::payload_matches_filter;
 use agentbus_api::validate_bus_id;
 use anyhow::Result;
@@ -31,13 +32,13 @@ pub struct InMemoryAgentBusState {
 #[derive(Debug)]
 struct StoredEntry {
     entry: BusEntry,
-    expires_at: Option<MonotonicInstant>,
+    written_at: Option<UnsafeWallTime>,
 }
 
 impl StoredEntry {
-    fn is_live(&self, now: Option<MonotonicInstant>) -> bool {
-        match (self.expires_at, now) {
-            (Some(deadline), Some(now)) => now < deadline,
+    fn is_live(&self, check: Option<TtlCheck>) -> bool {
+        match (self.written_at, check) {
+            (Some(written_at), Some(check)) => check.is_live(written_at),
             _ => true,
         }
     }
@@ -52,7 +53,7 @@ impl InMemoryAgentBusState {
         &mut self,
         request: AppendRequest,
         rt_timestamp_ms: i64,
-        expires_at: Option<MonotonicInstant>,
+        written_at: Option<UnsafeWallTime>,
     ) -> BusResult<AppendResponse> {
         let bus_id = validate_bus_id(request.bus_id.as_ref())?;
         let bus_id = bus_id.agent_bus_id.clone();
@@ -72,18 +73,14 @@ impl InMemoryAgentBusState {
             payload: Some(payload),
         };
 
-        bus.push(StoredEntry { entry, expires_at });
+        bus.push(StoredEntry { entry, written_at });
 
         Ok(AppendResponse {
             log_position: position,
         })
     }
 
-    pub fn poll(
-        &self,
-        request: PollRequest,
-        now: Option<MonotonicInstant>,
-    ) -> BusResult<PollResponse> {
+    pub fn poll(&self, request: PollRequest, check: Option<TtlCheck>) -> BusResult<PollResponse> {
         let bus_id = validate_bus_id(request.bus_id.as_ref())?;
         let bus_id = bus_id.agent_bus_id.clone();
         let max_entries = (request.max_entries as usize).min(MAX_POLL_ENTRIES);
@@ -96,7 +93,7 @@ impl InMemoryAgentBusState {
                 request.start_log_position,
                 max_entries,
                 &payload_types,
-                now,
+                check,
             )
             .map_err(AgentBusError::Internal)?;
 
@@ -113,7 +110,7 @@ impl InMemoryAgentBusState {
         start_position: i64,
         max_entries: usize,
         payload_types: &Option<Vec<i32>>,
-        now: Option<MonotonicInstant>,
+        check: Option<TtlCheck>,
     ) -> Result<(Vec<BusEntry>, bool)> {
         let entries = self
             .buses
@@ -137,7 +134,7 @@ impl InMemoryAgentBusState {
                 let mut result = Vec::new();
                 let mut complete = true;
 
-                for entry in slice.iter().filter(|stored| stored.is_live(now)) {
+                for entry in slice.iter().filter(|stored| stored.is_live(check)) {
                     let entry = &entry.entry;
                     // Apply filter if present
                     if let Some(ref payload) = entry.payload {
@@ -180,7 +177,7 @@ impl InMemoryAgentBusState {
         max_entries: usize,
         payload_types: &Option<Vec<i32>>,
         end_position: i64,
-        now: Option<MonotonicInstant>,
+        check: Option<TtlCheck>,
     ) -> Result<(Vec<BusEntry>, i64)> {
         if start_position > end_position {
             return Err(anyhow::anyhow!(
@@ -203,7 +200,7 @@ impl InMemoryAgentBusState {
         let slice = &bus[start_idx..end_idx];
 
         let mut entries = Vec::new();
-        for entry in slice.iter().filter(|stored| stored.is_live(now)) {
+        for entry in slice.iter().filter(|stored| stored.is_live(check)) {
             let entry = &entry.entry;
             if let Some(ref payload) = entry.payload {
                 if !payload_matches_filter(payload, payload_types) {

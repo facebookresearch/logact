@@ -98,7 +98,10 @@ impl<E: Environment, P> InMemCommitService<E, P> {
 
     /// Expire each bus entry `ttl` after it is appended. Reads that reach an
     /// expired entry return `PositionNotFound`.
-    pub fn with_ttl(self, ttl: Duration) -> Self {
+    pub fn with_ttl(self, ttl: Duration) -> Self
+    where
+        E: 'static,
+    {
         Self {
             bus: InMemoryAgentBus::with_ttl(self.bus.environment(), ttl),
             ..self

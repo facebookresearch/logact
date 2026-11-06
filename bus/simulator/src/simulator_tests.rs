@@ -408,3 +408,18 @@ fn test_minimal_iterations() {
         assert_eq!(stats.polls, 9); // 2 polls per rx and 3 for the sender and its sleep.
     }
 }
+
+#[test]
+fn wall_time_adds_small_noise_but_monotonic_time_is_exact() {
+    let env = Simulator::new(1);
+    env.clock.advance_to(Duration::from_secs(10));
+    let walls = (0..100)
+        .map(|_| env.with_clock(|clock| clock.unsafe_wall_time().as_millis()))
+        .collect::<Vec<_>>();
+    assert!(walls.iter().all(|ms| (9_999..=10_001).contains(ms)));
+    assert!(walls.iter().any(|ms| *ms != walls[0]));
+    assert_eq!(
+        env.with_clock(|clock| clock.monotonic_time()),
+        MonotonicInstant::from_duration_since_clock_origin(Duration::from_secs(10))
+    );
+}

@@ -7,7 +7,8 @@
 
 use std::collections::HashMap;
 
-use agentbus_api::MonotonicInstant;
+use agentbus_api::TtlCheck;
+use agentbus_api::UnsafeWallTime;
 use agentbus_api::WriteOnceError;
 use agentbus_api::WriteOnceResult;
 use bytes::Bytes;
@@ -25,13 +26,13 @@ pub struct InMemoryWriteOnceSpaceState {
 
 struct Entry {
     value: Bytes,
-    expires_at: Option<MonotonicInstant>,
+    written_at: Option<UnsafeWallTime>,
 }
 
 impl Entry {
-    fn is_live(&self, now: Option<MonotonicInstant>) -> bool {
-        match (self.expires_at, now) {
-            (Some(deadline), Some(now)) => now < deadline,
+    fn is_live(&self, check: Option<TtlCheck>) -> bool {
+        match (self.written_at, check) {
+            (Some(written_at), Some(check)) => check.is_live(written_at),
             _ => true,
         }
     }
@@ -49,35 +50,33 @@ impl InMemoryWriteOnceSpaceState {
         space_id: &str,
         address: u64,
         value: Bytes,
-        now: Option<MonotonicInstant>,
-        expires_at: Option<MonotonicInstant>,
+        check: Option<TtlCheck>,
     ) -> WriteOnceResult<()> {
         let space = self.spaces.entry(space_id.to_string()).or_default();
-        if space.get(&address).is_some_and(|entry| entry.is_live(now)) {
+        if space
+            .get(&address)
+            .is_some_and(|entry| entry.is_live(check))
+        {
             return Err(WriteOnceError::AddressAlreadyExists(address));
         }
-        space.insert(address, Entry { value, expires_at });
+        let written_at = check.map(|check| check.now());
+        space.insert(address, Entry { value, written_at });
         Ok(())
     }
 
-    pub fn read(
-        &self,
-        space_id: &str,
-        address: u64,
-        now: Option<MonotonicInstant>,
-    ) -> Option<Bytes> {
+    pub fn read(&self, space_id: &str, address: u64, check: Option<TtlCheck>) -> Option<Bytes> {
         self.spaces
             .get(space_id)?
             .get(&address)
-            .filter(|entry| entry.is_live(now))
+            .filter(|entry| entry.is_live(check))
             .map(|entry| entry.value.clone())
     }
 
-    pub fn tail(&self, space_id: &str, window_size: u64, now: Option<MonotonicInstant>) -> u64 {
+    pub fn tail(&self, space_id: &str, window_size: u64, check: Option<TtlCheck>) -> u64 {
         let Some(space) = self.spaces.get(space_id) else {
             return 0;
         };
-        let is_live = |address: &u64| space.get(address).is_some_and(|entry| entry.is_live(now));
+        let is_live = |address: &u64| space.get(address).is_some_and(|entry| entry.is_live(check));
 
         let Some(max_addr) = space.keys().copied().filter(is_live).max() else {
             return 0;

@@ -86,7 +86,7 @@ impl Simulator {
     pub fn new(seed: u64) -> Self {
         eprintln!("Simulator seed: {}", seed);
         let rng = StdRng::seed_from_u64(seed);
-        let clock = LogicalClock::new();
+        let clock = LogicalClock::new(seed);
         Self {
             executor: DeterministicExecutor::new(),
             rng: RefCell::new(rng),
@@ -97,7 +97,7 @@ impl Simulator {
     pub fn with_jitter(seed: u64, jitter_distribution: Uniform<u64>) -> Self {
         eprintln!("Simulator seed: {}", seed);
         let rng = StdRng::seed_from_u64(seed);
-        let clock = LogicalClock::new();
+        let clock = LogicalClock::new(seed);
         Self {
             executor: DeterministicExecutor::with_jitter(jitter_distribution),
             rng: RefCell::new(rng),
@@ -415,15 +415,24 @@ impl DeterministicExecutor {
     }
 }
 
-/// Logical clock for deterministic testing - time advances only when explicitly set
+/// Largest offset of `unsafe_wall_time` from simulated time, in either direction.
+const WALL_CLOCK_NOISE_US: i64 = 1_000;
+
+/// Logical clock for deterministic testing - time advances only when explicitly set.
+/// `unsafe_wall_time` adds small random noise in both directions, so it is not
+/// monotonic; `monotonic_time` is exact.
 pub struct LogicalClock {
     elapsed: RefCell<std::time::Duration>,
+    wall_noise: RefCell<StdRng>,
 }
 
 impl LogicalClock {
-    pub fn new() -> Self {
+    /// `seed` drives the wall-clock noise from its own generator, so reading wall
+    /// time does not perturb the simulator's other randomness.
+    pub fn new(seed: u64) -> Self {
         Self {
             elapsed: RefCell::new(std::time::Duration::ZERO),
+            wall_noise: RefCell::new(StdRng::seed_from_u64(seed ^ 0x5741_4c4c)),
         }
     }
 
@@ -442,7 +451,17 @@ impl LogicalClock {
 
 impl Clock for LogicalClock {
     fn unsafe_wall_time(&self) -> UnsafeWallTime {
-        UnsafeWallTime::from_duration_since_epoch(self.elapsed_time())
+        let noise_us = self
+            .wall_noise
+            .borrow_mut()
+            .random_range(-WALL_CLOCK_NOISE_US..=WALL_CLOCK_NOISE_US);
+        let noise = std::time::Duration::from_micros(noise_us.unsigned_abs());
+        let elapsed = self.elapsed_time();
+        UnsafeWallTime::from_duration_since_epoch(if noise_us >= 0 {
+            elapsed + noise
+        } else {
+            elapsed.saturating_sub(noise)
+        })
     }
 
     fn monotonic_time(&self) -> MonotonicInstant {
