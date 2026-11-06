@@ -64,6 +64,7 @@ impl CommitService for GrpcCommitServiceHandler {
 
 fn commit_status(error: CommitError) -> Status {
     match error {
+        CommitError::BusDataLoss(_) => Status::data_loss(error.to_string()),
         CommitError::InvalidArgument(_) => Status::invalid_argument(error.to_string()),
         CommitError::Concurrency(_) => Status::aborted(error.to_string()),
         CommitError::Timeout(_) => Status::deadline_exceeded(error.to_string()),

@@ -78,6 +78,7 @@ impl<T: Clone, E: Environment> Clone for ObservableCommitSvc<T, E> {
 
 fn error_code(error: &CommitError) -> &'static str {
     match error {
+        CommitError::BusDataLoss(_) => "CommitBusDataLoss",
         CommitError::InvalidArgument(_) => "CommitInvalidArgument",
         CommitError::Concurrency(_) => "CommitConcurrency",
         CommitError::Timeout(_) => "CommitTimeout",
@@ -161,6 +162,7 @@ mod tests {
     enum FakeResponse {
         Approved,
         Timeout,
+        BusDataLoss,
     }
 
     #[derive(Clone)]
@@ -194,6 +196,9 @@ mod tests {
                 }),
                 FakeResponse::Timeout => Err(CommitError::Timeout(
                     std::io::Error::other("commit timed out").into(),
+                )),
+                FakeResponse::BusDataLoss => Err(CommitError::BusDataLoss(
+                    std::io::Error::other("bus 'expired': missing position 4").into(),
                 )),
             }
         }
@@ -335,6 +340,30 @@ mod tests {
                 ),
                 ("success".to_string(), LogFieldValue::I64(0)),
             ]
+        );
+    }
+
+    #[test]
+    fn records_bus_data_loss_without_a_denial() {
+        let (wrapper, _, metrics, logger) = observable(FakeResponse::BusDataLoss);
+        let error = block_on(wrapper.commit_intention(request()))
+            .expect_err("lost history must be returned as a failure");
+        assert!(matches!(error, CommitError::BusDataLoss(_)));
+        assert_eq!(
+            metrics.counter("commit_intention.commit_service.num_errors"),
+            1
+        );
+        let rows = logger.rows();
+        assert_eq!(rows[0].error_code.as_deref(), Some("CommitBusDataLoss"));
+        assert_eq!(
+            rows[0].error_message.as_deref(),
+            Some("bus 'expired': missing position 4")
+        );
+        assert!(
+            !rows[0]
+                .additional_fields
+                .iter()
+                .any(|(key, _)| key == "approved")
         );
     }
 }

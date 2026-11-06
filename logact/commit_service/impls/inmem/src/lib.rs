@@ -479,7 +479,7 @@ fn decision_payload(position: i64, approved: bool, reason: String) -> Payload {
 
 fn commit_error_from_bus(error: AgentBusError) -> CommitError {
     match error {
-        error @ AgentBusError::PositionNotFound(_) => CommitError::Internal(error.into()),
+        error @ AgentBusError::PositionNotFound(_) => CommitError::BusDataLoss(error.into()),
         error @ AgentBusError::InvalidArgument(_) => {
             CommitError::InvalidArgument(anyhow::Error::new(error))
         }
@@ -541,6 +541,7 @@ mod tests {
 
     fn assert_mapped_error(error: CommitError, expected_category: &str, expected_message: &str) {
         let category = match &error {
+            CommitError::BusDataLoss(_) => "bus_data_loss",
             CommitError::InvalidArgument(_) => "invalid argument",
             CommitError::Concurrency(_) => "concurrency",
             CommitError::Timeout(_) => "timeout",

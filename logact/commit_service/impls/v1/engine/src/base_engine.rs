@@ -161,6 +161,10 @@ pub struct ProposalOutcome {
 /// Error returned by [`BaseEngine`] operations.
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
+    /// The bus history is inconsistent with durable state and cannot be replayed safely.
+    #[error(transparent)]
+    BusDataLoss(anyhow::Error),
+
     /// A direct engine storage operation failed.
     #[error(transparent)]
     Storage(StorageError),
@@ -188,6 +192,15 @@ pub enum EngineError {
 
 /// Result returned by [`BaseEngine`] operations.
 pub type EngineResult<T> = std::result::Result<T, EngineError>;
+
+impl From<AgentBusError> for EngineError {
+    fn from(error: AgentBusError) -> Self {
+        match error {
+            error @ AgentBusError::PositionNotFound(_) => Self::BusDataLoss(error.into()),
+            error => Self::Bus(error),
+        }
+    }
+}
 
 impl From<EngineStateLoadError> for EngineError {
     fn from(error: EngineStateLoadError) -> Self {
@@ -302,6 +315,19 @@ impl EngineSnapshot {
     ) -> std::result::Result<Self, EngineStateLoadError> {
         let (state, position) = PerBusEngineState::load(storage, bus_id).await?;
         Ok(Self { state, position })
+    }
+
+    /// Compare only with the snapshot loaded before this fresh append. Reloading
+    /// here could mistake a concurrent drive's progress for a reused position.
+    fn check_append_position(&self, bus_id: &str, appended_position: i64) -> EngineResult<()> {
+        if let Some(saved_position) = self.position
+            && appended_position <= saved_position
+        {
+            return Err(EngineError::BusDataLoss(anyhow::anyhow!(
+                "bus '{bus_id}' reused a checkpointed log position"
+            )));
+        }
+        Ok(())
     }
 }
 
@@ -617,7 +643,7 @@ where
                 payload: Some(policy_batch_payload(batch.clone())),
             })
             .await
-            .map_err(EngineError::Bus)?
+            .map_err(EngineError::from)?
             .log_position;
         if position == 0 {
             let mut state = PerBusEngineState::default();
@@ -674,18 +700,16 @@ where
         let engine_snapshot = EngineSnapshot::load(&self.runtime.engine_storage, bus_id)
             .await
             .map_err(EngineError::from)?;
-        let policy_version = self
+        let (policy_version, policy_position) = self
             .append_resolved_policy(bus_id, &engine_snapshot.state)
             .await?;
-        if let Some(policy_version) = policy_version {
-            let Some(payload::Payload::Intention(proposed_intention)) = intention.payload.as_mut()
-            else {
-                unreachable!("the proposed payload was validated as an intention");
-            };
-            proposed_intention.policy_version_constraint = Some(
-                intention::PolicyVersionConstraint::MinimumPolicyVersion(policy_version),
-            );
-        }
+        let Some(payload::Payload::Intention(proposed_intention)) = intention.payload.as_mut()
+        else {
+            unreachable!("the proposed payload was validated as an intention");
+        };
+        proposed_intention.policy_version_constraint = Some(
+            intention::PolicyVersionConstraint::MinimumPolicyVersion(policy_version),
+        );
         let position = self
             .runtime
             .bus
@@ -696,9 +720,11 @@ where
                 payload: Some(intention),
             })
             .await
-            .map_err(EngineError::Bus)?
+            .map_err(EngineError::from)?
             .log_position;
 
+        let first_append_position = policy_position.unwrap_or(position).min(position);
+        engine_snapshot.check_append_position(bus_id, first_append_position)?;
         let mut context = EngineContext {
             snapshot: engine_snapshot,
             highest_append: Cell::new(position),
@@ -706,11 +732,12 @@ where
         self.sync_and_apply(bus_id, position, &mut context).await
     }
 
+    /// Return the desired policy version and the log position of any policy append.
     async fn append_resolved_policy(
         &self,
         bus_id: &str,
         state: &PerBusEngineState,
-    ) -> EngineResult<Option<i64>> {
+    ) -> EngineResult<(i64, Option<i64>)> {
         let desired = self
             .policy_provider
             .read(bus_id)
@@ -737,9 +764,10 @@ where
         let Some(batch) = plan(&current, state.applied_policy_version, &desired)
             .map_err(EngineError::Internal)?
         else {
-            return Ok(Some(version));
+            return Ok((version, None));
         };
-        self.runtime
+        let position = self
+            .runtime
             .bus
             .append(AppendRequest {
                 bus_id: Some(BusId {
@@ -748,20 +776,18 @@ where
                 payload: Some(policy_batch_payload(batch)),
             })
             .await
-            .map_err(EngineError::Bus)?;
-
-        Ok(Some(version))
+            .map_err(EngineError::from)?
+            .log_position;
+        Ok((version, Some(position)))
     }
 
     /// Drive the log forward until the proposed intention has a decision, then
     /// return it.
     ///
-    /// Reading starts at `min(proposed_position, cursor)`, which unifies two
-    /// cases: when the engine is behind we catch up from the cursor and drive
-    /// every state-machine input through to the decision; when an earlier drive
-    /// already advanced the cursor past the intention we re-read from the intention
-    /// to observe a decision it produced (those re-deliveries are tolerated as
-    /// stale).
+    /// Reading starts after the checkpoint loaded before the proposal's append.
+    /// The append-position check guarantees the proposal's appends follow this checkpoint.
+    /// A concurrent drive may advance durable state after our snapshot was loaded;
+    /// those re-deliveries are tolerated as stale while we look for the decision.
     ///
     /// If the log drains with no decision for the intention, the engine forces an
     /// `Abort`, so this always returns an outcome. Safe under first-decision-wins:
@@ -775,7 +801,7 @@ where
     ) -> EngineResult<ProposalOutcome> {
         let bus_id_owned = bus_id.to_string();
         let cursor = context.snapshot.position.map_or(0, |position| position + 1);
-        let mut pos = proposed_position.min(cursor);
+        let mut pos = cursor;
         let mut known_position = context.highest_append.get();
 
         loop {
@@ -789,7 +815,7 @@ where
                         }),
                     })
                     .await
-                    .map_err(EngineError::Bus)?
+                    .map_err(EngineError::from)?
                     .tail_position;
 
                 if pos >= tail {
@@ -803,7 +829,7 @@ where
                             payload: Some(forced_abort(proposed_position)),
                         })
                         .await
-                        .map_err(EngineError::Bus)?;
+                        .map_err(EngineError::from)?;
                     known_position = known_position.max(response.log_position);
                     continue;
                 }
@@ -819,7 +845,7 @@ where
                 None,
             )
             .await
-            .map_err(EngineError::Bus)?;
+            .map_err(EngineError::from)?;
 
             for entry in &entries {
                 entry

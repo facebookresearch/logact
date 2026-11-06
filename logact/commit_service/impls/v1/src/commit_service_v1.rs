@@ -105,6 +105,7 @@ where
 
 fn commit_error_from_engine(error: EngineError) -> CommitError {
     match error {
+        EngineError::BusDataLoss(error) => CommitError::BusDataLoss(error),
         EngineError::Storage(error) => commit_error_from_storage(error),
         EngineError::InvalidEngineState(source) => CommitError::Internal(source),
         EngineError::Playback(error) => commit_error_from_apply(error),
@@ -116,7 +117,7 @@ fn commit_error_from_engine(error: EngineError) -> CommitError {
 
 fn commit_error_from_bus(error: AgentBusError) -> CommitError {
     match error {
-        error @ AgentBusError::PositionNotFound(_) => CommitError::Internal(error.into()),
+        error @ AgentBusError::PositionNotFound(_) => CommitError::BusDataLoss(error.into()),
         error @ AgentBusError::InvalidArgument(_) => {
             CommitError::InvalidArgument(anyhow::Error::new(error))
         }
@@ -144,7 +145,7 @@ fn commit_error_from_storage(error: StorageError) -> CommitError {
 fn commit_error_from_apply(error: ApplyError) -> CommitError {
     match error {
         error @ ApplyError::Bus(AgentBusError::PositionNotFound(_)) => {
-            CommitError::Internal(error.into())
+            CommitError::BusDataLoss(error.into())
         }
         error @ ApplyError::Bus(AgentBusError::Timeout(_)) => {
             CommitError::Timeout(anyhow::Error::new(error))
@@ -229,5 +230,17 @@ mod tests {
             "drive failed: write raced",
             "alternate formatting should retain the anyhow context and source"
         );
+    }
+
+    #[test]
+    fn missing_bus_position_is_data_loss() {
+        let engine_error = EngineError::from(AgentBusError::PositionNotFound(anyhow!(
+            "position not found"
+        )));
+        assert!(matches!(engine_error, EngineError::BusDataLoss(_)));
+        assert!(matches!(
+            commit_error_from_engine(engine_error),
+            CommitError::BusDataLoss(_)
+        ));
     }
 }

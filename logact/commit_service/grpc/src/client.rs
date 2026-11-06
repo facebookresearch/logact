@@ -72,6 +72,7 @@ impl CommitSvc for GrpcCommitSvcClient {
 
 fn commit_error(error: Status) -> CommitError {
     match error.code() {
+        Code::DataLoss => CommitError::BusDataLoss(error.into()),
         Code::InvalidArgument => CommitError::InvalidArgument(error.into()),
         Code::Aborted => CommitError::Concurrency(error.into()),
         Code::DeadlineExceeded => CommitError::Timeout(error.into()),
@@ -93,9 +94,11 @@ mod tests {
             (Code::ResourceExhausted, "unavailable"),
             (Code::Unavailable, "unavailable"),
             (Code::Internal, "internal"),
+            (Code::DataLoss, "bus data loss"),
         ] {
             let error = commit_error(Status::new(code, "source"));
             let actual = match error {
+                CommitError::BusDataLoss(_) => "bus data loss",
                 CommitError::InvalidArgument(_) => "invalid argument",
                 CommitError::Concurrency(_) => "concurrency",
                 CommitError::Timeout(_) => "timeout",

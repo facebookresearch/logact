@@ -17,12 +17,11 @@ mod defs {
     use linearizability::history::OperationId;
     use linearizability::object::Client;
     use linearizability::object::LinearizabilityImplementation;
-    use linearizability::object::LinearizabilityWorkload as _;
     use linearizability::object::LinearizableObject;
     use linearizability::object::run_linearizability_test;
+    use logact_commit_service_api::CommitError;
 
     use crate::commit_service::CommitServiceCounter;
-    use crate::commit_service::CommitServiceCounterImplementation;
     use crate::commit_service::run_counter_with_denials as execute_counter_with_denials;
     use crate::counter::CounterCommand;
     use crate::counter::CounterOperation;
@@ -204,12 +203,6 @@ mod defs {
         execute_counter_with_denials(fixture.inner()).await
     }
 
-    /// Reproduces every commit being forced-aborted after servers restart past a
-    /// 30-day TTL. One client commits through a server; a second client sleeps 31
-    /// days and continues on the same bus through a newly created server. The new
-    /// server shares the engine storage, so its checkpoint is near the old tail,
-    /// while its new bus client appends from position 0 into the expired history.
-    /// Each of its intentions lands behind the checkpoint and is forced-aborted.
     #[scenario_for(
         counter_suite::fixtures::CommitServiceCounterFixture<
             logact_commit_service_tests::fixtures::CommitServiceV1Fixture<agentbus_tests::SpaceInMemory>
@@ -223,21 +216,39 @@ mod defs {
         F: CommitServiceCounterTestFixture,
         <F::Inner as ConformanceFixture>::Impl: 'static,
     {
-        const OPERATIONS: usize = 4;
-        let environment = fixture.get_env();
-        let mut clients = environment
-            .with_rng(|rng| CounterWorkload::random(rng, 2, OPERATIONS))
-            .generate(&environment);
-        clients[1] = clients[1]
-            .clone()
-            .with_pause(0, Duration::from_secs(31 * 24 * 60 * 60));
-        let implementation = Rc::new(CommitServiceCounterImplementation::new(fixture.inner()));
-        let result = run_linearizability_test(clients, implementation.clone()).await;
-        let forced_aborts = implementation.forced_aborts();
-        eprintln!("linearizability {result:?}; forced aborts: {forced_aborts}");
-        anyhow::ensure!(
-            forced_aborts == OPERATIONS,
-            "expected every commit on the new server to be forced-aborted, got {forced_aborts}"
+        let first = CommitServiceCounter::new(fixture.inner().create_impl(), "counter".to_owned());
+        for sequence in 0..4 {
+            first
+                .execute_counter(CounterCommand::new(
+                    OperationId {
+                        client: 0,
+                        sequence,
+                    },
+                    CounterOperation::Increment,
+                ))
+                .await?;
+        }
+        fixture
+            .get_env()
+            .sleep(Duration::from_secs(31 * 24 * 60 * 60))
+            .await;
+        let fresh = CommitServiceCounter::new(fixture.inner().create_impl(), "counter".to_owned());
+        let error = fresh
+            .execute_counter(CounterCommand::new(
+                OperationId {
+                    client: 1,
+                    sequence: 0,
+                },
+                CounterOperation::Increment,
+            ))
+            .await
+            .expect_err("a new server must reject positions reused after TTL expiry");
+        assert!(
+            error.chain().any(|cause| matches!(
+                cause.downcast_ref::<CommitError>(),
+                Some(CommitError::BusDataLoss(_))
+            )),
+            "expected BusDataLoss, got {error:#}"
         );
         Ok(())
     }

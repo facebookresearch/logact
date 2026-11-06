@@ -41,6 +41,11 @@ pub struct CommitIntentionOutcome {
 /// Failure returned by a commit-service implementation.
 #[derive(Debug, thiserror::Error)]
 pub enum CommitError {
+    /// Required bus history was lost or reset. Use a new bus ID; retrying or
+    /// resetting the cursor cannot safely reconstruct the missing history.
+    #[error(transparent)]
+    BusDataLoss(anyhow::Error),
+
     /// The caller supplied an invalid argument.
     #[error(transparent)]
     InvalidArgument(anyhow::Error),

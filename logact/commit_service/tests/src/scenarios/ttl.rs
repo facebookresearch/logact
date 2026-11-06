@@ -7,81 +7,202 @@
 
 #[conformance_macros::scenarios(commit_service_ttl_list)]
 mod defs {
-    //! `CommitSvc` behavior when entries expire underneath its AgentBus, selected
-    //! with `ttl_ms = <int>`.
-
     use std::time::Duration;
 
+    use agent_bus_proto_rust::agent_bus::Abort;
+    use agent_bus_proto_rust::agent_bus::AppendRequest;
     use agent_bus_proto_rust::agent_bus::CheckTailRequest;
+    use agent_bus_proto_rust::agent_bus::DeciderPolicy;
+    use agent_bus_proto_rust::agent_bus::Payload;
     use agent_bus_proto_rust::agent_bus::ReadNextRequest;
     use agent_bus_proto_rust::agent_bus::intention;
+    use agent_bus_proto_rust::agent_bus::payload;
     use agentbus_api::AgentBus;
+    use agentbus_api::AgentBusError;
     use agentbus_api::BusId;
-    use agentbus_api::Clock;
     use agentbus_api::Environment;
     use anyhow::Result;
+    use logact_commit_service_api::CommitError;
     use logact_commit_service_api::CommitIntentionCommand;
     use logact_commit_service_api::CommitSvc;
+    use logact_commit_service_api::CreateBusCommand;
     use rand::RngExt as _;
 
     use crate::fixtures::CommitServiceTestFixture;
+    use crate::fixtures::DeciderPolicyFixture;
+    use crate::simulator::Simulator;
 
-    /// Logs commits and reads around entry expiry without asserting on them.
-    #[scenario(sim_only, ttl_ms = 1000)]
-    pub async fn run_test_observe_expired_bus_entries<F: CommitServiceTestFixture>(
+    fn command(bus_id: &str, value: &str) -> CommitIntentionCommand {
+        CommitIntentionCommand {
+            bus_id: BusId {
+                agent_bus_id: bus_id.to_owned(),
+            },
+            intention: intention::Intention::StringIntention(value.to_owned()),
+        }
+    }
+
+    #[scenario(sim_only, ttl_ms = 2592000000)]
+    pub async fn run_test_checkpointed_history_can_expire<F: CommitServiceTestFixture>(
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
-        let start = env.with_clock(|clock| clock.monotonic_time());
-        let log = |event: String| {
-            let elapsed = env.with_clock(|clock| clock.monotonic_time()) - start;
-            eprintln!("ttl [{elapsed:?}] {event}");
-        };
         let bus_id = format!("ttl-{}", env.with_rng(|rng| rng.random::<u64>()));
-        let command = |value: &str| CommitIntentionCommand {
-            bus_id: BusId {
-                agent_bus_id: bus_id.clone(),
-            },
-            intention: intention::Intention::StringIntention(value.to_owned()),
-        };
         let service = fixture.create_impl();
-
         for value in ["a", "b"] {
-            let outcome = service.commit_intention(command(value)).await;
-            log(format!("commit {value}: {outcome:?}"));
+            assert!(
+                service
+                    .commit_intention(command(&bus_id, value))
+                    .await?
+                    .approved
+            );
         }
-        env.sleep(Duration::from_millis(600)).await;
-        let outcome = service.commit_intention(command("c")).await;
-        log(format!("commit c: {outcome:?}"));
-        env.sleep(Duration::from_millis(600)).await;
-
-        let id = Some(agent_bus_proto_rust::agent_bus::BusId {
-            agent_bus_id: bus_id.clone(),
-        });
-        let tail = service
-            .agent_bus()
-            .check_tail(CheckTailRequest { bus_id: id.clone() })
-            .await;
-        log(format!("check_tail after a and b expire: {tail:?}"));
-        let read = service
-            .agent_bus()
-            .read_next(ReadNextRequest {
-                bus_id: id,
-                start_log_position: 0,
-                end_log_position: tail.as_ref().map_or(0, |tail| tail.tail_position),
-                max_entries: 64,
-                ..Default::default()
-            })
-            .await;
-        log(format!(
-            "read_next from 0: {:?}",
-            read.map(|response| response.entries.len())
+        env.sleep(Duration::from_secs(18 * 24 * 60 * 60)).await;
+        assert!(
+            service
+                .commit_intention(command(&bus_id, "c"))
+                .await?
+                .approved
+        );
+        env.sleep(Duration::from_secs(18 * 24 * 60 * 60)).await;
+        assert!(matches!(
+            service
+                .agent_bus()
+                .read_next(ReadNextRequest {
+                    bus_id: Some(BusId {
+                        agent_bus_id: bus_id.clone(),
+                    }),
+                    start_log_position: 0,
+                    end_log_position: 1,
+                    max_entries: 1,
+                    ..Default::default()
+                })
+                .await,
+            Err(AgentBusError::PositionNotFound(_))
         ));
-        let outcome = service.commit_intention(command("d")).await;
-        log(format!("commit d on the same service: {outcome:?}"));
+        assert!(
+            service
+                .commit_intention(command(&bus_id, "d"))
+                .await?
+                .approved
+        );
+        Ok(())
+    }
+
+    #[scenario(sim_only, ttl_ms = 1000)]
+    pub async fn run_test_replay_detects_expired_history<F: CommitServiceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let bus_id = format!("ttl-replay-{}", env.with_rng(|rng| rng.random::<u64>()));
+        let service = fixture.create_impl();
+        service
+            .create_bus(CreateBusCommand {
+                bus_id: bus_id.clone(),
+            })
+            .await?;
+        let append = AppendRequest {
+            bus_id: Some(BusId {
+                agent_bus_id: bus_id.clone(),
+            }),
+            payload: Some(Payload {
+                payload: Some(payload::Payload::Abort(Abort {
+                    intention_id: -1,
+                    ..Default::default()
+                })),
+            }),
+        };
+        assert_eq!(
+            service
+                .agent_bus()
+                .append(append.clone())
+                .await?
+                .log_position,
+            1
+        );
+        env.sleep(Duration::from_millis(1200)).await;
+        assert_eq!(service.agent_bus().append(append).await?.log_position, 2);
+        assert!(matches!(
+            service
+                .commit_intention(command(&bus_id, "after expiry"))
+                .await,
+            Err(CommitError::BusDataLoss(_))
+        ));
+        assert_eq!(
+            service
+                .agent_bus()
+                .check_tail(CheckTailRequest {
+                    bus_id: Some(BusId {
+                        agent_bus_id: bus_id
+                    }),
+                })
+                .await?
+                .tail_position,
+            4,
+            "data loss must not append a fallback abort"
+        );
+        Ok(())
+    }
+
+    #[scenario(sim_only, ttl_ms = 1000)]
+    pub async fn run_test_detects_lost_bus_tail<F>(fixture: &F) -> Result<()>
+    where
+        F: DeciderPolicyFixture<Env = Simulator>,
+    {
+        let env = fixture.get_env();
+        let bus_id = format!("ttl-policy-{}", env.with_rng(|rng| rng.random::<u64>()));
+        let service = fixture.create_impl();
+        service
+            .create_bus(CreateBusCommand {
+                bus_id: bus_id.clone(),
+            })
+            .await?;
+        service
+            .agent_bus()
+            .append(AppendRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.clone(),
+                }),
+                payload: Some(Payload {
+                    payload: Some(payload::Payload::Abort(Abort {
+                        intention_id: -1,
+                        ..Default::default()
+                    })),
+                }),
+            })
+            .await?;
+        env.sleep(Duration::from_millis(1200)).await;
+        fixture
+            .set_decider_policy(DeciderPolicy::OffByDefault)
+            .await?;
         let fresh = fixture.create_impl();
-        let outcome = fresh.commit_intention(command("e")).await;
-        log(format!("commit e on a new service: {outcome:?}"));
+        let tail = fresh
+            .agent_bus()
+            .check_tail(CheckTailRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.clone(),
+                }),
+            })
+            .await?
+            .tail_position;
+        assert!(matches!(
+            fresh
+                .commit_intention(command(&bus_id, "after expiry"))
+                .await,
+            Err(CommitError::BusDataLoss(_))
+        ));
+        assert_eq!(
+            fresh
+                .agent_bus()
+                .check_tail(CheckTailRequest {
+                    bus_id: Some(BusId {
+                        agent_bus_id: bus_id
+                    }),
+                })
+                .await?
+                .tail_position,
+            tail + 2,
+            "data loss must leave only the new policy and intention appended"
+        );
         Ok(())
     }
 }
