@@ -12,6 +12,8 @@
 
 use std::rc::Rc;
 
+use anyhow::Result;
+use conformance::TestConfig;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_inmem::InMemCommitService;
@@ -47,13 +49,23 @@ impl ConformanceFixture for InMemCommitServiceFixture {
 
 impl SimulatorFixture for InMemCommitServiceFixture {
     fn new(simulator: Simulator) -> Self {
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    /// `ttl` expires entries on the service's own bus.
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let env = Rc::new(simulator);
         let (policy_provider, policy_controller) = PolicyProvider::for_test();
-        Self {
-            service: InMemCommitService::with_policy_provider(env.clone(), policy_provider),
+        let service = InMemCommitService::with_policy_provider(env.clone(), policy_provider);
+        Ok(Self {
+            service: match config.ttl {
+                Some(ttl) => service.with_ttl(ttl),
+                None => service,
+            },
             policy_controller,
             env,
-        }
+        })
     }
 }
 

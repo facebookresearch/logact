@@ -9,6 +9,8 @@
 
 use std::rc::Rc;
 
+use anyhow::Result;
+use conformance::TestConfig;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_core::ChanneledCommitService;
 
@@ -57,7 +59,23 @@ where
     <CF::Impl as CommitSvc>::Bus: Clone + 'static,
 {
     fn new(simulator: Simulator) -> Self {
-        let inner = <CF as SimulatorFixture>::new(simulator);
+        Self::from_inner(<CF as SimulatorFixture>::new(simulator))
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self::from_inner(CF::try_new_with_config(
+            simulator, config,
+        )?))
+    }
+}
+
+impl<CF> ChanneledCommitServiceFixture<CF>
+where
+    CF: ConformanceFixture<Env = Simulator>,
+    CF::Impl: CommitSvc + 'static,
+    <CF::Impl as CommitSvc>::Bus: Clone + 'static,
+{
+    fn from_inner(inner: CF) -> Self {
         let env = inner.get_env();
         let inner_impl = inner.create_impl();
         let bus = inner_impl.agent_bus().clone();

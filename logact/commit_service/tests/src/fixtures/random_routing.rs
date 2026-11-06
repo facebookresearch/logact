@@ -23,6 +23,8 @@ use agentbus_api::AgentBus;
 use agentbus_api::Environment;
 use agentbus_tests::fixtures::AgentBusTestFixture;
 use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
+use anyhow::Result;
+use conformance::TestConfig;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
@@ -184,13 +186,18 @@ where
     P: TestPolicyProvider,
 {
     fn new(simulator: Simulator) -> Self {
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let (policy, policy_controller) = P::for_test();
-        Self {
-            bus_fixture: <BF as BusSimulatorFixture>::new(simulator),
+        Ok(Self {
+            bus_fixture: <BF as BusSimulatorFixture>::try_new_with_config(simulator, config)?,
             policy,
             policy_controller,
             storage: Rc::new(InMemoryStorage::new()),
-        }
+        })
     }
 }
 

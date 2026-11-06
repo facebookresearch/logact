@@ -7,6 +7,8 @@
 
 use std::rc::Rc;
 
+use anyhow::Result;
+use conformance::TestConfig;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_core::BufferingCommitService;
 
@@ -48,7 +50,22 @@ where
     CF::Impl: CommitSvc,
 {
     fn new(simulator: Simulator) -> Self {
-        let inner = CF::new(simulator);
+        Self::from_inner(CF::new(simulator))
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self::from_inner(CF::try_new_with_config(
+            simulator, config,
+        )?))
+    }
+}
+
+impl<CF> BufferingCommitServiceFixture<CF>
+where
+    CF: ConformanceFixture<Env = Simulator>,
+    CF::Impl: CommitSvc,
+{
+    fn from_inner(inner: CF) -> Self {
         let service = BufferingCommitService::new(inner.create_impl());
         Self { inner, service }
     }

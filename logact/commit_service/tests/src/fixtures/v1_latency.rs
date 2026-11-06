@@ -14,6 +14,8 @@ use agentbus_tests::fixtures::SimulatorFixture;
 use agentbus_tests::fixtures::simtest::FaultInjectingFixture;
 use agentbus_tests::fixtures::simtest::SimpleMemoryFixture;
 use agentbus_tests::simulator::Simulator;
+use anyhow::Result;
+use conformance::TestConfig;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine_tests::fixtures::fault_injecting::FaultInjectingStorage;
 use logact_commit_service_engine_tests::fixtures::fault_injecting::StorageFaultConfig;
@@ -33,10 +35,15 @@ pub type CommitServiceV1LatencyFixture = CommitServiceV1Fixture<
 
 impl SimulatorFixture for CommitServiceV1LatencyFixture {
     fn new(simulator: Simulator) -> Self {
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let fixed_latency = Uniform::new(OPERATION_LATENCY_MS, OPERATION_LATENCY_MS + 1)
             .expect("fixed latency range should be valid");
-        let bus_fixture = FaultInjectingFixture::new_with_config_and_latency(
-            simulator,
+        let bus_fixture = FaultInjectingFixture::new_with_fixture_and_latency(
+            SimpleMemoryFixture::try_new_with_config(simulator, config)?,
             FaultConfig {
                 prob_lost: 0.0,
                 prob_commit_then_error: 0.0,
@@ -45,16 +52,19 @@ impl SimulatorFixture for CommitServiceV1LatencyFixture {
             fixed_latency,
             fixed_latency,
         );
-        CommitServiceV1Fixture::new_with_bus_fixture_and_storage(bus_fixture, |environment| {
-            FaultInjectingStorage::new(
-                InMemoryStorage::new(),
-                environment,
-                StorageFaultConfig {
-                    get_delay: Duration::from_millis(OPERATION_LATENCY_MS),
-                    put_delay: Duration::from_millis(OPERATION_LATENCY_MS),
-                    ..Default::default()
-                },
-            )
-        })
+        Ok(CommitServiceV1Fixture::new_with_bus_fixture_and_storage(
+            bus_fixture,
+            |environment| {
+                FaultInjectingStorage::new(
+                    InMemoryStorage::new(),
+                    environment,
+                    StorageFaultConfig {
+                        get_delay: Duration::from_millis(OPERATION_LATENCY_MS),
+                        put_delay: Duration::from_millis(OPERATION_LATENCY_MS),
+                        ..Default::default()
+                    },
+                )
+            },
+        ))
     }
 }

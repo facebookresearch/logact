@@ -208,8 +208,22 @@ where
         append_latency_ms: Uniform<u64>,
         poll_latency_ms: Uniform<u64>,
     ) -> Self {
+        Self::new_with_fixture_and_latency(
+            F::new(simulator),
+            config,
+            append_latency_ms,
+            poll_latency_ms,
+        )
+    }
+
+    pub fn new_with_fixture_and_latency(
+        inner: F,
+        config: FaultConfig,
+        append_latency_ms: Uniform<u64>,
+        poll_latency_ms: Uniform<u64>,
+    ) -> Self {
         Self {
-            inner: F::new(simulator),
+            inner,
             config,
             append_latency_ms,
             poll_latency_ms,

@@ -11,6 +11,8 @@ use std::rc::Rc;
 
 use agentbus_api::InMemoryLogger;
 use agentbus_api::InMemoryMetrics;
+use anyhow::Result;
+use conformance::TestConfig;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_observable::ObservableCommitSvc;
 
@@ -52,11 +54,16 @@ where
 
 impl<CF: SimulatorFixture> SimulatorFixture for ObservableCommitServiceFixture<CF> {
     fn new(simulator: Simulator) -> Self {
-        Self {
-            inner: CF::new(simulator),
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: CF::try_new_with_config(simulator, config)?,
             metrics: Rc::new(InMemoryMetrics::new()),
             logger: InMemoryLogger::new(),
-        }
+        })
     }
 }
 

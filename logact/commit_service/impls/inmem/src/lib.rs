@@ -21,6 +21,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::time::Duration;
 
 use agent_bus_proto_rust::agent_bus::Abort;
 use agent_bus_proto_rust::agent_bus::AddVoterOp;
@@ -92,6 +93,15 @@ impl<E: Environment, P> InMemCommitService<E, P> {
             policy_provider,
             policy_state: Rc::new(RefCell::new(HashMap::new())),
             replay_state: Rc::default(),
+        }
+    }
+
+    /// Expire each bus entry `ttl` after it is appended. Reads that reach an
+    /// expired entry return `PositionNotFound`.
+    pub fn with_ttl(self, ttl: Duration) -> Self {
+        Self {
+            bus: InMemoryAgentBus::with_ttl(self.bus.environment(), ttl),
+            ..self
         }
     }
 }

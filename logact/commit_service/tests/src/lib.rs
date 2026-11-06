@@ -32,7 +32,7 @@ conformance::define_driver! {
     $,
     // Inputs — where this suite's scenarios and fixtures live.
     root = logact_commit_service_tests,
-    scenario_mods = [test_scenarios, policy_register, policy_versions, static_policy, replay_backlog, decisions, abort_on_drain, heap_growth, policy_batches], // files under `scenarios/`
+    scenario_mods = [test_scenarios, policy_register, policy_versions, static_policy, replay_backlog, decisions, abort_on_drain, heap_growth, policy_batches, ttl], // files under `scenarios/`
     fixtures = commit_service_fixtures,         // fixture registry (variants.rs)
     // Suite name prefix — the driver derives every generated macro from it
     // (`commit_service_sim_suite!` and `commit_service_integration_suite!`, plus

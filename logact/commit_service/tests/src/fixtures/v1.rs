@@ -16,6 +16,8 @@ use agentbus_api::NoopLogger;
 use agentbus_api::RealEnvironment;
 use agentbus_tests::fixtures::AgentBusTestFixture;
 use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
+use anyhow::Result;
+use conformance::TestConfig;
 use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
@@ -130,6 +132,12 @@ where
 {
     fn new(simulator: Simulator) -> Self {
         Self::new_with_bus_fixture(BF::new(simulator))
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self::new_with_bus_fixture(BF::try_new_with_config(
+            simulator, config,
+        )?))
     }
 }
 
