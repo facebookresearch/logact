@@ -20,10 +20,12 @@ use anyhow::Context;
 use anyhow::Result;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitSvc;
+use logact_commit_service_api::CreateBusCommand;
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum EventKind {
+    SessionStart,
     UserPromptSubmit,
     PreToolUse,
     PostToolUse,
@@ -37,6 +39,7 @@ impl EventKind {
     /// success samples use. Logged on a fail-open error from a harness runner.
     pub(crate) fn event_label(&self) -> &'static str {
         match self {
+            EventKind::SessionStart => "create_bus",
             EventKind::UserPromptSubmit => "agent_input",
             EventKind::PreToolUse => "intention",
             EventKind::PostToolUse | EventKind::PostToolUseFailure => "action_output",
@@ -153,7 +156,7 @@ fn prepare_body(user_name: &str, body: String) -> Result<PreparedHook, PrepareEr
     })
 }
 
-/// Record the event and return only the harness-neutral RPC outcome.
+/// Dispatch the hook and return only the harness-neutral RPC outcome.
 pub(crate) async fn dispatch<C: CommitSvc + ?Sized>(
     commit_client: &C,
     event: EventKind,
@@ -161,6 +164,12 @@ pub(crate) async fn dispatch<C: CommitSvc + ?Sized>(
 ) -> Result<DispatchOutcome> {
     let DispatchInput { agent_id, body } = input;
     match event {
+        EventKind::SessionStart => {
+            commit_client
+                .create_bus(CreateBusCommand { bus_id: agent_id })
+                .await?;
+            Ok(DispatchOutcome::Recorded)
+        }
         EventKind::UserPromptSubmit => {
             record(
                 commit_client.agent_bus(),
@@ -292,7 +301,6 @@ mod tests {
     use logact_commit_service_api::CommitError;
     use logact_commit_service_api::CommitIntentionOutcome;
     use logact_commit_service_api::CommitResult;
-    use logact_commit_service_api::CreateBusCommand;
 
     use super::*;
 
@@ -308,6 +316,8 @@ mod tests {
 
     struct FakeCommitClient {
         intention_result: FakeIntentionResult,
+        create_error: bool,
+        create_requests: Mutex<Vec<CreateBusCommand>>,
         event_requests: Mutex<Vec<AppendRequest>>,
         intention_requests: Mutex<Vec<CommitIntentionCommand>>,
     }
@@ -316,6 +326,8 @@ mod tests {
         fn new(intention_result: FakeIntentionResult) -> Self {
             Self {
                 intention_result,
+                create_error: false,
+                create_requests: Mutex::new(Vec::new()),
                 event_requests: Mutex::new(Vec::new()),
                 intention_requests: Mutex::new(Vec::new()),
             }
@@ -339,8 +351,12 @@ mod tests {
             self
         }
 
-        async fn create_bus(&self, _command: CreateBusCommand) -> CommitResult<()> {
-            panic!("create_bus is not used by commit CLI tests")
+        async fn create_bus(&self, command: CreateBusCommand) -> CommitResult<()> {
+            self.create_requests.lock().unwrap().push(command);
+            if self.create_error {
+                return Err(CommitError::Internal(anyhow::anyhow!("create failed")));
+            }
+            Ok(())
         }
 
         async fn commit_intention(
@@ -411,6 +427,94 @@ mod tests {
         input: DispatchInput,
     ) -> Result<DispatchOutcome> {
         test_runtime().block_on(dispatch(client, event, input))
+    }
+
+    #[test]
+    fn startup_and_tool_use_target_the_same_bus() {
+        for prefix in ["claude_code", "codex", "muse", "musecode", "metacode"] {
+            for (session_id, agent_id, suffix) in [
+                ("root-session", None, "root-session"),
+                (
+                    "parent-session",
+                    Some("child-agent"),
+                    "parent-session.agent.child-agent",
+                ),
+                ("child-session", None, "child-session"),
+            ] {
+                let client = FakeCommitClient::new(FakeIntentionResult::Approved);
+                let startup = serde_json::json!({
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "hook_event_name": "SessionStart",
+                });
+                for _ in 0..2 {
+                    let input = prepare_body("alice", startup.to_string())
+                        .unwrap()
+                        .into_dispatch(prefix)
+                        .unwrap();
+                    assert_eq!(
+                        dispatch_sync(&client, EventKind::SessionStart, input).unwrap(),
+                        DispatchOutcome::Recorded,
+                    );
+                }
+                assert!(client.event_requests().is_empty());
+                assert!(client.intention_requests.lock().unwrap().is_empty());
+
+                let tool_use = serde_json::json!({
+                    "session_id": session_id,
+                    "agent_id": agent_id,
+                    "hook_event_name": "PreToolUse",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "pwd"},
+                });
+                let input = prepare_body("alice", tool_use.to_string())
+                    .unwrap()
+                    .into_dispatch(prefix)
+                    .unwrap();
+                dispatch_sync(&client, EventKind::PreToolUse, input).unwrap();
+                let requests = client.create_requests.lock().unwrap();
+                assert_eq!(requests.len(), 2);
+                for request in requests.iter() {
+                    assert_eq!(request.bus_id, format!("{prefix}.alice.{suffix}"));
+                    assert_eq!(
+                        request.bus_id,
+                        client.intention_request().bus_id.agent_bus_id
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn startup_rpc_failure_is_returned_without_writing_an_event() {
+        let mut client = FakeCommitClient::new(FakeIntentionResult::Approved);
+        client.create_error = true;
+        let error = dispatch_sync(&client, EventKind::SessionStart, prepared("codex"))
+            .expect_err("create failure must be returned");
+
+        assert!(format!("{error:#}").contains("create failed"));
+        assert_eq!(client.create_requests.lock().unwrap().len(), 1);
+        assert!(client.event_requests().is_empty());
+        assert!(client.intention_requests.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn manual_create_uses_the_supplied_bus_id() {
+        let client = FakeCommitClient::new(FakeIntentionResult::Approved);
+        test_runtime()
+            .block_on(crate::manual::run_create_bus(
+                &client,
+                crate::manual::CreateBusArgs {
+                    bus_id: "codex.alice.manual-session".to_owned(),
+                },
+            ))
+            .unwrap();
+
+        let requests = client.create_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].bus_id, "codex.alice.manual-session");
+        assert!(client.event_requests().is_empty());
+        assert!(client.intention_requests.lock().unwrap().is_empty());
     }
 
     #[test]

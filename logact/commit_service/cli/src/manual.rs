@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! Manual `commit` subcommand: send one Event from command-line flags.
+//! Manual bus creation and event submission from command-line flags.
 
 use agent_bus_proto_rust::agent_bus as agentbus;
 use agent_bus_proto_rust::agent_bus::AppendRequest;
@@ -16,10 +16,31 @@ use clap::Args;
 use clap::Subcommand;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitSvc;
+use logact_commit_service_api::CreateBusCommand;
 
 use crate::hooks::action_output_payload;
 use crate::hooks::agent_input_payload;
 use crate::hooks::agent_output_payload;
+
+/// Arguments for creating a bus manually.
+#[derive(Args, Debug)]
+pub struct CreateBusArgs {
+    #[arg(long)]
+    pub bus_id: String,
+}
+
+/// Initialize the requested bus without submitting an event.
+pub async fn run_create_bus<C: CommitSvc + ?Sized>(
+    commit_client: &C,
+    args: CreateBusArgs,
+) -> Result<()> {
+    commit_client
+        .create_bus(CreateBusCommand {
+            bus_id: args.bus_id,
+        })
+        .await?;
+    Ok(())
+}
 
 /// Arguments for submitting one event manually.
 #[derive(Args, Debug)]

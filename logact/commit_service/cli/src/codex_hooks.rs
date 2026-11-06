@@ -25,6 +25,9 @@ pub struct HookArgs {
 
 #[derive(Subcommand, Debug)]
 enum HookEvent {
+    /// Initialize the bus for a session or subagent from hook stdin.
+    #[command(alias = "subagent-start")]
+    SessionStart,
     /// User submitted a prompt: record as an AgentInput.
     UserPromptSubmit,
     /// Codex is about to execute a tool: gate as an Intention.
@@ -48,6 +51,7 @@ impl HookArgs {
 
     fn event_kind(&self) -> hooks::EventKind {
         match &self.event {
+            HookEvent::SessionStart => hooks::EventKind::SessionStart,
             HookEvent::UserPromptSubmit => hooks::EventKind::UserPromptSubmit,
             HookEvent::PreToolUse => hooks::EventKind::PreToolUse,
             HookEvent::PostToolUse => hooks::EventKind::PostToolUse,

@@ -45,6 +45,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Cmd {
+    /// Initialize a bus from command-line flags.
+    CreateBus(manual::CreateBusArgs),
     /// Send one event from command-line flags.
     Commit(manual::CommitArgs),
     /// Handle a Claude Code hook event from stdin.
@@ -82,6 +84,7 @@ async fn run(cli: Cli) -> Result<()> {
             .with_context(|| format!("failed to connect to {}", cli.socket.display()))?,
     );
     match cli.cmd {
+        Cmd::CreateBus(args) => manual::run_create_bus(&client, args).await,
         Cmd::Commit(args) => manual::run(&client, args).await,
         Cmd::ClaudeHook(args) => claude_hooks::run(&client, args, "claude_code", true)
             .await
@@ -92,5 +95,43 @@ async fn run(cli: Cli) -> Result<()> {
         Cmd::MuseHook(args) => muse_hooks::run(&client, args, "muse", true)
             .await
             .map_err(Into::into),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Cli {
+        Cli::try_parse_from(
+            ["logact_commit_cli", "--socket", "/tmp/logact.sock"]
+                .into_iter()
+                .chain(args.iter().copied()),
+        )
+        .expect("CLI command should parse")
+    }
+
+    #[test]
+    fn manual_create_accepts_a_bus_id() {
+        let Cmd::CreateBus(args) = parse(&["create-bus", "--bus-id", "manual-bus"]).cmd else {
+            panic!("expected create-bus command");
+        };
+        assert_eq!(args.bus_id, "manual-bus");
+    }
+
+    #[test]
+    fn harness_startup_initializes_without_gating() {
+        for command in ["claude-hook", "codex-hook", "muse-hook"] {
+            for event in ["session-start", "subagent-start"] {
+                let (gating, label) = match parse(&[command, event]).cmd {
+                    Cmd::ClaudeHook(args) => (args.is_pre_tool_use(), args.event_label()),
+                    Cmd::CodexHook(args) => (args.is_pre_tool_use(), args.event_label()),
+                    Cmd::MuseHook(args) => (args.is_pre_tool_use(), args.event_label()),
+                    _ => panic!("expected hook command"),
+                };
+                assert!(!gating);
+                assert_eq!(label, "create_bus");
+            }
+        }
     }
 }
