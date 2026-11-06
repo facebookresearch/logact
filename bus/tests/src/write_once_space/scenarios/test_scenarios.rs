@@ -9,11 +9,15 @@
 mod defs {
     //! Test scenarios for WriteOnceSpace implementations
 
+    use std::time::Duration;
+
     use agentbus_api::WriteOnceError;
     use agentbus_api::WriteOnceSpace;
+    use agentbus_api::environment::Environment;
     use anyhow::Result;
     use bytes::Bytes;
 
+    use crate::simulator::Simulator;
     use crate::write_once_space::fixtures::WriteOnceSpaceTestFixture;
 
     const DEFAULT_SPACE: &str = "default";
@@ -137,6 +141,64 @@ mod defs {
             }
         }
 
+        Ok(())
+    }
+
+    async fn assert_ttl_state<W: WriteOnceSpace>(
+        space: &W,
+        expected: [Option<&'static str>; 5],
+        tail: u64,
+    ) -> Result<()> {
+        for (address, value) in (0..).zip(expected) {
+            assert_eq!(
+                space.read(DEFAULT_SPACE, address).await?,
+                value.map(Bytes::from),
+                "address {address}"
+            );
+        }
+        assert_eq!(space.tail(DEFAULT_SPACE, 8).await?, tail);
+        Ok(())
+    }
+
+    /// Expired writes read as empty and can be rewritten, while live ones still
+    /// conflict. `tail` ignores expired entries, so it can fall back to the first
+    /// expired address.
+    #[scenario(sim_only, ttl_ms = 100)]
+    pub async fn run_test_ttl_expiry<F>(fixture: &F) -> Result<()>
+    where
+        F: WriteOnceSpaceTestFixture<Env = Simulator>,
+    {
+        let env = fixture.get_env();
+        let mut space = fixture.create_impl();
+        for address in 0..3 {
+            space
+                .write(DEFAULT_SPACE, address, Bytes::from("a"))
+                .await?;
+        }
+        assert_ttl_state(&space, [Some("a"), Some("a"), Some("a"), None, None], 3).await?;
+
+        env.sleep(Duration::from_millis(60)).await;
+        space.write(DEFAULT_SPACE, 3, Bytes::from("b")).await?;
+        assert_ttl_state(
+            &space,
+            [Some("a"), Some("a"), Some("a"), Some("b"), None],
+            4,
+        )
+        .await?;
+
+        env.sleep(Duration::from_millis(60)).await;
+        assert_ttl_state(&space, [None, None, None, Some("b"), None], 0).await?;
+        space.write(DEFAULT_SPACE, 0, Bytes::from("c")).await?;
+        assert!(matches!(
+            space.write(DEFAULT_SPACE, 3, Bytes::from("d")).await,
+            Err(WriteOnceError::AddressAlreadyExists(3))
+        ));
+        assert_ttl_state(&space, [Some("c"), None, None, Some("b"), None], 1).await?;
+
+        env.sleep(Duration::from_millis(150)).await;
+        assert_ttl_state(&space, [None; 5], 0).await?;
+        space.write(DEFAULT_SPACE, 4, Bytes::from("e")).await?;
+        assert_ttl_state(&space, [None, None, None, None, Some("e")], 0).await?;
         Ok(())
     }
 }

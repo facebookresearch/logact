@@ -13,6 +13,7 @@ use agentbus_api::WriteOnceSpace;
 use agentbus_conditional_write_space::WriteOnceSpaceAdapter;
 use anyhow::Result;
 use conformance::ConformanceFixture;
+use conformance::TestConfig;
 use fbinit::FacebookInit;
 
 use crate::conditional_write_space::fixtures::ConditionalWriteSpaceTestFixture;
@@ -56,6 +57,13 @@ where
         Self {
             inner: F::new(simulator),
         }
+    }
+
+    /// The backing conditional-write space applies the config.
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: F::try_new_with_config(simulator, config)?,
+        })
     }
 }
 

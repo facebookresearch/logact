@@ -293,7 +293,7 @@ mod tests {
                     environment.clone(),
                 );
                 let cached = CachingWriteOnceSpace::new(backing, max_entries, 1024)
-                    .with_write_ttl(Duration::from_secs(60));
+                    .with_write_ttl(environment.clone(), Duration::from_secs(60));
                 let mut space = ObservableWriteOnceSpace::new(
                     cached,
                     metrics.clone(),

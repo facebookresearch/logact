@@ -9,8 +9,10 @@ use std::cell::RefCell;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::time::Duration;
-use std::time::Instant;
 
+use agentbus_api::Clock;
+use agentbus_api::Environment;
+use agentbus_api::MonotonicInstant;
 use agentbus_api::TailResult;
 use agentbus_api::TailableSpace;
 use agentbus_api::WriteOnceResult;
@@ -34,11 +36,16 @@ const DEFAULT_MAX_ENTRY_VALUE_BYTES: usize = 64 * 1024;
 
 struct CachedValue {
     value: Bytes,
-    expires_at: Option<Instant>,
+    expires_at: Option<MonotonicInstant>,
+}
+
+struct WriteTtl {
+    ttl: Duration,
+    now: Rc<dyn Fn() -> MonotonicInstant>,
 }
 
 struct Cache {
-    write_ttl: Option<Duration>,
+    write_ttl: Option<WriteTtl>,
     values: LruCache<(String, u64), CachedValue>,
     value_bytes: usize,
     max_entries: usize,
@@ -47,14 +54,32 @@ struct Cache {
 }
 
 impl Cache {
-    fn get(&mut self, space_id: &str, address: u64, now: Instant) -> Option<Bytes> {
+    fn now(&self) -> Option<MonotonicInstant> {
+        self.write_ttl.as_ref().map(|write_ttl| (write_ttl.now)())
+    }
+
+    fn get(
+        &mut self,
+        space_id: &str,
+        address: u64,
+        now: Option<MonotonicInstant>,
+    ) -> Option<Bytes> {
         self.values
             .get(&(space_id.to_owned(), address))
-            .filter(|entry| entry.expires_at.is_none_or(|deadline| now < deadline))
+            .filter(|entry| match (entry.expires_at, now) {
+                (Some(deadline), Some(now)) => now < deadline,
+                _ => true,
+            })
             .map(|entry| entry.value.clone())
     }
 
-    fn insert(&mut self, space_id: &str, address: u64, value: Bytes, expires_at: Option<Instant>) {
+    fn insert(
+        &mut self,
+        space_id: &str,
+        address: u64,
+        value: Bytes,
+        expires_at: Option<MonotonicInstant>,
+    ) {
         let key = (space_id.to_owned(), address);
         if self.max_entries == 0
             || self.max_value_bytes == 0
@@ -114,13 +139,21 @@ impl<W> CachingWriteOnceSpace<W> {
         }
     }
 
-    /// Cache only confirmed writes, expiring them after the backing write TTL.
-    /// Positive backing reads are not cached because their remaining TTL is unknown.
-    /// The backing TTL must begin no earlier than the start of `write`.
-    pub fn with_write_ttl(self, ttl: Duration) -> Self {
+    /// Cache only confirmed writes, expiring them after the backing write TTL on
+    /// the environment's monotonic clock. Positive backing reads are not cached
+    /// because their remaining TTL is unknown. The backing TTL must begin no earlier
+    /// than the start of `write`.
+    pub fn with_write_ttl<E: Environment + 'static>(
+        self,
+        environment: Rc<E>,
+        ttl: Duration,
+    ) -> Self {
         {
             let mut cache = self.cache.borrow_mut();
-            cache.write_ttl = Some(ttl);
+            cache.write_ttl = Some(WriteTtl {
+                ttl,
+                now: Rc::new(move || environment.with_clock(|clock| clock.monotonic_time())),
+            });
             cache.values.clear();
             cache.value_bytes = 0;
         }
@@ -136,11 +169,13 @@ impl<W: TailableSpace> TailableSpace for CachingWriteOnceSpace<W> {
 
 impl<W: WriteOnceSpace> WriteOnceSpace for CachingWriteOnceSpace<W> {
     async fn write(&mut self, space_id: &str, address: u64, value: Bytes) -> WriteOnceResult<()> {
-        let expires_at = self
-            .cache
-            .borrow()
-            .write_ttl
-            .map(|ttl| Instant::now() + ttl);
+        let expires_at = {
+            let cache = self.cache.borrow();
+            cache
+                .now()
+                .zip(cache.write_ttl.as_ref())
+                .map(|(now, write_ttl)| now + write_ttl.ttl)
+        };
         self.inner.write(space_id, address, value.clone()).await?;
         self.cache
             .borrow_mut()
@@ -149,11 +184,12 @@ impl<W: WriteOnceSpace> WriteOnceSpace for CachingWriteOnceSpace<W> {
     }
 
     async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
-        if let Some(value) = self
-            .cache
-            .borrow_mut()
-            .get(space_id, address, Instant::now())
-        {
+        let cached = {
+            let mut cache = self.cache.borrow_mut();
+            let now = cache.now();
+            cache.get(space_id, address, now)
+        };
+        if let Some(value) = cached {
             return Ok(Some(value));
         }
         let Some(value) = self.inner.read(space_id, address).await? else {
@@ -172,6 +208,7 @@ impl<W: WriteOnceSpace> WriteOnceSpace for CachingWriteOnceSpace<W> {
 mod tests {
     use std::cell::Cell;
 
+    use agentbus_api::RealEnvironment;
     use agentbus_api::TailError;
     use agentbus_api::WriteOnceError;
     use futures::executor::block_on;
@@ -266,7 +303,7 @@ mod tests {
             let mut backing = CountingSpace::default();
             backing.write("a", 0, Bytes::from("remote")).await.unwrap();
             let mut space = CachingWriteOnceSpace::new(backing.clone(), 16, 1024)
-                .with_write_ttl(Duration::from_secs(60));
+                .with_write_ttl(Rc::new(RealEnvironment::new()), Duration::from_secs(60));
             for _ in 0..2 {
                 assert_eq!(
                     space.read("a", 0).await.unwrap(),
@@ -289,14 +326,15 @@ mod tests {
                 .expect("confirmed write should be cached")
                 .expires_at
                 .expect("TTL cache should attach a deadline");
+            let origin = MonotonicInstant::from_duration_since_clock_origin(Duration::ZERO);
+            let just_before = MonotonicInstant::from_duration_since_clock_origin(
+                deadline.duration_since(origin) - Duration::from_nanos(1),
+            );
             assert_eq!(
-                space
-                    .cache
-                    .borrow_mut()
-                    .get("a", 1, deadline - Duration::from_nanos(1)),
+                space.cache.borrow_mut().get("a", 1, Some(just_before)),
                 Some(Bytes::from("local"))
             );
-            assert_eq!(space.cache.borrow_mut().get("a", 1, deadline), None);
+            assert_eq!(space.cache.borrow_mut().get("a", 1, Some(deadline)), None);
         });
     }
 
@@ -305,7 +343,7 @@ mod tests {
         block_on(async {
             let backing = CountingSpace::default();
             let mut space = CachingWriteOnceSpace::new(backing.clone(), 16, 1024)
-                .with_write_ttl(Duration::ZERO);
+                .with_write_ttl(Rc::new(RealEnvironment::new()), Duration::ZERO);
             space.write("a", 0, Bytes::from("local")).await.unwrap();
             for _ in 0..2 {
                 assert_eq!(

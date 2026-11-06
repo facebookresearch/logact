@@ -27,6 +27,7 @@
 //! name, the fixtures under test (`variants.rs`), and the scenarios (`scenarios/`).
 
 use std::rc::Rc;
+use std::time::Duration;
 
 use agentbus_api::environment::Environment;
 use agentbus_simulator::Simulator;
@@ -46,9 +47,28 @@ pub trait ConformanceFixture: Sized {
     fn create_impl(&self) -> Self::Impl;
 }
 
+/// Test properties a scenario selects in its annotation, validated at compile
+/// time. The default selects none of them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TestConfig {
+    /// `ttl_ms = <int>`: how long each write lives before it expires.
+    pub ttl: Option<Duration>,
+}
+
 /// A fixture that can be built from a deterministic simulator.
 pub trait SimulatorFixture: Sized {
     fn new(simulator: Simulator) -> Self;
+
+    /// Construct with a scenario's test properties. Fixtures that support them
+    /// override this and pass them to their backing fixture. Other fixtures accept
+    /// only the default.
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        anyhow::ensure!(
+            *config == TestConfig::default(),
+            "fixture does not support {config:?}"
+        );
+        Ok(Self::new(simulator))
+    }
 }
 
 /// A fixture that talks to a real backend and is built asynchronously under
@@ -85,7 +105,21 @@ macro_rules! sim_test {
             agentbus_simulator::generate_seed()
         });
     };
+    ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, config = $config:expr $(, $seed:tt)?) => {
+        $crate::sim_test!(@run $test_fn, $test_name, $suffix, $fix,
+            $crate::sim_test!(@seed $($seed)?),
+            |simulator| <$fix as $crate::SimulatorFixture>::try_new_with_config(simulator, &$config)
+                .expect("fixture should support the scenario's config")
+        );
+    };
+    (@seed) => { agentbus_simulator::generate_seed() };
+    (@seed $seed:tt) => { $seed };
     ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $seed:tt) => {
+        $crate::sim_test!(@run $test_fn, $test_name, $suffix, $fix, $seed,
+            |simulator| <$fix as $crate::SimulatorFixture>::new(simulator)
+        );
+    };
+    (@run $test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $seed:expr, $create:expr) => {
         paste::paste! {
             #[test]
             fn [<$test_name _ $suffix>]() {
@@ -94,7 +128,7 @@ macro_rules! sim_test {
                 let seed: u64 = $seed;
                 eprintln!("Simulator seed: {seed}");
                 let simulator = agentbus_simulator::Simulator::new(seed);
-                let fixture = <$fix as $crate::SimulatorFixture>::new(simulator);
+                let fixture = ($create)(simulator);
                 let env = fixture.get_env();
                 let handle = env.spawn(async move { $test_fn(&fixture).await });
                 env.run();
@@ -139,7 +173,19 @@ macro_rules! sim_determinism_test {
             agentbus_simulator::generate_seed()
         });
     };
+    ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $cardinality:tt, config = $config:expr $(, $seed:tt)?) => {
+        $crate::sim_determinism_test!(@run $test_fn, $test_name, $suffix, $fix, $cardinality,
+            $crate::sim_test!(@seed $($seed)?),
+            |simulator| <$fix as $crate::SimulatorFixture>::try_new_with_config(simulator, &$config)
+                .expect("fixture should support the scenario's config")
+        );
+    };
     ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $cardinality:tt, $seed:tt) => {
+        $crate::sim_determinism_test!(@run $test_fn, $test_name, $suffix, $fix, $cardinality, $seed,
+            |simulator| <$fix as $crate::SimulatorFixture>::new(simulator)
+        );
+    };
+    (@run $test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $cardinality:tt, $seed:expr, $create:expr) => {
         paste::paste! {
             #[test]
             fn [<$test_name _ $suffix>]() {
@@ -148,9 +194,7 @@ macro_rules! sim_determinism_test {
                 let seed: u64 = $seed;
                 eprintln!("Simulator seed: {seed}");
                 let run = || {
-                    let fixture = <$fix as $crate::SimulatorFixture>::new(
-                        agentbus_simulator::Simulator::new(seed),
-                    );
+                    let fixture = ($create)(agentbus_simulator::Simulator::new(seed));
                     let env = fixture.get_env();
                     let handle = env.spawn(async move { $test_fn(&fixture).await });
                     env.run();
@@ -321,6 +365,9 @@ macro_rules! define_driver {
         // random seed. `seed` requires `sim_only`, so only that arm takes one.
         #[macro_export]
         macro_rules! [<$suite _emit_sim>] {
+            (sim_only, $d name:ident, $d suffix:ident, $d fix:ty, config = $d config:expr $d(, $d seed:tt)?) => {
+                conformance::sim_test!($root $(:: $module)? ::scenarios::$d name, $d name, $d suffix, $d fix, config = $d config $d(, $d seed)?);
+            };
             (all, $d name:ident, $d suffix:ident, $d fix:ty) => {
                 conformance::sim_test!($root $(:: $module)? ::scenarios::$d name, $d name, $d suffix, $d fix);
             };
@@ -341,6 +388,7 @@ macro_rules! define_driver {
         // (which is a no-op in integration anyway).
         #[macro_export]
         macro_rules! [<$suite _emit_integration>] {
+            (sim_only, $d name:ident, $d suffix:ident, $d fix:ty, config = $d config:expr $d(, $d seed:tt)?) => {};
             (all, $d name:ident, $d suffix:ident, $d fix:ty) => {
                 conformance::integration_test!(
                     $root $(:: $module)? ::scenarios::$d name, $d name, $d suffix, $d fix
@@ -395,6 +443,11 @@ macro_rules! define_driver {
         }
         #[macro_export]
         macro_rules! [<$suite _emit_sim_determinism>] {
+            ($d name:ident, $d suffix:ident, $d fix:ty, $d cardinality:tt, config = $d config:expr $d(, $d seed:tt)?) => {
+                conformance::sim_determinism_test!(
+                    $root $(:: $module)? ::scenarios::$d name, $d name, $d suffix, $d fix, $d cardinality, config = $d config $d(, $d seed)?
+                );
+            };
             ($d name:ident, $d suffix:ident, $d fix:ty, $d cardinality:tt) => {
                 conformance::sim_determinism_test!(
                     $root $(:: $module)? ::scenarios::$d name, $d name, $d suffix, $d fix, $d cardinality

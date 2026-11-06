@@ -10,7 +10,9 @@
 use std::rc::Rc;
 
 use agentbus_conditional_write_space::InMemoryConditionalWriteSpace;
+use anyhow::Result;
 use conformance::ConformanceFixture;
+use conformance::TestConfig;
 
 use crate::fixtures::SimulatorFixture;
 use crate::simulator::Simulator;
@@ -35,9 +37,16 @@ impl ConformanceFixture for InMemoryConditionalWriteSpaceFixture {
 
 impl SimulatorFixture for InMemoryConditionalWriteSpaceFixture {
     fn new(simulator: Simulator) -> Self {
-        Self {
-            space: InMemoryConditionalWriteSpace::new(),
-            env: Rc::new(simulator),
-        }
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        let env = Rc::new(simulator);
+        let space = match config.ttl {
+            Some(ttl) => InMemoryConditionalWriteSpace::with_ttl(env.clone(), ttl),
+            None => InMemoryConditionalWriteSpace::new(),
+        };
+        Ok(Self { space, env })
     }
 }

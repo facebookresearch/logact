@@ -8,12 +8,15 @@
 //! Test fixtures for WriteOnceSpace implementations using the simulator
 
 use std::rc::Rc;
+use std::time::Duration;
 
 use agentbus_api::WriteOnceSpace;
 use agentbus_writeonce::CachingWriteOnceSpace;
 use agentbus_writeonce::ChanneledWriteOnceSpace;
 use agentbus_writeonce::InMemoryWriteOnceSpace;
+use anyhow::Result;
 use conformance::ConformanceFixture;
+use conformance::TestConfig;
 use rand::distr::Uniform;
 
 use crate::common::fault_config::FaultConfig;
@@ -41,12 +44,26 @@ impl ConformanceFixture for InMemoryWriteOnceSpaceFixture {
     }
 }
 
+/// In-memory storage whose writes expire after `ttl`, if set.
+fn in_memory_space(env: &Rc<Simulator>, ttl: Option<Duration>) -> InMemoryWriteOnceSpace {
+    match ttl {
+        Some(ttl) => InMemoryWriteOnceSpace::with_ttl(env.clone(), ttl),
+        None => InMemoryWriteOnceSpace::new(),
+    }
+}
+
 impl SimulatorFixture for InMemoryWriteOnceSpaceFixture {
     fn new(simulator: Simulator) -> Self {
-        Self {
-            space: InMemoryWriteOnceSpace::new(),
-            env: Rc::new(simulator),
-        }
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        let env = Rc::new(simulator);
+        Ok(Self {
+            space: in_memory_space(&env, config.ttl),
+            env,
+        })
     }
 }
 
@@ -64,8 +81,17 @@ where
     F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace>,
 {
     pub fn from_fixture(inner: F) -> Self {
+        Self::from_fixture_with_ttl(inner, None)
+    }
+
+    /// Expire cached writes after `ttl`, if set, matching the backing storage.
+    fn from_fixture_with_ttl(inner: F, ttl: Option<Duration>) -> Self {
+        let space = CachingWriteOnceSpace::new(inner.create_impl(), 2, 64 * 1024);
         Self {
-            space: CachingWriteOnceSpace::new(inner.create_impl(), 2, 64 * 1024),
+            space: match ttl {
+                Some(ttl) => space.with_write_ttl(inner.get_env(), ttl),
+                None => space,
+            },
             env: inner.get_env(),
         }
     }
@@ -96,6 +122,13 @@ where
     fn new(simulator: Simulator) -> Self {
         Self::from_fixture(F::new(simulator))
     }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self::from_fixture_with_ttl(
+            F::try_new_with_config(simulator, config)?,
+            config.ttl,
+        ))
+    }
 }
 
 /// Fixture for testing ChanneledWriteOnceSpace explicitly.
@@ -119,14 +152,19 @@ impl ConformanceFixture for ChanneledWriteOnceSpaceFixture {
 
 impl SimulatorFixture for ChanneledWriteOnceSpaceFixture {
     fn new(simulator: Simulator) -> Self {
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let env = Rc::new(simulator);
         let (channeled_space, space_backend) =
-            ChanneledWriteOnceSpace::new(InMemoryWriteOnceSpace::new());
+            ChanneledWriteOnceSpace::new(in_memory_space(&env, config.ttl));
         let _space_handle = env.spawn(space_backend.run());
-        Self {
+        Ok(Self {
             space: channeled_space,
             env,
-        }
+        })
     }
 }
 

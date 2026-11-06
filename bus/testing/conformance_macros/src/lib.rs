@@ -33,6 +33,12 @@
 //! reproduce); the default is a fresh random seed each run. A fixed simulator seed is
 //! meaningless against a real backend, so `seed` requires `sim_only`.
 //!
+//! `#[scenario(sim_only, ttl_ms = 100)]` builds the fixture with a
+//! `conformance::TestConfig` whose writes expire after the given positive number of
+//! milliseconds. A fixture that does not support TTL rejects it; omitting `ttl_ms`
+//! preserves the fixture's normal construction. Like `seed`, `ttl_ms` requires
+//! `sim_only`.
+//!
 //! `#[scenario(sim_only, cardinality = N)]` (N > 1) marks a *determinism* scenario:
 //! the driver runs it N times on fresh fixtures built from one held-fixed seed
 //! (optionally pinned via `seed = <int>`) and asserts identical output, via
@@ -60,12 +66,31 @@ use syn::parse::Parse;
 use syn::parse::ParseStream;
 use syn::parse_macro_input;
 
+/// Parse a positive millisecond TTL literal.
+fn parse_ttl(input: ParseStream) -> syn::Result<LitInt> {
+    let ttl: LitInt = input.parse()?;
+    if ttl.base10_parse::<u64>()? == 0 {
+        return Err(syn::Error::new_spanned(ttl, "`ttl_ms` must be positive"));
+    }
+    Ok(ttl)
+}
+
+/// The `TestConfig` a scenario's TTL selects.
+fn test_config(ttl: &LitInt) -> proc_macro2::TokenStream {
+    quote! {
+        ::conformance::TestConfig {
+            ttl: ::core::option::Option::Some(::core::time::Duration::from_millis(#ttl)),
+        }
+    }
+}
+
 /// Parsed `#[scenario_for(<FixtureType>, suffix = <ident> [, sim_only | int_only] [, seed = <int>])]`.
 struct ScenarioForArgs {
     fixture: Type,
     suffix: Ident,
     envs: Ident,
     seed: Option<LitInt>,
+    ttl_ms: Option<LitInt>,
 }
 
 impl Parse for ScenarioForArgs {
@@ -77,6 +102,7 @@ impl Parse for ScenarioForArgs {
         let mut suffix: Option<Ident> = None;
         let mut envs = Ident::new("all", Span::call_site());
         let mut seed: Option<LitInt> = None;
+        let mut ttl_ms = None;
         while input.peek(Token![,]) {
             input.parse::<Token![,]>()?;
             if input.is_empty() {
@@ -86,6 +112,9 @@ impl Parse for ScenarioForArgs {
             if key == "suffix" {
                 input.parse::<Token![=]>()?;
                 suffix = Some(input.parse()?);
+            } else if key == "ttl_ms" {
+                input.parse::<Token![=]>()?;
+                ttl_ms = Some(parse_ttl(input)?);
             } else if key == "seed" {
                 input.parse::<Token![=]>()?;
                 seed = Some(input.parse()?);
@@ -94,12 +123,15 @@ impl Parse for ScenarioForArgs {
             } else {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `suffix = <ident>`, `seed = <int>`, `sim_only`, or `int_only`",
+                    "expected `suffix = <ident>`, `seed = <int>`, `ttl_ms = <int>`, `sim_only`, or `int_only`",
                 ));
             }
         }
         let suffix =
             suffix.ok_or_else(|| input.error("`#[scenario_for]` requires `suffix = <ident>`"))?;
+        if ttl_ms.is_some() && envs != "sim_only" {
+            return Err(input.error("`ttl_ms` requires `sim_only`"));
+        }
         if seed.is_some() && envs != "sim_only" {
             return Err(input.error(
                 "`seed` requires `sim_only` (a fixed simulator seed is meaningless against a real backend)",
@@ -110,6 +142,7 @@ impl Parse for ScenarioForArgs {
             suffix,
             envs,
             seed,
+            ttl_ms,
         })
     }
 }
@@ -131,6 +164,7 @@ struct ScenarioArgs {
     envs: Ident,
     cardinality: usize,
     seed: Option<LitInt>,
+    ttl_ms: Option<LitInt>,
 }
 
 impl Parse for ScenarioArgs {
@@ -138,6 +172,7 @@ impl Parse for ScenarioArgs {
         let mut envs = Ident::new("all", Span::call_site());
         let mut cardinality: usize = 1;
         let mut seed: Option<LitInt> = None;
+        let mut ttl_ms = None;
         let mut first = true;
         while !input.is_empty() {
             if !first {
@@ -153,13 +188,16 @@ impl Parse for ScenarioArgs {
             } else if key == "cardinality" {
                 input.parse::<Token![=]>()?;
                 cardinality = input.parse::<LitInt>()?.base10_parse()?;
+            } else if key == "ttl_ms" {
+                input.parse::<Token![=]>()?;
+                ttl_ms = Some(parse_ttl(input)?);
             } else if key == "seed" {
                 input.parse::<Token![=]>()?;
                 seed = Some(input.parse()?);
             } else {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `sim_only`, `int_only`, `cardinality = <int>`, or `seed = <int>`",
+                    "expected `sim_only`, `int_only`, `cardinality = <int>`, `seed = <int>`, or `ttl_ms = <int>`",
                 ));
             }
         }
@@ -171,6 +209,9 @@ impl Parse for ScenarioArgs {
                 input.error("`cardinality > 1` (a determinism scenario) must be `sim_only`")
             );
         }
+        if ttl_ms.is_some() && envs != "sim_only" {
+            return Err(input.error("`ttl_ms` requires `sim_only`"));
+        }
         if seed.is_some() && envs != "sim_only" {
             return Err(input.error(
                 "`seed` requires `sim_only` (a fixed simulator seed is meaningless against a real backend)",
@@ -180,6 +221,7 @@ impl Parse for ScenarioArgs {
             envs,
             cardinality,
             seed,
+            ttl_ms,
         })
     }
 }
@@ -193,6 +235,7 @@ fn parse_scenario_args(attr: &syn::Attribute) -> syn::Result<ScenarioArgs> {
             envs: Ident::new("all", Span::call_site()),
             cardinality: 1,
             seed: None,
+            ttl_ms: None,
         }),
         Meta::List(_) => attr.parse_args::<ScenarioArgs>(),
         other => Err(syn::Error::new_spanned(
@@ -222,13 +265,13 @@ pub fn scenarios(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     // `#[scenario]` fns fan out over the registry: (fn_ident, envs, optional fixed seed).
-    let mut fanned: Vec<(Ident, Ident, Option<LitInt>)> = Vec::new();
+    let mut fanned: Vec<(Ident, ScenarioArgs)> = Vec::new();
     // `#[scenario_for]` fns are pinned to one fixture: (fn_ident, envs, fixture, suffix, seed).
-    let mut pinned: Vec<(Ident, Ident, Type, Ident, Option<LitInt>)> = Vec::new();
+    let mut pinned: Vec<(Ident, ScenarioForArgs)> = Vec::new();
     // `#[scenario(.., cardinality > 1)]` fns fan over the registry but run `cardinality`
     // times at one held-fixed seed and compare (via `sim_determinism_test!`):
     // (fn_ident, cardinality, optional fixed seed).
-    let mut determinism: Vec<(Ident, usize, Option<LitInt>)> = Vec::new();
+    let mut determinism: Vec<(Ident, ScenarioArgs)> = Vec::new();
 
     for item in content.iter_mut() {
         if let Item::Fn(func) = item {
@@ -239,21 +282,13 @@ pub fn scenarios(attr: TokenStream, item: TokenStream) -> TokenStream {
             for attr in std::mem::take(&mut func.attrs) {
                 if attr.path().is_ident("scenario") {
                     match parse_scenario_args(&attr) {
-                        Ok(args) if args.cardinality <= 1 => {
-                            fanned.push((name.clone(), args.envs, args.seed))
-                        }
-                        Ok(args) => determinism.push((name.clone(), args.cardinality, args.seed)),
+                        Ok(args) if args.cardinality <= 1 => fanned.push((name.clone(), args)),
+                        Ok(args) => determinism.push((name.clone(), args)),
                         Err(err) => return err.to_compile_error().into(),
                     }
                 } else if attr.path().is_ident("scenario_for") {
                     match attr.parse_args::<ScenarioForArgs>() {
-                        Ok(args) => pinned.push((
-                            name.clone(),
-                            args.envs,
-                            args.fixture,
-                            args.suffix,
-                            args.seed,
-                        )),
+                        Ok(args) => pinned.push((name.clone(), args)),
                         Err(err) => return err.to_compile_error().into(),
                     }
                 } else {
@@ -264,28 +299,30 @@ pub fn scenarios(attr: TokenStream, item: TokenStream) -> TokenStream {
         }
     }
 
-    let fanned_arms = fanned.iter().map(|(name, envs, seed)| match seed {
-        // A fixed seed rides along as a trailing token so the driver's emit table can
-        // forward it to `sim_test!` (and ignore it for integration).
-        Some(seed) => quote! { $cb!(#envs, #name, $suffix, $fix, #seed); },
-        None => quote! { $cb!(#envs, #name, $suffix, $fix); },
-    });
-    let pinned_arms = pinned
-        .iter()
-        .map(|(name, envs, fixture, suffix, seed)| match seed {
-            // A pinned fixed seed rides along as a trailing token so the driver's
-            // emit table can forward it to `sim_test!` (and ignore it for integration).
-            Some(seed) => quote! { $emit!(#envs, #name, #suffix, #fixture, #seed); },
-            None => quote! { $emit!(#envs, #name, #suffix, #fixture); },
+    let options = |seed: &Option<LitInt>, ttl: &Option<LitInt>| {
+        let config = ttl.as_ref().map(|ttl| {
+            let config = test_config(ttl);
+            quote! { , config = #config }
         });
-    let determinism_arms = determinism.iter().map(|(name, cardinality, seed)| {
-        let cardinality = *cardinality;
-        match seed {
-            // Cardinality (and optional fixed seed) ride along so the driver's emit
-            // forwards them to `sim_determinism_test!`.
-            Some(seed) => quote! { $emit!(#name, $suffix, $fix, #cardinality, #seed); },
-            None => quote! { $emit!(#name, $suffix, $fix, #cardinality); },
-        }
+        let seed = seed.as_ref().map(|value| quote! { , #value });
+        quote! { #config #seed }
+    };
+    let fanned_arms = fanned.iter().map(|(name, args)| {
+        let envs = &args.envs;
+        let options = options(&args.seed, &args.ttl_ms);
+        quote! { $cb!(#envs, #name, $suffix, $fix #options); }
+    });
+    let pinned_arms = pinned.iter().map(|(name, args)| {
+        let envs = &args.envs;
+        let fixture = &args.fixture;
+        let suffix = &args.suffix;
+        let options = options(&args.seed, &args.ttl_ms);
+        quote! { $emit!(#envs, #name, #suffix, #fixture #options); }
+    });
+    let determinism_arms = determinism.iter().map(|(name, args)| {
+        let cardinality = args.cardinality;
+        let options = options(&args.seed, &args.ttl_ms);
+        quote! { $emit!(#name, $suffix, $fix, #cardinality #options); }
     });
 
     let expanded = quote! {
@@ -321,4 +358,43 @@ pub fn scenarios(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     expanded.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_scenario_ttls() {
+        let args = syn::parse_str::<ScenarioArgs>("sim_only, ttl_ms = 100").unwrap();
+        assert_eq!(args.ttl_ms.unwrap().base10_parse::<u64>().unwrap(), 100);
+        let args =
+            syn::parse_str::<ScenarioArgs>("sim_only, ttl_ms = 100, seed = 1, cardinality = 2")
+                .unwrap();
+        assert_eq!(args.cardinality, 2);
+        assert!(args.seed.is_some());
+        let args = syn::parse_str::<ScenarioForArgs>(
+            "Fixture<Inner>, suffix = test, sim_only, ttl_ms = 5",
+        )
+        .unwrap();
+        assert!(args.ttl_ms.is_some());
+    }
+
+    #[test]
+    fn rejects_invalid_scenario_ttls() {
+        for input in [
+            "ttl_ms = 100",
+            "int_only, ttl_ms = 100",
+            "sim_only, ttl_ms = 0",
+            "sim_only, ttl_ms = -1",
+            "sim_only, ttl_ms = 1.5",
+            "sim_only, ttl_ms = \"100\"",
+        ] {
+            assert!(
+                syn::parse_str::<ScenarioArgs>(input).is_err(),
+                "should reject {input}"
+            );
+        }
+        assert!(syn::parse_str::<ScenarioForArgs>("Fixture, suffix = test, ttl_ms = 100").is_err());
+    }
 }
