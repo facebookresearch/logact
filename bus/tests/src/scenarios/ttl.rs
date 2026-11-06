@@ -14,6 +14,7 @@ mod defs {
 
     use agent_bus_proto_rust::agent_bus::*;
     use agentbus_api::AgentBus;
+    use agentbus_api::AgentBusError;
     use agentbus_api::environment::Environment;
     use anyhow::Result;
     use rand::RngExt as _;
@@ -28,10 +29,8 @@ mod defs {
             .collect()
     }
 
-    /// Expired entries are skipped by `read_next` and `poll` without an error, while
-    /// `check_tail` and later appends keep counting their positions.
     #[scenario(sim_only, ttl_ms = 1000)]
-    pub async fn run_test_expired_entries_are_skipped<F: AgentBusTestFixture>(
+    pub async fn run_test_expired_entries_are_not_found<F: AgentBusTestFixture>(
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
@@ -54,10 +53,51 @@ mod defs {
             .await?
             .tail_position;
         assert_eq!(tail, 5);
+        for filter in [
+            None,
+            Some(PayloadTypeFilter {
+                payload_types: vec![SelectivePollType::Vote as i32],
+            }),
+        ] {
+            assert!(matches!(
+                bus.read_next(ReadNextRequest {
+                    bus_id: id.clone(),
+                    start_log_position: 0,
+                    end_log_position: tail,
+                    max_entries: 10,
+                    filter: filter.clone(),
+                })
+                .await,
+                Err(AgentBusError::PositionNotFound(_))
+            ));
+            assert!(matches!(
+                bus.poll(PollRequest {
+                    bus_id: id.clone(),
+                    start_log_position: 0,
+                    max_entries: 10,
+                    filter: filter.clone(),
+                })
+                .await,
+                Err(AgentBusError::PositionNotFound(_))
+            ));
+            for timeout_ms in [0, 1000] {
+                assert!(matches!(
+                    bus.blocking_poll(BlockingPollRequest {
+                        bus_id: id.clone(),
+                        start_log_position: 0,
+                        max_entries: 10,
+                        filter: filter.clone(),
+                        timeout_ms,
+                    })
+                    .await,
+                    Err(AgentBusError::PositionNotFound(_))
+                ));
+            }
+        }
         let read = bus
             .read_next(ReadNextRequest {
                 bus_id: id.clone(),
-                start_log_position: 0,
+                start_log_position: 3,
                 end_log_position: tail,
                 max_entries: 10,
                 ..Default::default()
@@ -68,7 +108,7 @@ mod defs {
         let polled = bus
             .poll(PollRequest {
                 bus_id: id,
-                start_log_position: 0,
+                start_log_position: 3,
                 max_entries: 10,
                 ..Default::default()
             })

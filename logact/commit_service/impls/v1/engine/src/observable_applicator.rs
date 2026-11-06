@@ -104,6 +104,7 @@ fn error_code(err: &ApplyError) -> &'static str {
             ConcurrencyError::Decider { .. } => "ConcurrencyDecider",
         },
         ApplyError::Bus(error) => match error {
+            AgentBusError::PositionNotFound(_) => "BusPositionNotFound",
             AgentBusError::InvalidArgument(_) => "BusInvalidArgument",
             AgentBusError::Timeout(_) => "BusTimeout",
             AgentBusError::Unavailable(_) => "BusUnavailable",

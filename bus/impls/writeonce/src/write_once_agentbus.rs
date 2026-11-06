@@ -269,40 +269,41 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
             let serialized = space
                 .read(&prefixed_space_id(&bus_id), pos)
                 .await
-                .map_err(read_error_to_bus)?;
+                .map_err(read_error_to_bus)?
+                .ok_or_else(|| {
+                    AgentBusError::PositionNotFound(anyhow::anyhow!("position {pos} not found"))
+                })?;
 
-            if let Some(serialized) = serialized {
-                if let Some(stored_entry) = deserialize_entry(&serialized) {
-                    // Verify the stored log_position matches the slot we read from
-                    if let Some(ref header) = stored_entry.header {
-                        if header.log_position != pos as i64 {
-                            error!(
-                                agent_bus_id = bus_id,
-                                expected_position = pos,
-                                stored_position = header.log_position,
-                                "Stored log_position does not match read position"
-                            );
-                        }
+            if let Some(stored_entry) = deserialize_entry(&serialized) {
+                // Verify the stored log_position matches the slot we read from
+                if let Some(ref header) = stored_entry.header {
+                    if header.log_position != pos as i64 {
+                        error!(
+                            agent_bus_id = bus_id,
+                            expected_position = pos,
+                            stored_position = header.log_position,
+                            "Stored log_position does not match read position"
+                        );
                     }
+                }
 
-                    if let Some(ref payload) = stored_entry.payload {
-                        // Apply filter if present
-                        if !payload_matches_filter(payload, &payload_types) {
-                            pos += 1;
-                            continue;
-                        }
-                    } else {
+                if let Some(ref payload) = stored_entry.payload {
+                    // Apply filter if present
+                    if !payload_matches_filter(payload, &payload_types) {
                         pos += 1;
                         continue;
                     }
-
-                    if entries.len() >= max_entries {
-                        complete = false;
-                        break;
-                    }
-
-                    entries.push(stored_entry);
+                } else {
+                    pos += 1;
+                    continue;
                 }
+
+                if entries.len() >= max_entries {
+                    complete = false;
+                    break;
+                }
+
+                entries.push(stored_entry);
             }
             pos += 1;
         }
@@ -416,35 +417,36 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> WriteOnceAgentBus<W, E
             let serialized = space
                 .read(&prefixed_space_id(agent_bus_id), pos)
                 .await
-                .map_err(read_error_to_bus)?;
+                .map_err(read_error_to_bus)?
+                .ok_or_else(|| {
+                    AgentBusError::PositionNotFound(anyhow::anyhow!("position {pos} not found"))
+                })?;
 
-            if let Some(serialized) = serialized {
-                if let Some(stored_entry) = deserialize_entry(&serialized) {
-                    if let Some(ref header) = stored_entry.header {
-                        if header.log_position != pos as i64 {
-                            error!(
-                                agent_bus_id = agent_bus_id,
-                                expected_position = pos,
-                                stored_position = header.log_position,
-                                "Stored log_position does not match read position"
-                            );
-                        }
+            if let Some(stored_entry) = deserialize_entry(&serialized) {
+                if let Some(ref header) = stored_entry.header {
+                    if header.log_position != pos as i64 {
+                        error!(
+                            agent_bus_id = agent_bus_id,
+                            expected_position = pos,
+                            stored_position = header.log_position,
+                            "Stored log_position does not match read position"
+                        );
                     }
+                }
 
-                    if let Some(ref payload) = stored_entry.payload {
-                        if !payload_matches_filter(payload, payload_types) {
-                            pos += 1;
-                            continue;
-                        }
-                    } else {
+                if let Some(ref payload) = stored_entry.payload {
+                    if !payload_matches_filter(payload, payload_types) {
                         pos += 1;
                         continue;
                     }
+                } else {
+                    pos += 1;
+                    continue;
+                }
 
-                    entries.push(stored_entry);
-                    if entries.len() >= max_entries {
-                        return Ok((entries, pos + 1));
-                    }
+                entries.push(stored_entry);
+                if entries.len() >= max_entries {
+                    return Ok((entries, pos + 1));
                 }
             }
             pos += 1;

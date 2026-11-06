@@ -39,7 +39,7 @@ impl<E: Environment> InMemoryAgentBus<E> {
     }
 
     /// Expire each entry `ttl` after it is appended, by the environment's unsafe
-    /// wall clock. Expired entries keep their positions but are skipped by reads.
+    /// wall clock. Expired entries keep their positions; reading them returns `PositionNotFound`.
     pub fn with_ttl(environment: Rc<E>, ttl: Duration) -> Self
     where
         E: 'static,
@@ -176,18 +176,14 @@ impl<E: Environment + 'static> AgentBus for InMemoryAgentBus<E> {
         let payload_types = request.filter.as_ref().map(|f| f.payload_types.clone());
         let max_entries = request.max_entries as usize;
 
-        let (entries, next_start_position) = self
-            .state
-            .borrow()
-            .read_filtered_entries(
-                bus_id,
-                request.start_log_position,
-                max_entries,
-                &payload_types,
-                request.end_log_position,
-                self.check(),
-            )
-            .map_err(AgentBusError::Internal)?;
+        let (entries, next_start_position) = self.state.borrow().read_filtered_entries(
+            bus_id,
+            request.start_log_position,
+            max_entries,
+            &payload_types,
+            request.end_log_position,
+            self.check(),
+        )?;
         Ok(ReadNextResponse {
             entries,
             next_start_position,

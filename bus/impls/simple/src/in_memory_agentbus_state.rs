@@ -14,7 +14,6 @@ use agentbus_api::TtlCheck;
 use agentbus_api::UnsafeWallTime;
 use agentbus_api::payload_matches_filter;
 use agentbus_api::validate_bus_id;
-use anyhow::Result;
 
 /// Maximum number of entries that can be returned in a single poll request
 const MAX_POLL_ENTRIES: usize = 64;
@@ -28,7 +27,7 @@ pub struct InMemoryAgentBusState {
     buses: HashMap<String, Vec<StoredEntry>>,
 }
 
-/// An entry past its expiry keeps its position but is skipped by reads.
+/// An entry past its expiry keeps its position but cannot be read.
 #[derive(Debug)]
 struct StoredEntry {
     entry: BusEntry,
@@ -87,15 +86,13 @@ impl InMemoryAgentBusState {
 
         let payload_types = request.filter.as_ref().map(|f| f.payload_types.clone());
 
-        let (entries, complete) = self
-            .fetch_entries(
-                bus_id,
-                request.start_log_position,
-                max_entries,
-                &payload_types,
-                check,
-            )
-            .map_err(AgentBusError::Internal)?;
+        let (entries, complete) = self.fetch_entries(
+            bus_id,
+            request.start_log_position,
+            max_entries,
+            &payload_types,
+            check,
+        )?;
 
         Ok(PollResponse { entries, complete })
     }
@@ -111,9 +108,8 @@ impl InMemoryAgentBusState {
         max_entries: usize,
         payload_types: &Option<Vec<i32>>,
         check: Option<TtlCheck>,
-    ) -> Result<(Vec<BusEntry>, bool)> {
-        let entries = self
-            .buses
+    ) -> BusResult<(Vec<BusEntry>, bool)> {
+        self.buses
             .get(&agent_bus_id)
             .map(|bus| {
                 let start_idx = start_position.max(0) as usize;
@@ -127,15 +123,20 @@ impl InMemoryAgentBusState {
                 // If filter is set to Some(vec![]), return no entries
                 if let Some(filter) = payload_types {
                     if filter.is_empty() {
-                        return (vec![], true);
+                        return Ok((vec![], true));
                     }
                 }
 
                 let mut result = Vec::new();
                 let mut complete = true;
 
-                for entry in slice.iter().filter(|stored| stored.is_live(check)) {
-                    let entry = &entry.entry;
+                for stored in slice {
+                    if !stored.is_live(check) {
+                        return Err(AgentBusError::PositionNotFound(anyhow::anyhow!(
+                            "entry expired"
+                        )));
+                    }
+                    let entry = &stored.entry;
                     // Apply filter if present
                     if let Some(ref payload) = entry.payload {
                         if !payload_matches_filter(payload, payload_types) {
@@ -154,11 +155,9 @@ impl InMemoryAgentBusState {
                     result.push(entry.clone());
                 }
 
-                (result, complete)
+                Ok((result, complete))
             })
-            .unwrap_or((Vec::new(), true));
-
-        Ok(entries)
+            .unwrap_or_else(|| Ok((Vec::new(), true)))
     }
 
     pub fn get_tail(&self, agent_bus_id: &str) -> i64 {
@@ -178,13 +177,13 @@ impl InMemoryAgentBusState {
         payload_types: &Option<Vec<i32>>,
         end_position: i64,
         check: Option<TtlCheck>,
-    ) -> Result<(Vec<BusEntry>, i64)> {
+    ) -> BusResult<(Vec<BusEntry>, i64)> {
         if start_position > end_position {
-            return Err(anyhow::anyhow!(
+            return Err(AgentBusError::Internal(anyhow::anyhow!(
                 "start_position {} is beyond end_position {}",
                 start_position,
                 end_position
-            ));
+            )));
         }
         if start_position == end_position {
             return Ok((vec![], end_position));
@@ -200,8 +199,13 @@ impl InMemoryAgentBusState {
         let slice = &bus[start_idx..end_idx];
 
         let mut entries = Vec::new();
-        for entry in slice.iter().filter(|stored| stored.is_live(check)) {
-            let entry = &entry.entry;
+        for stored in slice {
+            if !stored.is_live(check) {
+                return Err(AgentBusError::PositionNotFound(anyhow::anyhow!(
+                    "entry expired"
+                )));
+            }
+            let entry = &stored.entry;
             if let Some(ref payload) = entry.payload {
                 if !payload_matches_filter(payload, payload_types) {
                     continue;
@@ -215,7 +219,9 @@ impl InMemoryAgentBusState {
                 let next = entry
                     .header
                     .as_ref()
-                    .expect("entry should have header")
+                    .ok_or_else(|| {
+                        AgentBusError::PositionNotFound(anyhow::anyhow!("entry has no header"))
+                    })?
                     .log_position
                     + 1;
                 return Ok((entries, next));

@@ -105,6 +105,7 @@ fn payload_type_name(payload: &Payload) -> &'static str {
 
 fn error_code(error: &AgentBusError) -> &'static str {
     match error {
+        AgentBusError::PositionNotFound(_) => "BusPositionNotFound",
         AgentBusError::InvalidArgument(_) => "BusInvalidArgument",
         AgentBusError::Timeout(_) => "BusTimeout",
         AgentBusError::Unavailable(_) => "BusUnavailable",

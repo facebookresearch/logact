@@ -116,6 +116,7 @@ fn commit_error_from_engine(error: EngineError) -> CommitError {
 
 fn commit_error_from_bus(error: AgentBusError) -> CommitError {
     match error {
+        error @ AgentBusError::PositionNotFound(_) => CommitError::Internal(error.into()),
         error @ AgentBusError::InvalidArgument(_) => {
             CommitError::InvalidArgument(anyhow::Error::new(error))
         }
@@ -142,6 +143,9 @@ fn commit_error_from_storage(error: StorageError) -> CommitError {
 
 fn commit_error_from_apply(error: ApplyError) -> CommitError {
     match error {
+        error @ ApplyError::Bus(AgentBusError::PositionNotFound(_)) => {
+            CommitError::Internal(error.into())
+        }
         error @ ApplyError::Bus(AgentBusError::Timeout(_)) => {
             CommitError::Timeout(anyhow::Error::new(error))
         }

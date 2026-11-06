@@ -479,6 +479,7 @@ fn decision_payload(position: i64, approved: bool, reason: String) -> Payload {
 
 fn commit_error_from_bus(error: AgentBusError) -> CommitError {
     match error {
+        error @ AgentBusError::PositionNotFound(_) => CommitError::Internal(error.into()),
         error @ AgentBusError::InvalidArgument(_) => {
             CommitError::InvalidArgument(anyhow::Error::new(error))
         }

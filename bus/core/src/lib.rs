@@ -39,6 +39,7 @@ use tonic::Status;
 
 fn status_code_from_agent_bus_error(error: &AgentBusError) -> Code {
     match error {
+        AgentBusError::PositionNotFound(_) => Code::NotFound,
         AgentBusError::InvalidArgument(_) => Code::InvalidArgument,
         AgentBusError::Timeout(_) => Code::DeadlineExceeded,
         AgentBusError::Unavailable(_) => Code::Unavailable,
@@ -57,6 +58,7 @@ pub(crate) fn agent_bus_error_from_status(operation: &str, status: Status) -> Ag
     let code = status.code();
     let source = anyhow::anyhow!("gRPC client {operation} error: {}", status.message());
     match code {
+        Code::NotFound => AgentBusError::PositionNotFound(source),
         Code::InvalidArgument => AgentBusError::InvalidArgument(source),
         Code::DeadlineExceeded => AgentBusError::Timeout(source),
         Code::ResourceExhausted | Code::Unavailable => AgentBusError::Unavailable(source),
@@ -162,6 +164,10 @@ mod tests {
                 AgentBusError::Internal(anyhow::anyhow!("source")),
                 Code::Internal,
             ),
+            (
+                AgentBusError::PositionNotFound(anyhow::anyhow!("source")),
+                Code::NotFound,
+            ),
         ];
 
         for (error, expected_code) in cases {
@@ -175,6 +181,7 @@ mod tests {
                         | (AgentBusError::Timeout(_), Code::DeadlineExceeded)
                         | (AgentBusError::Unavailable(_), Code::Unavailable)
                         | (AgentBusError::Internal(_), Code::Internal)
+                        | (AgentBusError::PositionNotFound(_), Code::NotFound)
                 ),
                 "gRPC round trip should preserve the AgentBus error category"
             );
@@ -199,7 +206,7 @@ mod tests {
             (Code::ResourceExhausted, "unavailable"),
             (Code::Unavailable, "unavailable"),
             (Code::Unknown, "internal"),
-            (Code::NotFound, "internal"),
+            (Code::NotFound, "position not found"),
         ] {
             let error = agent_bus_error_from_status("append", Status::new(code, "source"));
             assert_eq!(
@@ -208,6 +215,7 @@ mod tests {
                 "plain error display should retain the operation and remote status message"
             );
             let actual = match error {
+                AgentBusError::PositionNotFound(_) => "position not found",
                 AgentBusError::Timeout(_) => "timeout",
                 AgentBusError::Unavailable(_) => "unavailable",
                 AgentBusError::Internal(_) => "internal",

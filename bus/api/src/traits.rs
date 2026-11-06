@@ -12,6 +12,10 @@ use thiserror::Error;
 /// Error returned by [`AgentBus`] operations.
 #[derive(Debug, Error)]
 pub enum AgentBusError {
+    /// A requested log position has no entry in storage.
+    #[error(transparent)]
+    PositionNotFound(anyhow::Error),
+
     /// The request contained an invalid argument.
     #[error(transparent)]
     InvalidArgument(anyhow::Error),
@@ -41,13 +45,15 @@ pub trait AgentBus {
         request: AppendRequest,
     ) -> impl std::future::Future<Output = BusResult<AppendResponse>>;
 
-    /// Handle a poll request - retrieve commands from the log
+    /// Retrieve entries from the log. Missing storage entries below the tail
+    /// return [`AgentBusError::PositionNotFound`]; filtered-out entries are skipped.
     fn poll(
         &self,
         request: PollRequest,
     ) -> impl std::future::Future<Output = BusResult<PollResponse>>;
 
-    /// Read entries from start position. Blocks up to timeout_ms for new entries.
+    /// Read a range below the known tail. A missing storage entry is reported as
+    /// [`AgentBusError::PositionNotFound`]; filtered-out entries are skipped.
     fn read_next(
         &self,
         request: ReadNextRequest,
@@ -63,6 +69,7 @@ pub trait AgentBus {
     /// Blocking poll: wait up to timeout_ms for new entries from start_log_position,
     /// then return up to max_entries matching the optional filter.
     /// Combines blocking_check_tail + looped read_next internally.
+    /// Missing storage entries below the tail return [`AgentBusError::PositionNotFound`].
     fn blocking_poll(
         &self,
         request: BlockingPollRequest,
