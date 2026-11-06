@@ -47,6 +47,9 @@ use crate::counter::counter_command;
 
 type CounterLog = BTreeMap<i64, (CounterCommand, bool)>;
 
+/// The reason V1 records when it aborts an intention it found no decision for.
+const FORCED_ABORT_REASON: &str = "no decision before the log was drained";
+
 #[derive(Default)]
 struct CounterReplay {
     counter: CounterSpec,
@@ -54,6 +57,7 @@ struct CounterReplay {
     applied_through: Option<i64>,
     intentions: BTreeMap<i64, CounterCommand>,
     decisions: HashMap<i64, bool>,
+    forced_aborts: usize,
 }
 
 impl CounterReplay {
@@ -71,7 +75,12 @@ impl CounterReplay {
         }
         let decision = match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
             Some(payload::Payload::Commit(commit)) => Some((commit.intention_id, true)),
-            Some(payload::Payload::Abort(abort)) => Some((abort.intention_id, false)),
+            Some(payload::Payload::Abort(abort)) => {
+                if abort.reason == FORCED_ABORT_REASON {
+                    self.forced_aborts += 1;
+                }
+                Some((abort.intention_id, false))
+            }
             _ => None,
         };
         if let Some((intention, approved)) = decision {
@@ -273,6 +282,21 @@ where
     }
 }
 
+impl<F> CommitServiceCounterImplementation<F>
+where
+    F: CommitServiceTestFixture<Env = Simulator>,
+{
+    /// The most forced aborts any client has replayed from the log.
+    pub fn forced_aborts(&self) -> usize {
+        self.clients
+            .borrow()
+            .iter()
+            .map(|client| client.replay.borrow().forced_aborts)
+            .max()
+            .unwrap_or(0)
+    }
+}
+
 impl<F> LinearizabilityImplementation for CommitServiceCounterImplementation<F>
 where
     F: CommitServiceTestFixture<Env = Simulator>,
@@ -361,7 +385,7 @@ where
             }
         })
         .collect();
-    let implementation = CommitServiceCounterImplementation::new(fixture);
+    let implementation = Rc::new(CommitServiceCounterImplementation::new(fixture));
     let clients = implementation.clients.clone();
     run_linearizability_test(vec![Client::new("counter", operations)], implementation).await?;
     let client = clients.borrow()[0].clone();

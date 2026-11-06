@@ -776,7 +776,7 @@ impl BenchmarkRun {
                 );
                 run_linearizability_test(
                     self.workload,
-                    Measured {
+                    Rc::new(Measured {
                         inner: implementation,
                         start,
                         measurements: self.measurements,
@@ -784,7 +784,7 @@ impl BenchmarkRun {
                         bus_id,
                         client_offset: 0,
                         counter_barrier: None,
-                    },
+                    }),
                 )
                 .await?;
             }
@@ -831,7 +831,7 @@ impl BenchmarkRun {
                                 _ => None,
                             },
                         };
-                        async move { run_linearizability_test(workload, measured).await }
+                        async move { run_linearizability_test(workload, Rc::new(measured)).await }
                     },
                 );
                 let handles: Vec<_> = runs.map(|run| environment.spawn(run)).collect();

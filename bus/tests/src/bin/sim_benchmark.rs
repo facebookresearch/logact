@@ -53,14 +53,14 @@ where
     let handle = env_rc.spawn(async move {
         run_linearizability_test(
             workload_clone.counter,
-            AgentBusCounterImplementation::with_configuration(
+            Rc::new(AgentBusCounterImplementation::with_configuration(
                 fixture,
                 workload_clone.agent_bus_id,
                 AgentBusCounterOptions {
                     skip_commits: false,
                     poll_entries: PollEntries::PerClient(workload_clone.max_poll_entries),
                 },
-            ),
+            )),
         )
         .await
     });

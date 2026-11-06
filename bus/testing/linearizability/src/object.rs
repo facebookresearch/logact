@@ -7,6 +7,7 @@
 
 use std::fmt::Debug;
 use std::rc::Rc;
+use std::time::Duration;
 
 use agentbus_simulator::Simulator;
 use anyhow::Result;
@@ -93,7 +94,7 @@ pub trait LinearizabilityImplementation {
 /// Run a declarative workload against one concrete implementation.
 pub async fn run_linearizability_test<Workload, Implementation>(
     workload: Workload,
-    implementation: Implementation,
+    implementation: Rc<Implementation>,
 ) -> Result<usize>
 where
     Workload: LinearizabilityWorkload<
@@ -118,7 +119,8 @@ where
         .zip(objects)
         .enumerate()
         .map(|(client, (workload, worker_object))| {
-            let worker = Worker::new(history.clone(), client, workload.operations);
+            let worker = Worker::new(history.clone(), client, workload.operations)
+                .with_pause(workload.pause);
             let worker_environment = environment.clone();
             environment.spawn_named(
                 async move {
@@ -169,6 +171,8 @@ where
 pub struct Client<Operation> {
     pub name: String,
     pub operations: Vec<Operation>,
+    /// Sleep for the duration before the operation at the sequence number.
+    pub pause: Option<(usize, Duration)>,
 }
 
 impl<Operation> Client<Operation> {
@@ -176,6 +180,15 @@ impl<Operation> Client<Operation> {
         Self {
             name: name.into(),
             operations,
+            pause: None,
+        }
+    }
+
+    /// Sleep for `duration` before the operation at `sequence`.
+    pub fn with_pause(self, sequence: usize, duration: Duration) -> Self {
+        Self {
+            pause: Some((sequence, duration)),
+            ..self
         }
     }
 }

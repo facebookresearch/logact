@@ -7,6 +7,8 @@
 
 #[conformance_macros::scenarios(gated_counter_gated_counter_list)]
 mod defs {
+    use std::rc::Rc;
+
     use agentbus_simulator::Simulator;
     use anyhow::Result;
     use conformance::ConformanceFixture;
@@ -28,7 +30,11 @@ mod defs {
         <F::Impl as LinearizabilityImplementation>::Object:
             LinearizableObject<Spec = GatedCounterSpec>,
     {
-        run_linearizability_test(GatedCounterWorkload::new(3, 8, 8), fixture.create_impl()).await?;
+        run_linearizability_test(
+            GatedCounterWorkload::new(3, 8, 8),
+            Rc::new(fixture.create_impl()),
+        )
+        .await?;
         Ok(())
     }
 
@@ -56,7 +62,7 @@ mod defs {
                     ],
                 ),
             ],
-            fixture.create_impl(),
+            Rc::new(fixture.create_impl()),
         )
         .await
     }

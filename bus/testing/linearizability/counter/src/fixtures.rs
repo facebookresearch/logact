@@ -14,8 +14,10 @@ use agentbus_tests::fixtures::AgentBusTestFixture;
 use agentbus_tests::fixtures::simtest::ChainedAgentBusBuggyPollFixture;
 use agentbus_tests::fixtures::simtest::FaultInjectingFixture;
 use agentbus_tests::fixtures::simtest::SimpleMemoryFixture;
+use anyhow::Result;
 use conformance::ConformanceFixture;
 use conformance::SimulatorFixture;
+use conformance::TestConfig;
 use logact_commit_service_tests::fixtures::BuggyStalePositionCommitServiceFixture;
 use logact_commit_service_tests::fixtures::CommitServiceTestFixture;
 use logact_commit_service_tests::fixtures::CommitServiceV1CountingVoterFixture;
@@ -128,6 +130,12 @@ impl<F: SimulatorFixture> SimulatorFixture for CommitServiceCounterFixture<F> {
         Self {
             inner: Rc::new(F::new(simulator)),
         }
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: Rc::new(F::try_new_with_config(simulator, config)?),
+        })
     }
 }
 

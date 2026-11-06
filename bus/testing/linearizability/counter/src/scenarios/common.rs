@@ -7,6 +7,9 @@
 
 #[conformance_macros::scenarios(counter_common_list)]
 mod defs {
+    use std::rc::Rc;
+    use std::time::Duration;
+
     use agentbus_api::Environment;
     use agentbus_simulator::Simulator;
     use anyhow::Result;
@@ -14,10 +17,12 @@ mod defs {
     use linearizability::history::OperationId;
     use linearizability::object::Client;
     use linearizability::object::LinearizabilityImplementation;
+    use linearizability::object::LinearizabilityWorkload as _;
     use linearizability::object::LinearizableObject;
     use linearizability::object::run_linearizability_test;
 
     use crate::commit_service::CommitServiceCounter;
+    use crate::commit_service::CommitServiceCounterImplementation;
     use crate::commit_service::run_counter_with_denials as execute_counter_with_denials;
     use crate::counter::CounterCommand;
     use crate::counter::CounterOperation;
@@ -38,7 +43,7 @@ mod defs {
         let workload = fixture
             .get_env()
             .with_rng(|rng| CounterWorkload::random(rng, clients, operations));
-        run_linearizability_test(workload, fixture.create_impl()).await?;
+        run_linearizability_test(workload, Rc::new(fixture.create_impl())).await?;
         Ok(())
     }
 
@@ -120,7 +125,7 @@ mod defs {
     {
         run_linearizability_test(
             vec![Client::new("counter", vec![CounterOperation::Increment; 2])],
-            fixture.create_impl(),
+            Rc::new(fixture.create_impl()),
         )
         .await
     }
@@ -197,6 +202,44 @@ mod defs {
         <F::Inner as ConformanceFixture>::Impl: 'static,
     {
         execute_counter_with_denials(fixture.inner()).await
+    }
+
+    /// Reproduces every commit being forced-aborted after servers restart past a
+    /// 30-day TTL. One client commits through a server; a second client sleeps 31
+    /// days and continues on the same bus through a newly created server. The new
+    /// server shares the engine storage, so its checkpoint is near the old tail,
+    /// while its new bus client appends from position 0 into the expired history.
+    /// Each of its intentions lands behind the checkpoint and is forced-aborted.
+    #[scenario_for(
+        counter_suite::fixtures::CommitServiceCounterFixture<
+            logact_commit_service_tests::fixtures::CommitServiceV1Fixture<agentbus_tests::SpaceInMemory>
+        >,
+        suffix = v1_space_in_memory,
+        sim_only,
+        ttl_ms = 2592000000
+    )]
+    pub async fn run_new_server_after_ttl_expiry<F>(fixture: &F) -> Result<()>
+    where
+        F: CommitServiceCounterTestFixture,
+        <F::Inner as ConformanceFixture>::Impl: 'static,
+    {
+        const OPERATIONS: usize = 4;
+        let environment = fixture.get_env();
+        let mut clients = environment
+            .with_rng(|rng| CounterWorkload::random(rng, 2, OPERATIONS))
+            .generate(&environment);
+        clients[1] = clients[1]
+            .clone()
+            .with_pause(0, Duration::from_secs(31 * 24 * 60 * 60));
+        let implementation = Rc::new(CommitServiceCounterImplementation::new(fixture.inner()));
+        let result = run_linearizability_test(clients, implementation.clone()).await;
+        let forced_aborts = implementation.forced_aborts();
+        eprintln!("linearizability {result:?}; forced aborts: {forced_aborts}");
+        anyhow::ensure!(
+            forced_aborts == OPERATIONS,
+            "expected every commit on the new server to be forced-aborted, got {forced_aborts}"
+        );
+        Ok(())
     }
 }
 pub use defs::*;

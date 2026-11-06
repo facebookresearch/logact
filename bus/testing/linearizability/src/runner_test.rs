@@ -127,7 +127,7 @@ fn run_toggle(buggy: bool) -> Result<usize> {
         Client::new("first", vec![ToggleOperation::Toggle]),
         Client::new("second", vec![ToggleOperation::Toggle]),
     ];
-    futures::executor::block_on(run_linearizability_test(workload, implementation))
+    futures::executor::block_on(run_linearizability_test(workload, Rc::new(implementation)))
 }
 
 #[test]
@@ -152,7 +152,8 @@ fn run_linearizability_test_rejects_an_empty_workload() {
     let workload: Vec<Client<ToggleOperation>> = Vec::new();
 
     assert!(
-        futures::executor::block_on(run_linearizability_test(workload, implementation)).is_err(),
+        futures::executor::block_on(run_linearizability_test(workload, Rc::new(implementation)))
+            .is_err(),
         "an empty workload should be rejected"
     );
 }

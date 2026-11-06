@@ -7,6 +7,7 @@
 
 use std::future::Future;
 use std::rc::Rc;
+use std::time::Duration;
 
 use agentbus_api::Clock;
 use agentbus_api::Environment;
@@ -24,6 +25,7 @@ pub struct Worker<Operation, Output, Tag> {
     history: Rc<History<Operation, Output, Tag>>,
     client: usize,
     operations: Vec<Operation>,
+    pause: Option<(usize, Duration)>,
 }
 
 impl<Operation, Output, Tag> Worker<Operation, Output, Tag>
@@ -40,7 +42,13 @@ where
             history,
             client,
             operations,
+            pause: None,
         }
+    }
+
+    /// Sleep for `duration` before the operation at `sequence`.
+    pub fn with_pause(self, pause: Option<(usize, Duration)>) -> Self {
+        Self { pause, ..self }
     }
 
     /// Execute every command, adding randomized simulator delay between operations.
@@ -54,6 +62,9 @@ where
         ActionFuture: Future<Output = OperationResult<Output, Tag>>,
     {
         for (sequence, operation) in self.operations.into_iter().enumerate() {
+            if let Some((_, pause)) = self.pause.filter(|(at, _)| *at == sequence) {
+                environment.sleep(pause).await;
+            }
             if max_delay_ms > 0 {
                 let delay = environment.with_rng(|rng| rng.random_range(0..=max_delay_ms));
                 environment
