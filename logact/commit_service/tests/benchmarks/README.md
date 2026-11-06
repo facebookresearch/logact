@@ -48,15 +48,24 @@ per bus in `independent-buses`.
 Router copies refer to the same persistent service instances. The simulator,
 observability sinks, and counter-outcome bookkeeping belong to the test harness.
 Each bus is checked using the existing GatedCounter adapter and linearizability
-model. Final verification uses a separate AgentBus client over the same durable
+model. Counter replay uses logged decisions for calls whose client responses
+are still pending. Final verification uses a separate AgentBus client over the same durable
 space. Initialization and validation do not contribute to the latency report.
 
 Each service instance's AgentBus client reads its write-once space through a
 private `CachingWriteOnceSpace` (LRU, 1,024 entries and 1 MiB of values, 64 KiB
 per entry), shared only by that client's clones. Cache hits skip the backing
 call and its delay; writes, misses, and tail discovery reach the backing space.
-`--no-cache` sets the entry limit to zero, which disables caching while keeping
-the same client topology and workload.
+Each service also has a private `CachingStorage` for engine checkpoints over
+shared backing storage, using production's defaults: a 60 s TTL, 1,024 entries,
+and 1 MiB of values (64 KiB per entry). Successful checkpoint writes populate
+the cache; a cache hit consumes that cached value and skips the backing `get`
+and its delay. Reads do not populate the cache. Voter, decider, and policy-register
+storage bypass the engine cache.
+
+`--no-cache` sets both caches' entry limits to zero, keeping the same client
+topology and workload. Console output and the `engine_storage_cache` metadata
+in both JSON exports report engine caching and its limits.
 
 ## Buffered commits
 
@@ -79,7 +88,9 @@ Counter latencies also include the adapter replay.
 `create_bus` and AgentBus calls bypass the commit queues. Console output and the
 `buffered` metadata in both JSON exports record whether buffering is enabled.
 
-Policy-register and engine-storage `get`/`put` calls each have a 50 ms delay.
+Backing policy-register and engine-storage `get`/`put` calls each have a 50 ms delay.
+Engine checkpoint cache hits skip the backing `get` delay; writes always reach
+backing storage.
 AgentBus uses `WriteOnceAgentBus` over an in-memory `WriteOnceSpace`. Each
 underlying space `read`, `write`, and `tail` call has a 50 ms delay. AgentBus calls
 have no additional fixed delay: their latency follows from the backing calls,
@@ -97,11 +108,11 @@ in-memory metrics store and row logger per run:
 | `service_bus` | `ObservableAgentBus` | each service's AgentBus frontend |
 | `client_bus` | `ObservableAgentBus` | the final-verification AgentBus frontend |
 | `write_once` | `ObservableWriteOnceSpace` | every backing write-once space handle, beneath the cache |
-| `engine_storage` | `ObservableStorage` | engine storage |
+| `engine_storage` | `ObservableStorage` | shared engine/voter/decider backing storage, beneath the engine checkpoint cache |
 | `policy_register` | `ObservableStorage` | policy-register storage |
 
-Because `write_once` sits beneath the cache, its counts are backing I/O only;
-cache hits are not recorded.
+Because `write_once` and `engine_storage` sit beneath their caches, their counts
+are backing I/O only; cache hits are not recorded.
 
 Each scope prefixes its metric keys through `PrefixedMetrics` (for example
 `service_1.commit_intention.commit_service.latency_us`) and adds a `scope`

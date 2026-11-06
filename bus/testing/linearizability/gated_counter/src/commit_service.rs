@@ -311,7 +311,26 @@ fn replay_gated_counter(
     through_position: i64,
     outcomes: &CounterOutcomes,
 ) -> Result<i64> {
-    let outcomes = outcomes.borrow().clone();
+    let mut outcomes = outcomes.borrow().clone();
+    for entry in entries {
+        let decision = match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
+            Some(payload::Payload::Commit(commit)) => {
+                Some((commit.intention_id, CounterOutcome::Applied))
+            }
+            Some(payload::Payload::Abort(abort)) => Some((
+                abort.intention_id,
+                if skipped_for_policy_version(&abort.reason) {
+                    CounterOutcome::VersionStale
+                } else {
+                    CounterOutcome::GateDenied
+                },
+            )),
+            _ => None,
+        };
+        if let Some((position, outcome)) = decision {
+            outcomes.entry(position).or_insert(outcome);
+        }
+    }
     let mut counter = CounterSpec::new();
     let mut applied_version = None;
     for entry in entries {
@@ -554,6 +573,63 @@ mod tests {
         let value = replay_gated_counter(&entries, 0, &outcomes)
             .expect("counter replay should process the mutation");
         counter_output(outcome, value).expect("the final outcome should not be version-stale")
+    }
+
+    fn decision_entry(position: i64, decision: payload::Payload) -> BusEntry {
+        BusEntry {
+            header: Some(Header {
+                log_position: position,
+                ..Default::default()
+            }),
+            payload: Some(Payload {
+                payload: Some(decision),
+            }),
+        }
+    }
+
+    #[test]
+    fn replay_uses_logged_decisions_before_other_clients_observe_their_response() {
+        let entries = vec![
+            intention_entry(0, CounterOperation::Increment),
+            decision_entry(
+                1,
+                payload::Payload::Commit(agent_bus_proto_rust::agent_bus::Commit {
+                    intention_id: 0,
+                    ..Default::default()
+                }),
+            ),
+            intention_entry(2, CounterOperation::Increment),
+        ];
+        let outcomes = CounterOutcomes::default();
+        outcomes.borrow_mut().insert(2, CounterOutcome::Applied);
+        assert_eq!(replay_gated_counter(&entries, 2, &outcomes).unwrap(), 2);
+        assert!(!outcomes.borrow().contains_key(&0));
+    }
+
+    #[test]
+    fn replay_uses_first_logged_decision_for_an_unobserved_attempt() {
+        let entries = vec![
+            intention_entry(0, CounterOperation::Increment),
+            intention_entry(1, CounterOperation::Increment),
+            decision_entry(
+                2,
+                payload::Payload::Abort(agent_bus_proto_rust::agent_bus::Abort {
+                    intention_id: 0,
+                    reason: "minimum policy version 2, but applied version is Some(1)".to_string(),
+                }),
+            ),
+            decision_entry(
+                3,
+                payload::Payload::Commit(agent_bus_proto_rust::agent_bus::Commit {
+                    intention_id: 0,
+                    ..Default::default()
+                }),
+            ),
+        ];
+        let outcomes = CounterOutcomes::default();
+        outcomes.borrow_mut().insert(1, CounterOutcome::Applied);
+        assert_eq!(replay_gated_counter(&entries, 1, &outcomes).unwrap(), 1);
+        assert!(replay_gated_counter(&entries[..2], 1, &outcomes).is_err());
     }
 
     #[test]

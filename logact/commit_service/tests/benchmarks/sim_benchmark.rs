@@ -8,8 +8,9 @@
 //! `sim_benchmark [seed] [--workload KIND] [--rows PATH] [--trace PATH] [--sticky] [--no-cache] [--buffered]` runs synchronous workloads.
 //! Latencies include commit-service processing and the GatedCounter adapter's
 //! replay, but exclude the linearizability check and its final snapshot read.
-//! Each service instance has its own AgentBus client and bounded write-once
-//! cache over shared backing storage. `--no-cache` disables caching for comparison.
+//! Each service instance has its own AgentBus client, bounded write-once cache,
+//! and engine checkpoint cache over shared backing storage. `--no-cache` disables
+//! both caches for comparison.
 //! `independent-buses-concurrent` releases four counter clients per bus across a
 //! randomized 5–10 ms window in each of ten rounds, with one policy writer per bus.
 //! Counter latencies include the round barrier and launch delay; commit spans exclude them.
@@ -73,6 +74,8 @@ use logact_commit_service_api::PolicyState;
 use logact_commit_service_api::VersionedPolicyState;
 use logact_commit_service_core::BufferingCommitService;
 use logact_commit_service_engine::BaseEngine;
+use logact_commit_service_engine::CachingStorage;
+use logact_commit_service_engine::CachingStorageConfig;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::Observability;
@@ -104,6 +107,7 @@ const BURST_MAX_SPREAD_MS: u64 = 10;
 const COUNTER_OPERATIONS: usize = 40;
 const GATE_WRITES: usize = 4;
 const SERVICE_INSTANCES: usize = 3;
+const ENGINE_CACHE_TTL_SECONDS: u64 = 60;
 const CACHE_MAX_ENTRIES: usize = 1024;
 const CACHE_MAX_VALUE_BYTES: usize = 1024 * 1024;
 
@@ -716,12 +720,22 @@ impl BenchmarkRun {
         let service_environment = environment.clone();
         let service_sinks = self.sinks.clone();
         let buffered = self.buffered;
+        let cache_enabled = self.space_fixture.cache_enabled;
         let make_service = move |instance| {
             let bus = WriteOnceAgentBusGenericFixture::new(service_space.clone()).create_impl();
+            let cached_engine_storage = Rc::new(CachingStorage::new(
+                engine_storage.clone(),
+                service_environment.clone(),
+                CachingStorageConfig {
+                    ttl: Duration::from_secs(ENGINE_CACHE_TTL_SECONDS),
+                    max_entries: if cache_enabled { CACHE_MAX_ENTRIES } else { 0 },
+                    max_value_bytes: CACHE_MAX_VALUE_BYTES,
+                },
+            ));
             let service = CommitServiceV1::new(service_sinks.bus("service_bus", bus), |bus| {
                 BaseEngine::new(
                     bus,
-                    engine_storage.clone(),
+                    cached_engine_storage,
                     DelegatingVoterFactory::with_storage(engine_storage.clone()),
                     provider(),
                     DeciderFactoryImpl::new(engine_storage.clone()),
@@ -1021,6 +1035,9 @@ fn run(args: &[String]) -> Result<()> {
         "Separate AgentBus clients and caches per service instance; shared backing storage. Cache enabled={cache_enabled}; limits={CACHE_MAX_ENTRIES} entries / {CACHE_MAX_VALUE_BYTES} value bytes; backing read delay only on misses."
     );
     println!(
+        "Engine checkpoint cache enabled={cache_enabled}; private per service instance; TTL={ENGINE_CACHE_TTL_SECONDS} s; limits={CACHE_MAX_ENTRIES} entries / {CACHE_MAX_VALUE_BYTES} value bytes; acknowledged writes populate the cache."
+    );
+    println!(
         "Buffered={buffered}; commit queues are private per service instance and keyed by bus. Service commit latencies include queue waits."
     );
     println!(
@@ -1118,6 +1135,7 @@ fn run(args: &[String]) -> Result<()> {
         "clock": "simulator monotonic microseconds", "backing_bus": "write-once AgentBus over in-memory WriteOnceSpace with backing-operation delays",
         "services": "separately constructed persistent instances with independent AgentBus clients; shared backing storage",
         "write_once_cache": {"enabled": cache_enabled, "scope": "private per service instance; shared only by that client's clones", "eviction": "LRU", "max_entries": CACHE_MAX_ENTRIES, "max_value_bytes": CACHE_MAX_VALUE_BYTES, "backing_read_delay": "cache misses only"},
+        "engine_storage_cache": {"enabled": cache_enabled, "scope": "private per service instance; shared only by that service's clones", "eviction": "LRU", "ttl_seconds": ENGINE_CACHE_TTL_SECONDS, "max_entries": CACHE_MAX_ENTRIES, "max_value_bytes": CACHE_MAX_VALUE_BYTES, "population": "acknowledged writes only", "backing_get_delay": "cache misses only"},
         "routing": kind.routing(sticky),
         "buffered": buffered,
         "timing": "end = simulator clock when the observable wrapper logs its row; start = end - its latency_us sample",
