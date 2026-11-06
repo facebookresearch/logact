@@ -736,7 +736,7 @@ impl BenchmarkRun {
                 BaseEngine::new(
                     bus,
                     cached_engine_storage,
-                    DelegatingVoterFactory::with_storage(engine_storage.clone()),
+                    DelegatingVoterFactory::default(),
                     provider(),
                     DeciderFactoryImpl::new(engine_storage.clone()),
                     service_environment.clone(),

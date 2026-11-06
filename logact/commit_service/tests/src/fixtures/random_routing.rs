@@ -143,7 +143,7 @@ fn make_v1<T: AgentBus + Clone + 'static, P: TestPolicyProvider>(
     build_v1(
         bus,
         storage,
-        DelegatingVoterFactory::with_storage,
+        |_| DelegatingVoterFactory::default(),
         policy,
         environment,
     )

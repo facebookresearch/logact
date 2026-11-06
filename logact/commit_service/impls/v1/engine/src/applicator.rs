@@ -126,25 +126,22 @@ pub enum ApplyError {
 /// The caller owns the mutable context and retains it across entry applications.
 /// Voters and deciders use `()`; engine playback carries its checkpoint snapshot.
 ///
-/// # Duplication tolerance contract for payload-producing applicators
+/// # Replay contract
 ///
-/// The engine writes its cursor, each applicator's state, and the produced
-/// entry to storage / the bus non-atomically, so a crash can leave `apply`
-/// having run without its output appended. To make recovery safe, `apply` must
-/// honor the following per-bus contract:
+/// State transitions must be deterministic functions of logged entries and
+/// tolerate re-delivery without repeating a transition. The engine calls
+/// `apply` with non-decreasing positions and may replay the last entry. An
+/// applicator's checkpoint can advance before the engine cursor, so entries
+/// older than its checkpoint return [`ApplyError::StalePosition`].
 ///
-/// - The engine calls `apply` with **non-decreasing** entry positions.
-/// - The engine MAY re-issue `apply` for the **most recently applied** position
-///   (the same `BusEntry`). In that case the applicator MUST return the
-///   identical `Option<Payload>` it returned the first time, and MUST NOT apply
-///   any side effect a second time.
-/// - The engine MUST NOT re-issue `apply` for any position **older** than the
-///   last applied one. An applicator detecting this returns
-///   [`ApplyError::StalePosition`].
+/// An applicator may also propose an output without changing durable state.
+/// Proposals may be non-deterministic and repeated on replay. Consumers must
+/// resolve competing proposals in log order. The stateless voter adapter
+/// proposes on `Intention` without maintaining a checkpoint.
 ///
-/// Concretely: an applicator only needs to retain enough state to reproduce the
-/// result for its single last position. The generic conformance suite in
-/// `logact_commit_service_engine_tests` (`applicator_tests!`) exercises this.
+/// An applicator that checkpoints before returning an output must retain enough
+/// information to reproduce that output on re-delivery. The engine appends
+/// outputs before advancing its cursor, but those writes are non-atomic.
 #[async_trait::async_trait(?Send)]
 pub trait Applicator<Context = ()> {
     async fn apply(

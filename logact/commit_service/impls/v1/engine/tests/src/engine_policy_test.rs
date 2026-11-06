@@ -54,7 +54,6 @@ use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::DeprecatedOperationKind;
 use logact_commit_service_engine::EngineError;
 use logact_commit_service_engine::EngineResult;
-use logact_commit_service_engine::ImmutableVoter;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::MalformedPolicyBatchKind;
 use logact_commit_service_engine::Observability;
@@ -81,6 +80,7 @@ use logact_commit_service_engine_tests::voters::CountingVoter;
 use logact_commit_service_engine_tests::voters::CountingVoterConfig;
 use logact_commit_service_engine_tests::voters::CountingVoterFactory;
 use logact_commit_service_engine_tests::voters::boolean_vote;
+use logact_commit_service_engine_tests::voters::counting_voter_config;
 use prost::Message;
 
 struct PlaceholderVoter;
@@ -163,7 +163,7 @@ impl Storage for RetryTestStorage {
                 "injected decider transaction conflict"
             )));
         }
-        if key.starts_with("voter:") && self.voter_cas_pending.replace(false) {
+        if key.starts_with("counting_voter:") && self.voter_cas_pending.replace(false) {
             // Model a competing writer winning with this transition before this
             // caller learns that its CAS was rejected.
             if !self.inner.put(key, value, expected, new_position).await? {
@@ -213,32 +213,6 @@ impl Storage for PersistentConflictStorage {
             )));
         }
         self.inner.put(key, value, expected, new_position).await
-    }
-}
-
-struct StatelessTestVoterFactory<S> {
-    storage: Rc<S>,
-}
-
-impl<S: Storage + 'static> VoterFactory for StatelessTestVoterFactory<S> {
-    fn validate_config(&self, config: Option<&VoterConfig>) -> anyhow::Result<VoterConfig> {
-        config
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("missing voter config"))
-    }
-
-    fn create_voter(
-        &self,
-        spec: &StateMachineSpec<String, VoterConfig>,
-    ) -> anyhow::Result<Rc<dyn Applicator>> {
-        Ok(Rc::new(StatelessVoterAdapter::new(
-            ImmutableVoter::new(
-                spec.id.clone(),
-                spec.config.clone(),
-                Rc::new(PlaceholderVoter),
-            ),
-            self.storage.clone(),
-        )))
     }
 }
 
@@ -470,7 +444,6 @@ impl VoterFactory for TestVoterFactory {
                     spec.config.clone(),
                     Rc::new(PlaceholderVoter),
                 ),
-                self.storage.clone(),
             )));
         }
 
@@ -498,7 +471,6 @@ impl VoterFactory for TestVoterFactory {
                     spec.config.clone(),
                     Rc::new(PlaceholderVoter),
                 ),
-                self.storage.clone(),
             ))),
             other => Err(anyhow::anyhow!("unknown test voter type: {other}")),
         }
@@ -946,19 +918,15 @@ fn engine_voter_and_decider_storage_conflicts_are_retried() {
             environment: env_for_engine.clone(),
         };
         let storage = Rc::new(RetryTestStorage::new());
-        let voter_factory = StatelessTestVoterFactory {
-            storage: storage.clone(),
-        };
-        let policy_validator = StatelessTestVoterFactory {
-            storage: storage.clone(),
-        };
+        let voter_factory = CountingVoterFactory::new(storage.clone());
+        let policy_validator = CountingVoterFactory::new(storage.clone());
         let engine = BaseEngine::new(
             bus.clone(),
             storage.clone(),
             voter_factory,
             StaticConfigPolicyProvider::new(
                 DeciderPolicy::FirstBooleanWins,
-                vec![VoterConfig::default()],
+                vec![counting_voter_config(3)],
                 move |policy| validate_voter_configs(&policy_validator, policy),
             ),
             DeciderFactoryImpl::new(storage.clone()),
@@ -1019,7 +987,7 @@ fn engine_voter_and_decider_storage_conflicts_are_retried() {
 
 #[test]
 fn storage_concurrency_is_retried_only_by_its_owner() {
-    for key_prefix in ["engine:state:", "decider:state:", "voter:"] {
+    for key_prefix in ["engine:state:", "decider:state:", "counting_voter:"] {
         let simulator = agentbus_simulator::Simulator::new(generate_seed());
         let fixture = SimpleMemoryFixture::new(simulator);
         let env = fixture.get_env();
@@ -1027,19 +995,16 @@ fn storage_concurrency_is_retried_only_by_its_owner() {
 
         let handle = env.spawn(async move {
             let storage = Rc::new(PersistentConflictStorage::new(key_prefix));
-            let voter_factory = StatelessTestVoterFactory {
-                storage: storage.clone(),
-            };
-            let policy_validator = StatelessTestVoterFactory {
-                storage: storage.clone(),
-            };
+            let voter_factory = CountingVoterFactory::new(storage.clone());
+            let policy_validator = CountingVoterFactory::new(storage.clone());
+            let bus = fixture.create_impl();
             let engine = BaseEngine::new_with_config(
-                fixture.create_impl(),
+                bus.clone(),
                 storage.clone(),
                 voter_factory,
                 StaticConfigPolicyProvider::new(
                     DeciderPolicy::FirstBooleanWins,
-                    vec![VoterConfig::default()],
+                    vec![counting_voter_config(3)],
                     move |policy| validate_voter_configs(&policy_validator, policy),
                 ),
                 DeciderFactoryImpl::new(storage.clone()),
@@ -1083,7 +1048,7 @@ fn storage_concurrency_is_retried_only_by_its_owner() {
                     }),
                 )
                 | (
-                    "voter:",
+                    "counting_voter:",
                     ApplyError::Concurrency(ConcurrencyError::Voter {
                         source: Some(StorageError::TransactionConflict(_)),
                         ..
@@ -3074,6 +3039,80 @@ fn counting_voter_honors_duplication_contract() {
 }
 
 #[test]
+fn logged_vote_wins_over_a_different_replayed_evaluation() {
+    let fixture = SimpleMemoryFixture::new(agentbus_simulator::Simulator::new(generate_seed()));
+    let env = fixture.get_env();
+    let env_for_engine = env.clone();
+    let handle = env.spawn(async move {
+        let storage = Rc::new(InMemoryStorage::new());
+        let bus = fixture.create_impl();
+        let config = placeholder_voter_config();
+        let provider = ControllablePolicyProvider::new(
+            PolicyState {
+                decider_policy: Some(DeciderPolicy::FirstBooleanWins as i32),
+                voters: [("voter".to_string(), config.clone())]
+                    .into_iter()
+                    .collect(),
+            },
+            0,
+        );
+        let engine = make_engine_with_policy_provider(
+            bus.clone(),
+            storage.clone(),
+            provider,
+            env_for_engine,
+        );
+        let agent = "agent-1";
+        engine.create_bus(agent).await?;
+        let position = append_intention(&bus, agent, string_intention("before restart")).await?;
+        let mut logged_vote = boolean_vote(position, "voter", false);
+        if let Some(payload::Payload::Vote(vote)) = logged_vote.payload.as_mut() {
+            vote.voter_config = Some(config);
+        }
+        bus.append(AppendRequest {
+            bus_id: Some(BusId {
+                agent_bus_id: agent.to_string(),
+            }),
+            payload: Some(logged_vote),
+        })
+        .await?;
+
+        assert!(
+            propose_intention(&engine, agent, "after restart")
+                .await?
+                .approved
+        );
+        assert_eq!(poll_vote_bools(&bus, agent).await?, vec![false, true, true]);
+        let entries = bus
+            .poll(PollRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: agent.to_string(),
+                }),
+                start_log_position: 0,
+                max_entries: 100,
+                filter: None,
+            })
+            .await?
+            .entries;
+        let decisions: Vec<_> = entries
+            .iter()
+            .filter_map(|entry| match entry.payload.as_ref()?.payload.as_ref()? {
+                payload::Payload::Abort(abort) if abort.intention_id == position => Some(false),
+                payload::Payload::Commit(commit) if commit.intention_id == position => Some(true),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(decisions, vec![false]);
+        assert!(storage.get("voter:voter:agent-1").await?.is_none());
+        anyhow::Ok(())
+    });
+    env.run();
+    futures::executor::block_on(handle)
+        .expect("task should complete")
+        .expect("test should succeed");
+}
+
+#[test]
 fn engine_and_applicator_state_use_separate_storage() {
     let seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(seed);
@@ -3093,8 +3132,9 @@ fn engine_and_applicator_state_use_separate_storage() {
             },
             0,
         );
+        let bus = fixture.create_impl();
         let engine = BaseEngine::new(
-            fixture.create_impl(),
+            bus.clone(),
             engine_storage.clone(),
             TestVoterFactory::new(applicator_storage.clone()),
             provider,
@@ -3117,7 +3157,7 @@ fn engine_and_applicator_state_use_separate_storage() {
         assert!(engine_storage.get(voter_key).await?.is_none());
         assert!(applicator_storage.get(engine_key).await?.is_none());
         assert!(applicator_storage.get(decider_key).await?.is_some());
-        assert!(applicator_storage.get(voter_key).await?.is_some());
+        assert!(applicator_storage.get(voter_key).await?.is_none());
 
         anyhow::Ok(())
     });

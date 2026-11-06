@@ -102,7 +102,7 @@ where
     type Env = BF::Env;
     type Impl = CommitServiceV1<
         BF::Impl,
-        DelegatingVoterFactory<NoopLogger, RealEnvironment, S>,
+        DelegatingVoterFactory<NoopLogger, RealEnvironment>,
         CachingStorage<S, BF::Env>,
         P,
         DeciderFactoryImpl<S>,
@@ -118,7 +118,7 @@ where
         build_v1(
             self.bus_fixture.create_impl(),
             self.storage.clone(),
-            DelegatingVoterFactory::with_storage,
+            |_| DelegatingVoterFactory::default(),
             self.policy.clone(),
             environment,
         )

@@ -22,12 +22,10 @@ use anyhow::Result;
 use llm_voter_proto_rust::llm_voter::LlmVoterConfig;
 use logact_commit_service_engine::Applicator;
 use logact_commit_service_engine::ImmutableVoter;
-use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::Observability;
 use logact_commit_service_engine::ObservableApplicator;
 use logact_commit_service_engine::StateMachineSpec;
 use logact_commit_service_engine::StatelessVoterAdapter;
-use logact_commit_service_engine::Storage;
 use logact_commit_service_engine::VoterFactory;
 use prost::Name;
 use rule_based_voter_proto_rust::rule_based_voter::RuleBasedVoterConfig;
@@ -63,16 +61,16 @@ fn immutable_voter(voter_id: String, config: &VoterConfig, voter: Rc<dyn Voter>)
     ImmutableVoter::new(voter_id, config.clone(), voter)
 }
 
-pub struct DelegatingVoterFactory<L = NoopLogger, E = RealEnvironment, S = InMemoryStorage> {
-    llm_factory: LlmVoterFactory<S>,
-    rule_based_factory: RuleBasedVoterFactory<S>,
+pub struct DelegatingVoterFactory<L = NoopLogger, E = RealEnvironment> {
+    llm_factory: LlmVoterFactory,
+    rule_based_factory: RuleBasedVoterFactory,
     observability: Observability<L, E>,
 }
 
-impl<L, E, S> DelegatingVoterFactory<L, E, S> {
+impl<L, E> DelegatingVoterFactory<L, E> {
     pub fn new(
-        llm_factory: LlmVoterFactory<S>,
-        rule_based_factory: RuleBasedVoterFactory<S>,
+        llm_factory: LlmVoterFactory,
+        rule_based_factory: RuleBasedVoterFactory,
         observability: Observability<L, E>,
     ) -> Self {
         Self {
@@ -85,15 +83,9 @@ impl<L, E, S> DelegatingVoterFactory<L, E, S> {
 
 impl Default for DelegatingVoterFactory {
     fn default() -> Self {
-        Self::with_storage(Rc::new(InMemoryStorage::new()))
-    }
-}
-
-impl<S> DelegatingVoterFactory<NoopLogger, RealEnvironment, S> {
-    pub fn with_storage(storage: Rc<S>) -> Self {
         Self::new(
-            LlmVoterFactory::new(storage.clone(), None, None, None),
-            RuleBasedVoterFactory::new(storage),
+            LlmVoterFactory::default(),
+            RuleBasedVoterFactory,
             Observability {
                 metrics: Rc::new(NoopMetrics),
                 logger: Rc::new(NoopLogger),
@@ -103,7 +95,7 @@ impl<S> DelegatingVoterFactory<NoopLogger, RealEnvironment, S> {
     }
 }
 
-impl<L, E, S> Clone for DelegatingVoterFactory<L, E, S> {
+impl<L, E> Clone for DelegatingVoterFactory<L, E> {
     fn clone(&self) -> Self {
         Self {
             llm_factory: self.llm_factory.clone(),
@@ -113,9 +105,8 @@ impl<L, E, S> Clone for DelegatingVoterFactory<L, E, S> {
     }
 }
 
-impl<S, L, E> VoterFactory for DelegatingVoterFactory<L, E, S>
+impl<L, E> VoterFactory for DelegatingVoterFactory<L, E>
 where
-    S: Storage + 'static,
     L: AgentbusLogger,
     E: Environment + 'static,
 {
@@ -159,33 +150,20 @@ where
     }
 }
 
-pub struct LlmVoterFactory<S = InMemoryStorage> {
-    storage: Rc<S>,
+#[derive(Clone)]
+pub struct LlmVoterFactory {
     llm_api_key: Option<String>,
     llm_model: Option<String>,
     llm_api_endpoint: Option<String>,
 }
 
-impl<S> Clone for LlmVoterFactory<S> {
-    fn clone(&self) -> Self {
-        Self {
-            storage: self.storage.clone(),
-            llm_api_key: self.llm_api_key.clone(),
-            llm_model: self.llm_model.clone(),
-            llm_api_endpoint: self.llm_api_endpoint.clone(),
-        }
-    }
-}
-
-impl<S> LlmVoterFactory<S> {
+impl LlmVoterFactory {
     pub fn new(
-        storage: Rc<S>,
         llm_api_key: Option<String>,
         llm_model: Option<String>,
         llm_api_endpoint: Option<String>,
     ) -> Self {
         Self {
-            storage,
             llm_api_key,
             llm_model,
             llm_api_endpoint,
@@ -195,11 +173,11 @@ impl<S> LlmVoterFactory<S> {
 
 impl Default for LlmVoterFactory {
     fn default() -> Self {
-        Self::new(Rc::new(InMemoryStorage::new()), None, None, None)
+        Self::new(None, None, None)
     }
 }
 
-impl<S: Storage + 'static> VoterFactory for LlmVoterFactory<S> {
+impl VoterFactory for LlmVoterFactory {
     fn validate_config(&self, config: Option<&VoterConfig>) -> Result<VoterConfig> {
         let config = config.context("missing voter config")?;
         llm_config(config)?;
@@ -217,38 +195,18 @@ impl<S: Storage + 'static> VoterFactory for LlmVoterFactory<S> {
             self.llm_model.clone(),
             self.llm_api_endpoint.clone(),
         ));
-        Ok(Rc::new(StatelessVoterAdapter::new(
-            immutable_voter(spec.id.clone(), &spec.config, voter),
-            self.storage.clone(),
-        )))
+        Ok(Rc::new(StatelessVoterAdapter::new(immutable_voter(
+            spec.id.clone(),
+            &spec.config,
+            voter,
+        ))))
     }
 }
 
-pub struct RuleBasedVoterFactory<S = InMemoryStorage> {
-    storage: Rc<S>,
-}
+#[derive(Clone, Default)]
+pub struct RuleBasedVoterFactory;
 
-impl<S> Clone for RuleBasedVoterFactory<S> {
-    fn clone(&self) -> Self {
-        Self {
-            storage: self.storage.clone(),
-        }
-    }
-}
-
-impl<S> RuleBasedVoterFactory<S> {
-    pub fn new(storage: Rc<S>) -> Self {
-        Self { storage }
-    }
-}
-
-impl Default for RuleBasedVoterFactory {
-    fn default() -> Self {
-        Self::new(Rc::new(InMemoryStorage::new()))
-    }
-}
-
-impl<S: Storage + 'static> VoterFactory for RuleBasedVoterFactory<S> {
+impl VoterFactory for RuleBasedVoterFactory {
     fn validate_config(&self, config: Option<&VoterConfig>) -> Result<VoterConfig> {
         let config = config.context("missing voter config")?;
         agentbus_voter_rule_based::from_typed_config(rule_based_config(config)?)?;
@@ -262,10 +220,11 @@ impl<S: Storage + 'static> VoterFactory for RuleBasedVoterFactory<S> {
         let voter: Rc<dyn Voter> = Rc::new(agentbus_voter_rule_based::from_typed_config(
             rule_based_config(&spec.config)?,
         )?);
-        Ok(Rc::new(StatelessVoterAdapter::new(
-            immutable_voter(spec.id.clone(), &spec.config, voter),
-            self.storage.clone(),
-        )))
+        Ok(Rc::new(StatelessVoterAdapter::new(immutable_voter(
+            spec.id.clone(),
+            &spec.config,
+            voter,
+        ))))
     }
 }
 
@@ -283,7 +242,6 @@ mod tests {
     use agentbus_api::RealEnvironment;
     use futures::executor::block_on;
     use llm_voter_proto_rust::llm_voter::LlmVoterConfig;
-    use logact_commit_service_engine::InMemoryStorage;
     use logact_commit_service_engine::Observability;
     use logact_commit_service_engine::VoterFactory;
     use prost_types::Any;
@@ -337,7 +295,6 @@ mod tests {
             prompt_override: "check carefully".to_string(),
         };
         let factory = LlmVoterFactory::new(
-            Rc::new(InMemoryStorage::new()),
             Some("test-key".to_string()),
             Some("test-model".to_string()),
             Some("http://127.0.0.1:1234".to_string()),
@@ -373,7 +330,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let factory = RuleBasedVoterFactory::new(Rc::new(InMemoryStorage::new()));
+        let factory = RuleBasedVoterFactory;
 
         factory
             .create_voter(&voter_spec("1", rule_based_voter_config(config)))
@@ -400,10 +357,9 @@ mod tests {
     fn delegating_voter_factory_observes_created_voters() {
         let metrics = Rc::new(InMemoryMetrics::new());
         let logger = InMemoryLogger::new();
-        let storage = Rc::new(InMemoryStorage::new());
         let factory = DelegatingVoterFactory::new(
-            LlmVoterFactory::new(storage.clone(), None, None, None),
-            RuleBasedVoterFactory::new(storage),
+            LlmVoterFactory::default(),
+            RuleBasedVoterFactory,
             Observability {
                 metrics: metrics.clone(),
                 logger: Rc::new(logger.clone()),

@@ -9,7 +9,6 @@
 //! contract suite (new / replay-last / stale) against every applicator.
 
 use logact_commit_service_engine_tests::applicator::fixtures::DeciderApplicatorFixture;
-use logact_commit_service_engine_tests::applicator::fixtures::StatelessVoterAdapterFixture;
 use logact_commit_service_engine_tests::applicator_tests;
 
 #[rustfmt::skip]
@@ -17,5 +16,4 @@ mod tests {
 use super::*;
 
 applicator_tests!(DeciderApplicatorFixture, decider);
-applicator_tests!(StatelessVoterAdapterFixture, adapter);
 }

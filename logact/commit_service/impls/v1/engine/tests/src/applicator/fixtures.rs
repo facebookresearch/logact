@@ -19,10 +19,8 @@ use agentbus_api::environment::Environment;
 use logact_commit_service_engine::Applicator;
 
 pub mod decider;
-pub mod stateless_voter_adapter;
 
 pub use decider::DeciderApplicatorFixture;
-pub use stateless_voter_adapter::StatelessVoterAdapterFixture;
 
 /// Builds a fresh applicator and the entries it acts on.
 pub trait ApplicatorTestFixture: Sized {
