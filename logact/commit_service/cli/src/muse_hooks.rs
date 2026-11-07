@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::future::Future;
 use std::io::Write;
 
 use anyhow::Result;
@@ -74,22 +75,24 @@ struct HookSpecificOutput {
     permission_decision_reason: String,
 }
 
-/// Run one Muse hook invocation.
+/// Run one Muse hook invocation, polling dispatch and enforcement together.
 pub async fn run<C: CommitSvc + ?Sized>(
     commit_client: &C,
     args: HookArgs,
     agent_id_prefix: &str,
-    enforced: bool,
+    enforced: impl Future<Output = bool>,
 ) -> Result<(), HookRunError> {
     let hook_event = args.event_kind();
     let prepared = hooks::prepare().await?;
-    let outcome = hooks::dispatch(
-        commit_client,
-        hook_event,
-        prepared.into_dispatch(agent_id_prefix)?,
+    let (outcome, enforced) = hooks::dispatch_with_enforcement(
+        hooks::dispatch(
+            commit_client,
+            hook_event,
+            prepared.into_dispatch(agent_id_prefix)?,
+        ),
+        enforced,
     )
-    .await
-    .map_err(HookRunError::Dispatch)?;
+    .await?;
     if let Some(output) = hook_output(outcome, enforced) {
         emit_output(&output).map_err(HookRunError::Output)?;
     }

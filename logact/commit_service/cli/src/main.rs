@@ -7,6 +7,7 @@
 
 //! Portable command-line client for a local LogAct server.
 
+use std::future::ready;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -86,13 +87,13 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::CreateBus(args) => manual::run_create_bus(&client, args).await,
         Cmd::Commit(args) => manual::run(&client, args).await,
-        Cmd::ClaudeHook(args) => claude_hooks::run(&client, args, "claude_code", true)
+        Cmd::ClaudeHook(args) => claude_hooks::run(&client, args, "claude_code", ready(true))
             .await
             .map_err(Into::into),
-        Cmd::CodexHook(args) => codex_hooks::run(&client, args, "codex", true)
+        Cmd::CodexHook(args) => codex_hooks::run(&client, args, "codex", ready(true))
             .await
             .map_err(Into::into),
-        Cmd::MuseHook(args) => muse_hooks::run(&client, args, "muse", true)
+        Cmd::MuseHook(args) => muse_hooks::run(&client, args, "muse", ready(true))
             .await
             .map_err(Into::into),
     }

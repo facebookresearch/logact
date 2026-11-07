@@ -7,6 +7,7 @@
 
 //! Harness-neutral parsing and AgentBus dispatch for native hook protocols.
 
+use std::future::Future;
 use std::io::Read;
 use std::time::Duration;
 
@@ -133,6 +134,16 @@ pub(crate) struct DispatchInput {
 pub(crate) enum DispatchOutcome {
     Recorded,
     Intention { approved: bool, reason: String },
+}
+
+/// Poll dispatch and enforcement concurrently; dispatch failures return immediately.
+pub(crate) async fn dispatch_with_enforcement(
+    dispatch: impl Future<Output = Result<DispatchOutcome>>,
+    enforced: impl Future<Output = bool>,
+) -> Result<(DispatchOutcome, bool), HookRunError> {
+    let (outcome, enforced) =
+        tokio::try_join!(dispatch, async { Ok(enforced.await) }).map_err(HookRunError::Dispatch)?;
+    Ok((outcome, enforced))
 }
 
 /// Hard cap on the stdin read; past this we fail open rather than hang the turn.
@@ -295,17 +306,94 @@ async fn record<B: AgentBus + ?Sized>(bus: &B, agent_id: String, payload: Payloa
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::future::pending;
+    use std::future::poll_fn;
+    use std::future::ready;
+    use std::pin::pin;
     use std::sync::Mutex;
+    use std::task::Poll;
 
     use agentbus_api::BusResult;
+    use anyhow::anyhow;
     use logact_commit_service_api::CommitError;
     use logact_commit_service_api::CommitIntentionOutcome;
     use logact_commit_service_api::CommitResult;
+    use tokio::sync::oneshot;
 
     use super::*;
 
     const PAYLOAD: &str =
         r#"{"session_id":"session-123","tool_name":"functions.exec","tool_input":{"cmd":"pwd"}}"#;
+
+    #[tokio::test]
+    async fn dispatch_failure_returns_without_waiting_for_enforcement() {
+        let mut operation = pin!(dispatch_with_enforcement(
+            ready(Err(anyhow!("dispatch failed"))),
+            pending::<bool>(),
+        ));
+        let result = poll_fn(|cx| {
+            let result = operation.as_mut().poll(cx);
+            assert!(
+                result.is_ready(),
+                "dispatch failure must not await enforcement"
+            );
+            result
+        })
+        .await;
+        let Err(HookRunError::Dispatch(error)) = result else {
+            panic!("dispatch error must be preserved");
+        };
+        assert_eq!(error.to_string(), "dispatch failed");
+    }
+
+    #[tokio::test]
+    async fn dispatch_and_lazy_async_enforcement_are_polled_concurrently() {
+        let dispatch_started = Cell::new(false);
+        let enforcement_started = Cell::new(false);
+        let (dispatch_ready, wait_for_dispatch) = oneshot::channel();
+        let (enforcement_ready, wait_for_enforcement) = oneshot::channel();
+        let dispatch = async {
+            dispatch_started.set(true);
+            dispatch_ready
+                .send(())
+                .expect("enforcement should be waiting");
+            wait_for_enforcement
+                .await
+                .expect("enforcement should start");
+            Ok(DispatchOutcome::Intention {
+                approved: false,
+                reason: "blocked".to_owned(),
+            })
+        };
+        let enforced = async {
+            enforcement_started.set(true);
+            enforcement_ready
+                .send(())
+                .expect("dispatch should be waiting");
+            wait_for_dispatch.await.expect("dispatch should start");
+            true
+        };
+        let mut operation = pin!(dispatch_with_enforcement(dispatch, enforced));
+
+        poll_fn(|cx| {
+            assert!(operation.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        assert!(dispatch_started.get());
+        assert!(enforcement_started.get());
+
+        let (outcome, enforced) = operation.await.expect("both futures should finish");
+        assert!(enforced);
+        assert_eq!(
+            outcome,
+            DispatchOutcome::Intention {
+                approved: false,
+                reason: "blocked".to_owned(),
+            }
+        );
+    }
 
     #[derive(Clone, Copy)]
     enum FakeIntentionResult {
