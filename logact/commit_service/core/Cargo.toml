@@ -13,6 +13,6 @@ agentbus_api = { version = "0.1.0", path = "../../../bus/api" }
 anyhow = "1.0.104"
 futures-intrusive = "0.5.0"
 logact_commit_service_api = { version = "0.1.0", path = "../api" }
-lru = { version = "0.18.5", default-features = false }
+lru = { version = "0.19.0", default-features = false }
 tokio = { version = "1.54.1", features = ["full", "test-util", "tracing"] }
 tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
