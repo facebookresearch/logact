@@ -21,8 +21,10 @@ use conformance::TestConfig;
 use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
-use logact_commit_service_engine::Storage;
 use logact_commit_service_engine::validate_voter_configs;
+use logact_commit_service_engine_tests::fixtures::EnvStorageFixture;
+use logact_commit_service_engine_tests::fixtures::InMemoryStorageFixture;
+use logact_commit_service_engine_tests::fixtures::StorageTestFixture;
 use logact_commit_service_engine_tests::fixtures::fault_injecting::FaultInjectingStorage;
 use logact_commit_service_engine_tests::fixtures::fault_injecting::StorageFaultConfig;
 use logact_commit_service_engine_tests::voters::CountingVoterFactory;
@@ -47,65 +49,36 @@ const COUNTING_VOTER_MODULUS: u64 = 2;
 /// fixture owns. Generic over the provider `P`; the variant list pins it to the
 /// default `SynchronousRegisterProvider`, while `#[scenario_for]` tests can pin a
 /// different provider. Runtime updates use the provider's separate test controller.
+/// Every service the fixture creates shares the one engine storage that the
+/// storage fixture `SF` builds, as replicas share durable storage.
 pub struct CommitServiceV1Fixture<
     BF: AgentBusTestFixture,
     P = SynchronousRegisterProvider<InMemoryStorage>,
-    S = InMemoryStorage,
+    SF = InMemoryStorageFixture,
 > where
     P: TestPolicyProvider,
+    SF: StorageTestFixture,
 {
     bus_fixture: BF,
     policy: P,
     policy_controller: P::Controller,
-    storage: Rc<S>,
+    storage: Rc<SF::Impl>,
 }
 
-impl<BF, P, S> CommitServiceV1Fixture<BF, P, S>
-where
-    BF: AgentBusTestFixture,
-    P: TestPolicyProvider,
-{
-    /// Every service the fixture creates shares the one engine storage that
-    /// `make_storage` builds, as replicas share durable storage.
-    pub fn new_with_bus_fixture_and_storage(
-        bus_fixture: BF,
-        make_storage: impl FnOnce(Rc<BF::Env>) -> S,
-    ) -> Self {
-        let (policy, policy_controller) = P::for_test();
-        let storage = Rc::new(make_storage(bus_fixture.get_env()));
-        Self {
-            bus_fixture,
-            policy,
-            policy_controller,
-            storage,
-        }
-    }
-}
-
-impl<BF, P> CommitServiceV1Fixture<BF, P>
-where
-    BF: AgentBusTestFixture,
-    P: TestPolicyProvider,
-{
-    pub fn new_with_bus_fixture(bus_fixture: BF) -> Self {
-        Self::new_with_bus_fixture_and_storage(bus_fixture, |_| InMemoryStorage::new())
-    }
-}
-
-impl<BF, P, S> ConformanceFixture for CommitServiceV1Fixture<BF, P, S>
+impl<BF, P, SF> ConformanceFixture for CommitServiceV1Fixture<BF, P, SF>
 where
     BF: AgentBusTestFixture,
     BF::Impl: Clone + 'static,
     P: TestPolicyProvider,
-    S: Storage + 'static,
+    SF: StorageTestFixture<Impl: 'static>,
 {
     type Env = BF::Env;
     type Impl = CommitServiceV1<
         BF::Impl,
         DelegatingVoterFactory<NoopLogger, RealEnvironment>,
-        CachingStorage<S, BF::Env>,
+        CachingStorage<SF::Impl, BF::Env>,
         P,
-        DeciderFactoryImpl<S>,
+        DeciderFactoryImpl<SF::Impl>,
         BF::Env,
     >;
 
@@ -125,29 +98,38 @@ where
     }
 }
 
-impl<BF, P> SimulatorFixture for CommitServiceV1Fixture<BF, P>
+impl<BF, P, SF> SimulatorFixture for CommitServiceV1Fixture<BF, P, SF>
 where
     BF: AgentBusTestFixture<Env = Simulator> + BusSimulatorFixture,
     P: TestPolicyProvider,
+    SF: EnvStorageFixture,
 {
     fn new(simulator: Simulator) -> Self {
-        Self::new_with_bus_fixture(BF::new(simulator))
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
     }
 
+    /// The scenario's config goes to both the bus and the storage fixture.
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
-        Ok(Self::new_with_bus_fixture(BF::try_new_with_config(
-            simulator, config,
-        )?))
+        let bus_fixture = BF::try_new_with_config(simulator, config)?;
+        let storage = SF::try_new_on_env(bus_fixture.get_env(), config)?.create_impl();
+        let (policy, policy_controller) = P::for_test();
+        Ok(Self {
+            bus_fixture,
+            policy,
+            policy_controller,
+            storage: Rc::new(storage),
+        })
     }
 }
 
-impl<BF, P, S> DeciderPolicyFixture for CommitServiceV1Fixture<BF, P, S>
+impl<BF, P, SF> DeciderPolicyFixture for CommitServiceV1Fixture<BF, P, SF>
 where
     BF: AgentBusTestFixture<Env = Simulator>,
     BF::Impl: Clone,
     P: TestPolicyProvider,
     P::Controller: SettableDeciderPolicy,
-    S: Storage + 'static,
+    SF: StorageTestFixture<Impl: 'static>,
 {
     type Controller = P::Controller;
 

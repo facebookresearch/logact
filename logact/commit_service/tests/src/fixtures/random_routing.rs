@@ -33,6 +33,10 @@ use logact_commit_service_api::CreateBusCommand;
 use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
+use logact_commit_service_engine::Storage;
+use logact_commit_service_engine_tests::fixtures::EnvStorageFixture;
+use logact_commit_service_engine_tests::fixtures::InMemoryStorageFixture;
+use logact_commit_service_engine_tests::fixtures::StorageTestFixture;
 use logact_commit_service_v1::CommitServiceV1;
 use logact_commit_service_v1::DelegatingVoterFactory;
 use logact_commit_service_v1::SynchronousRegisterProvider;
@@ -106,40 +110,45 @@ impl<S: CommitSvc, E: Environment> CommitSvc for RandomRoutingCommitService<S, E
 /// Number of underlying instances to route across.
 const NUM_SERVICES: usize = 3;
 
-type RoutedV1<T, P> = CommitServiceV1<
+type RoutedV1<T, P, S> = CommitServiceV1<
     T,
     DelegatingVoterFactory,
-    CachingStorage<InMemoryStorage, Simulator>,
+    CachingStorage<S, Simulator>,
     P,
-    DeciderFactoryImpl,
+    DeciderFactoryImpl<S>,
     Simulator,
 >;
 
 /// Runs the generic suite against a router over `NUM_SERVICES` v1 services, with
-/// the bus from the injected `AgentBusTestFixture`, a shared in-memory storage, and
-/// one shared policy provider. Generic over the provider `P`; the variant list pins
-/// it to the default `SynchronousRegisterProvider`, while `#[scenario_for]` tests
-/// can pin a different provider.
-pub struct RandomRoutingCommitServiceFixture<BF, P = SynchronousRegisterProvider<InMemoryStorage>>
-where
+/// the bus from the injected `AgentBusTestFixture`, one storage shared by every
+/// service from the storage fixture `SF`, and one shared policy provider. Generic
+/// over the provider `P`; the variant list pins it to the default
+/// `SynchronousRegisterProvider`, while `#[scenario_for]` tests can pin a
+/// different provider.
+pub struct RandomRoutingCommitServiceFixture<
+    BF,
+    P = SynchronousRegisterProvider<InMemoryStorage>,
+    SF = InMemoryStorageFixture,
+> where
     P: TestPolicyProvider,
+    SF: StorageTestFixture,
 {
     bus_fixture: BF,
     policy: P,
     policy_controller: P::Controller,
-    storage: Rc<InMemoryStorage>,
+    storage: Rc<SF::Impl>,
 }
 
 /// Build a v1 engine over a `bus` front-end, the shared `storage`, and the shared
 /// `policy` provider. Each engine gets a fresh bus handle (onto the same shared
 /// log) and a clone of the one `Rc` storage handle and the one provider, so they
 /// all read and write the same log, engine state, and policy.
-fn make_v1<T: AgentBus + Clone + 'static, P: TestPolicyProvider>(
+fn make_v1<T: AgentBus + Clone + 'static, P: TestPolicyProvider, S: Storage + 'static>(
     bus: T,
-    storage: Rc<InMemoryStorage>,
+    storage: Rc<S>,
     policy: P,
     environment: Rc<Simulator>,
-) -> RoutedV1<T, P> {
+) -> RoutedV1<T, P, S> {
     build_v1(
         bus,
         storage,
@@ -149,14 +158,15 @@ fn make_v1<T: AgentBus + Clone + 'static, P: TestPolicyProvider>(
     )
 }
 
-impl<BF, P> ConformanceFixture for RandomRoutingCommitServiceFixture<BF, P>
+impl<BF, P, SF> ConformanceFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
 where
     BF: AgentBusTestFixture<Env = Simulator>,
     BF::Impl: Clone + 'static,
     P: TestPolicyProvider,
+    SF: StorageTestFixture<Impl: 'static>,
 {
     type Env = Simulator;
-    type Impl = RandomRoutingCommitService<RoutedV1<BF::Impl, P>, Simulator>;
+    type Impl = RandomRoutingCommitService<RoutedV1<BF::Impl, P, SF::Impl>, Simulator>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.bus_fixture.get_env()
@@ -180,33 +190,38 @@ where
     }
 }
 
-impl<BF, P> SimulatorFixture for RandomRoutingCommitServiceFixture<BF, P>
+impl<BF, P, SF> SimulatorFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
 where
     BF: AgentBusTestFixture<Env = Simulator> + BusSimulatorFixture,
     P: TestPolicyProvider,
+    SF: EnvStorageFixture,
 {
     fn new(simulator: Simulator) -> Self {
         Self::try_new_with_config(simulator, &TestConfig::default())
             .expect("the default config should be valid")
     }
 
+    /// The scenario's config goes to both the bus and the storage fixture.
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        let bus_fixture = <BF as BusSimulatorFixture>::try_new_with_config(simulator, config)?;
+        let storage = SF::try_new_on_env(bus_fixture.get_env(), config)?.create_impl();
         let (policy, policy_controller) = P::for_test();
         Ok(Self {
-            bus_fixture: <BF as BusSimulatorFixture>::try_new_with_config(simulator, config)?,
+            bus_fixture,
             policy,
             policy_controller,
-            storage: Rc::new(InMemoryStorage::new()),
+            storage: Rc::new(storage),
         })
     }
 }
 
-impl<BF, P> DeciderPolicyFixture for RandomRoutingCommitServiceFixture<BF, P>
+impl<BF, P, SF> DeciderPolicyFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
 where
     BF: AgentBusTestFixture<Env = Simulator>,
     BF::Impl: Clone,
     P: TestPolicyProvider,
     P::Controller: SettableDeciderPolicy,
+    SF: StorageTestFixture<Impl: 'static>,
 {
     type Controller = P::Controller;
 

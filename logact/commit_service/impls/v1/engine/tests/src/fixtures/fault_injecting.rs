@@ -8,19 +8,24 @@
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::collections::HashSet;
+use std::marker::PhantomData;
 use std::rc::Rc;
 use std::time::Duration;
 
 use agentbus_api::environment::Environment;
 use agentbus_simulator::Simulator;
+use anyhow::Result;
 use anyhow::anyhow;
 use bytes::Bytes;
 use conformance::ConformanceFixture;
 use conformance::SimulatorFixture;
+use conformance::TestConfig;
 use logact_commit_service_engine::Storage;
 use logact_commit_service_engine::StorageError;
 use logact_commit_service_engine::StorageResult;
 use rand::RngExt as _;
+
+use crate::fixtures::EnvStorageFixture;
 
 /// Faults and delays injected by [`FaultInjectingStorage`].
 #[derive(Clone, Debug, Default)]
@@ -182,14 +187,32 @@ impl<S: Storage, E: Environment> Storage for FaultInjectingStorage<S, E> {
     }
 }
 
-/// Pass-through fault-injection fixture for running the ordinary storage suite.
-pub struct FaultInjectingStorageFixture<F> {
-    inner: F,
+/// A [`StorageFaultConfig`] encoded as a type, so it can parameterize
+/// [`FaultInjectingStorageFixture`].
+pub trait StorageFaults {
+    fn config() -> StorageFaultConfig;
 }
 
-impl<F> ConformanceFixture for FaultInjectingStorageFixture<F>
+/// No injected faults or delays.
+pub struct NoStorageFaults;
+
+impl StorageFaults for NoStorageFaults {
+    fn config() -> StorageFaultConfig {
+        StorageFaultConfig::default()
+    }
+}
+
+/// Fault-injection fixture over another storage fixture, injecting `C::config()`.
+/// The default injects nothing, for running the ordinary storage suite.
+pub struct FaultInjectingStorageFixture<F, C = NoStorageFaults> {
+    inner: F,
+    faults: PhantomData<C>,
+}
+
+impl<F, C> ConformanceFixture for FaultInjectingStorageFixture<F, C>
 where
-    F: ConformanceFixture<Env = Simulator, Impl: Storage> + SimulatorFixture,
+    F: ConformanceFixture<Env = Simulator, Impl: Storage>,
+    C: StorageFaults,
 {
     type Env = Simulator;
     type Impl = FaultInjectingStorage<F::Impl, Simulator>;
@@ -199,21 +222,33 @@ where
     }
 
     fn create_impl(&self) -> Self::Impl {
-        FaultInjectingStorage::new(
-            self.inner.create_impl(),
-            self.inner.get_env(),
-            StorageFaultConfig::default(),
-        )
+        FaultInjectingStorage::new(self.inner.create_impl(), self.inner.get_env(), C::config())
     }
 }
 
-impl<F> SimulatorFixture for FaultInjectingStorageFixture<F>
-where
-    F: ConformanceFixture<Env = Simulator, Impl: Storage> + SimulatorFixture,
+impl<F: EnvStorageFixture, C: StorageFaults> EnvStorageFixture
+    for FaultInjectingStorageFixture<F, C>
 {
+    fn try_new_on_env(env: Rc<Simulator>, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: F::try_new_on_env(env, config)?,
+            faults: PhantomData,
+        })
+    }
+}
+
+impl<F: SimulatorFixture, C> SimulatorFixture for FaultInjectingStorageFixture<F, C> {
     fn new(simulator: Simulator) -> Self {
         Self {
             inner: F::new(simulator),
+            faults: PhantomData,
         }
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: F::try_new_with_config(simulator, config)?,
+            faults: PhantomData,
+        })
     }
 }

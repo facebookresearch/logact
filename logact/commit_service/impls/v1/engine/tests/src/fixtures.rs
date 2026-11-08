@@ -11,6 +11,11 @@
 //! fixtures the suite actually runs against is the registry in `variants.rs` —
 //! this file only defines them and the trait they implement.
 
+use std::rc::Rc;
+
+use agentbus_simulator::Simulator;
+use anyhow::Result;
+use conformance::TestConfig;
 use logact_commit_service_engine::Storage;
 
 pub mod fault_injecting;
@@ -34,3 +39,9 @@ pub use sqlite::SqliteFileStorageFixture;
 /// fixture implements it directly.
 pub trait StorageTestFixture: ConformanceFixture<Impl: Storage> {}
 impl<F: ConformanceFixture<Impl: Storage>> StorageTestFixture for F {}
+
+/// A `Storage` fixture built on an existing simulator, so a composite fixture
+/// (e.g. a commit service over a bus fixture) can share that simulator.
+pub trait EnvStorageFixture: StorageTestFixture<Env = Simulator> {
+    fn try_new_on_env(env: Rc<Simulator>, config: &TestConfig) -> Result<Self>;
+}

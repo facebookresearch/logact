@@ -8,10 +8,13 @@
 use std::rc::Rc;
 
 use agentbus_simulator::Simulator;
+use anyhow::Result;
+use conformance::TestConfig;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::ScopedStorage;
 
 use crate::fixtures::ConformanceFixture;
+use crate::fixtures::EnvStorageFixture;
 use crate::fixtures::SimulatorFixture;
 
 /// Runs the generic Storage conformance suite against a `ScopedStorage` wrapping
@@ -33,10 +36,20 @@ impl ConformanceFixture for ScopedStorageFixture {
     }
 }
 
+impl EnvStorageFixture for ScopedStorageFixture {
+    /// `InMemoryStorage` has no TTL, so `ttl` is ignored.
+    fn try_new_on_env(env: Rc<Simulator>, _config: &TestConfig) -> Result<Self> {
+        Ok(Self { env })
+    }
+}
+
 impl SimulatorFixture for ScopedStorageFixture {
     fn new(simulator: Simulator) -> Self {
-        Self {
-            env: Rc::new(simulator),
-        }
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Self::try_new_on_env(Rc::new(simulator), config)
     }
 }

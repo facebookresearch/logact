@@ -7,6 +7,7 @@
 
 //! A deterministic simulated-latency fixture for `CommitServiceV1`.
 
+use std::rc::Rc;
 use std::time::Duration;
 
 use agentbus_tests::common::fault_config::FaultConfig;
@@ -15,10 +16,13 @@ use agentbus_tests::fixtures::simtest::FaultInjectingFixture;
 use agentbus_tests::fixtures::simtest::SimpleMemoryFixture;
 use agentbus_tests::simulator::Simulator;
 use anyhow::Result;
+use conformance::ConformanceFixture;
 use conformance::TestConfig;
 use logact_commit_service_engine::InMemoryStorage;
-use logact_commit_service_engine_tests::fixtures::fault_injecting::FaultInjectingStorage;
+use logact_commit_service_engine_tests::fixtures::FaultInjectingStorageFixture;
+use logact_commit_service_engine_tests::fixtures::InMemoryStorageFixture;
 use logact_commit_service_engine_tests::fixtures::fault_injecting::StorageFaultConfig;
+use logact_commit_service_engine_tests::fixtures::fault_injecting::StorageFaults;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 use rand::distr::Uniform;
 
@@ -28,12 +32,28 @@ const OPERATION_LATENCY_MS: u64 = 50;
 
 /// `CommitServiceV1` with deterministic latency and no injected failures.
 pub type CommitServiceV1LatencyFixture = CommitServiceV1Fixture<
-    FaultInjectingFixture<SimpleMemoryFixture>,
+    FixedLatencyBusFixture,
     SynchronousRegisterProvider<InMemoryStorage>,
-    FaultInjectingStorage<InMemoryStorage, Simulator>,
+    FaultInjectingStorageFixture<InMemoryStorageFixture, FixedStorageLatency>,
 >;
 
-impl SimulatorFixture for CommitServiceV1LatencyFixture {
+/// The simple in-memory bus with every operation taking `OPERATION_LATENCY_MS`.
+pub struct FixedLatencyBusFixture(FaultInjectingFixture<SimpleMemoryFixture>);
+
+impl ConformanceFixture for FixedLatencyBusFixture {
+    type Env = Simulator;
+    type Impl = <FaultInjectingFixture<SimpleMemoryFixture> as ConformanceFixture>::Impl;
+
+    fn get_env(&self) -> Rc<Self::Env> {
+        self.0.get_env()
+    }
+
+    fn create_impl(&self) -> Self::Impl {
+        self.0.create_impl()
+    }
+}
+
+impl SimulatorFixture for FixedLatencyBusFixture {
     fn new(simulator: Simulator) -> Self {
         Self::try_new_with_config(simulator, &TestConfig::default())
             .expect("the default config should be valid")
@@ -42,7 +62,7 @@ impl SimulatorFixture for CommitServiceV1LatencyFixture {
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let fixed_latency = Uniform::new(OPERATION_LATENCY_MS, OPERATION_LATENCY_MS + 1)
             .expect("fixed latency range should be valid");
-        let bus_fixture = FaultInjectingFixture::new_with_fixture_and_latency(
+        Ok(Self(FaultInjectingFixture::new_with_fixture_and_latency(
             SimpleMemoryFixture::try_new_with_config(simulator, config)?,
             FaultConfig {
                 prob_lost: 0.0,
@@ -51,20 +71,19 @@ impl SimulatorFixture for CommitServiceV1LatencyFixture {
             },
             fixed_latency,
             fixed_latency,
-        );
-        Ok(CommitServiceV1Fixture::new_with_bus_fixture_and_storage(
-            bus_fixture,
-            |environment| {
-                FaultInjectingStorage::new(
-                    InMemoryStorage::new(),
-                    environment,
-                    StorageFaultConfig {
-                        get_delay: Duration::from_millis(OPERATION_LATENCY_MS),
-                        put_delay: Duration::from_millis(OPERATION_LATENCY_MS),
-                        ..Default::default()
-                    },
-                )
-            },
-        ))
+        )))
+    }
+}
+
+/// Every storage operation takes `OPERATION_LATENCY_MS`.
+pub struct FixedStorageLatency;
+
+impl StorageFaults for FixedStorageLatency {
+    fn config() -> StorageFaultConfig {
+        StorageFaultConfig {
+            get_delay: Duration::from_millis(OPERATION_LATENCY_MS),
+            put_delay: Duration::from_millis(OPERATION_LATENCY_MS),
+            ..Default::default()
+        }
     }
 }
