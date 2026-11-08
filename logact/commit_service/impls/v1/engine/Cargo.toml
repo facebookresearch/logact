@@ -48,5 +48,6 @@ fbinit = { version = "0.2.0", git = "https://github.com/facebookexperimental/rus
 fbinit-tokio = { version = "0.1.2", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "main" }
 futures = { version = "0.3.34", features = ["async-await", "compat"] }
 logact_commit_service_engine_tests = { version = "0.1.0", path = "tests" }
+logact_commit_service_policy_register = { version = "0.1.0", path = "../../../policy_register" }
 paste = "1.0.14"
 rule-based-voter-proto-rust = { path = "../../../../../bus/voters/rule-based/proto" }

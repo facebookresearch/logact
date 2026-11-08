@@ -5,63 +5,29 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! Durable desired policy stored as one versioned compare-and-swap register.
+//! A [`PolicyRegister`] stored as one versioned compare-and-swap [`Storage`] key.
 
 use std::rc::Rc;
-use std::time::Duration;
 
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
-use agentbus_api::Environment;
-use agentbus_api::RetryConfig;
-use agentbus_api::RetryDecision;
-use agentbus_api::RetryFailure;
-use agentbus_api::retry;
 use bytes::Bytes;
 use logact_commit_service_api::PolicyState;
 use logact_commit_service_api::VersionedPolicyState;
+use logact_commit_service_engine::Storage;
 use prost::Message;
-use thiserror::Error;
 
-use crate::Storage;
-use crate::StorageError;
+use crate::PolicyRegister;
+use crate::PolicyRegisterError;
+use crate::PolicyRegisterResult;
 
-/// Failures while reading, validating, or mutating a policy register.
-#[derive(Debug, Error)]
-pub enum PolicyRegisterError {
-    #[error("policy register '{key}' is not initialized")]
-    Uninitialized { key: String },
-    #[error("policy register storage operation failed")]
-    Storage(#[from] StorageError),
-    #[error("policy register contains malformed policy: {message}")]
-    MalformedPolicy { message: String },
-    #[error("policy register generation {generation} cannot be incremented")]
-    GenerationOverflow { generation: i64 },
-    #[error("policy register '{key}' changed concurrently")]
-    ConcurrentUpdate { key: String },
-}
-
-/// Result returned by [`PolicyRegister`] operations.
-pub type PolicyRegisterResult<T> = std::result::Result<T, PolicyRegisterError>;
-
-const DEFAULT_POLICY_REGISTER_BOOTSTRAP_MAX_RETRIES: usize = 7;
-
-/// Return the default retry policy for initializing a policy register.
-pub fn default_policy_register_bootstrap_retry_config() -> RetryConfig {
-    RetryConfig::try_new(
-        DEFAULT_POLICY_REGISTER_BOOTSTRAP_MAX_RETRIES,
-        Duration::from_millis(10),
-        Duration::from_millis(100),
-    )
-    .expect("default policy register bootstrap retry configuration should be valid")
-}
-
-/// A structurally validated, versioned policy register backed by [`Storage`].
-pub struct PolicyRegister<S> {
+/// A [`PolicyRegister`] stored as one compare-and-swap [`Storage`] key, whose
+/// version is the storage generation.
+pub struct StoragePolicyRegister<S> {
     storage: Rc<S>,
     key: String,
 }
 
-impl<S> Clone for PolicyRegister<S> {
+impl<S> Clone for StoragePolicyRegister<S> {
     fn clone(&self) -> Self {
         Self {
             storage: self.storage.clone(),
@@ -70,7 +36,7 @@ impl<S> Clone for PolicyRegister<S> {
     }
 }
 
-impl<S: Storage> PolicyRegister<S> {
+impl<S: Storage> StoragePolicyRegister<S> {
     /// Create a policy register over `key` in `storage`.
     pub fn new(storage: Rc<S>, key: impl Into<String>) -> Self {
         Self {
@@ -78,9 +44,14 @@ impl<S: Storage> PolicyRegister<S> {
             key: key.into(),
         }
     }
+}
 
-    /// Read and validate the complete desired policy and its register generation.
-    pub async fn read_validated(&self) -> PolicyRegisterResult<VersionedPolicyState> {
+impl<S: Storage> PolicyRegister for StoragePolicyRegister<S> {
+    fn key(&self) -> &str {
+        &self.key
+    }
+
+    async fn read_validated(&self) -> PolicyRegisterResult<VersionedPolicyState> {
         let Some((value, version)) = self.storage.get(&self.key).await? else {
             return Err(PolicyRegisterError::Uninitialized {
                 key: self.key.clone(),
@@ -91,10 +62,7 @@ impl<S: Storage> PolicyRegister<S> {
         Ok(VersionedPolicyState { state, version })
     }
 
-    /// Conditionally replace the complete desired policy and return its new
-    /// generation. `None` requires an absent register; `Some(version)` requires
-    /// the register to be at that generation.
-    pub async fn set_policy(
+    async fn set_policy(
         &self,
         state: &PolicyState,
         expected_version: Option<i64>,
@@ -126,40 +94,6 @@ impl<S: Storage> PolicyRegister<S> {
         }
         Ok(new_version)
     }
-}
-
-/// Install `state` if `register` is absent, retrying storage transaction
-/// conflicts according to `retry_config`. Returns whether this caller installed
-/// the initial policy.
-pub async fn bootstrap_policy_register_if_absent<S, E>(
-    register: &PolicyRegister<S>,
-    state: &PolicyState,
-    environment: &E,
-    retry_config: RetryConfig,
-) -> PolicyRegisterResult<bool>
-where
-    S: Storage,
-    E: Environment,
-{
-    retry(
-        environment,
-        retry_config,
-        || async {
-            match register.set_policy(state, None).await {
-                Ok(_) => Ok(true),
-                Err(PolicyRegisterError::ConcurrentUpdate { .. }) => Ok(false),
-                Err(error) => Err(error),
-            }
-        },
-        |error| match error {
-            PolicyRegisterError::Storage(StorageError::TransactionConflict(_)) => {
-                RetryDecision::RetryWithBackoff
-            }
-            _ => RetryDecision::Stop,
-        },
-    )
-    .await
-    .map_err(RetryFailure::into_last_error)
 }
 
 fn decode_policy_state(value: &Bytes) -> PolicyRegisterResult<PolicyState> {
@@ -194,18 +128,19 @@ mod tests {
     use std::time::Duration;
 
     use agent_bus_proto_rust::agent_bus::VoterConfig;
-    use agent_bus_proto_rust::agent_bus::voter_config;
+    use agentbus_api::RetryConfig;
     use agentbus_simulator::Simulator;
     use futures::executor::block_on;
-    use prost_types::Any;
+    use logact_commit_service_engine::InMemoryStorage;
+    use logact_commit_service_engine::StorageError;
+    use logact_commit_service_engine::StorageResult;
 
     use super::*;
-    use crate::InMemoryStorage;
-    use crate::StorageResult;
+    use crate::bootstrap_policy_register_if_absent;
 
-    fn register() -> (Rc<InMemoryStorage>, PolicyRegister<InMemoryStorage>) {
+    fn register() -> (Rc<InMemoryStorage>, StoragePolicyRegister<InMemoryStorage>) {
         let storage = Rc::new(InMemoryStorage::new());
-        let register = PolicyRegister::new(storage.clone(), "test-policy");
+        let register = StoragePolicyRegister::new(storage.clone(), "test-policy");
         (storage, register)
     }
 
@@ -226,7 +161,7 @@ mod tests {
     }
 
     fn bootstrap<S: Storage + 'static>(
-        register: PolicyRegister<S>,
+        register: StoragePolicyRegister<S>,
         state: PolicyState,
         max_retries: usize,
     ) -> PolicyRegisterResult<bool> {
@@ -243,15 +178,6 @@ mod tests {
         });
         environment.run();
         block_on(handle).expect("bootstrap task should complete")
-    }
-
-    #[test]
-    fn uninitialized_register_is_an_error() {
-        let (_, register) = register();
-
-        let error =
-            block_on(register.read_validated()).expect_err("an absent policy register should fail");
-        assert!(matches!(error, PolicyRegisterError::Uninitialized { .. }));
     }
 
     #[test]
@@ -288,24 +214,6 @@ mod tests {
             Some(DeciderPolicy::OnByDefault as i32)
         );
         assert_eq!(stored.version, 0);
-    }
-
-    #[test]
-    fn set_policy_advances_the_generation() {
-        let (_, register) = register();
-        assert_eq!(
-            block_on(register.set_policy(&policy(DeciderPolicy::OnByDefault), None))
-                .expect("initial policy should be installed"),
-            0
-        );
-        let mut current =
-            block_on(register.read_validated()).expect("initial policy should be readable");
-        current.state.decider_policy = Some(DeciderPolicy::OffByDefault as i32);
-        assert_eq!(
-            block_on(register.set_policy(&current.state, Some(current.version)))
-                .expect("decider update should succeed"),
-            1
-        );
     }
 
     struct ContendedStorage {
@@ -346,14 +254,17 @@ mod tests {
     fn contended_register(
         conflicts: usize,
         reject_put: bool,
-    ) -> (Rc<ContendedStorage>, PolicyRegister<ContendedStorage>) {
+    ) -> (
+        Rc<ContendedStorage>,
+        StoragePolicyRegister<ContendedStorage>,
+    ) {
         let storage = Rc::new(ContendedStorage {
             inner: InMemoryStorage::new(),
             put_calls: Cell::new(0),
             conflicts_remaining: Cell::new(conflicts),
             reject_put,
         });
-        let register = PolicyRegister::new(storage.clone(), "test-policy");
+        let register = StoragePolicyRegister::new(storage.clone(), "test-policy");
         (storage, register)
     }
 
@@ -415,47 +326,6 @@ mod tests {
             PolicyRegisterError::Storage(StorageError::TransactionConflict(_))
         ));
         assert_eq!(storage.put_calls.get(), 2);
-    }
-
-    #[test]
-    fn write_rejects_structurally_invalid_policy() {
-        let (storage, register) = register();
-        let error = block_on(register.set_policy(&PolicyState::default(), None))
-            .expect_err("structural validation should reject the write");
-        assert!(matches!(
-            error,
-            PolicyRegisterError::MalformedPolicy { message }
-                if message.contains("missing decider policy")
-        ));
-        assert_eq!(
-            block_on(storage.get("test-policy")).expect("storage read should succeed"),
-            None
-        );
-    }
-
-    #[test]
-    fn decider_update_preserves_voters() {
-        let (_, register) = register();
-        let mut state = policy(DeciderPolicy::OnByDefault);
-        state.voters.insert(
-            "voter-a".to_string(),
-            VoterConfig {
-                config: Some(voter_config::Config::Custom(Any {
-                    type_url: "test/voter".to_string(),
-                    value: Vec::new(),
-                })),
-            },
-        );
-        block_on(register.set_policy(&state, None)).expect("initial policy should be installed");
-
-        let mut current =
-            block_on(register.read_validated()).expect("initial policy should be readable");
-        current.state.decider_policy = Some(DeciderPolicy::OffByDefault as i32);
-        block_on(register.set_policy(&current.state, Some(current.version)))
-            .expect("decider update should succeed");
-        let updated =
-            block_on(register.read_validated()).expect("updated policy should be readable");
-        assert!(updated.state.voters.contains_key("voter-a"));
     }
 
     #[test]

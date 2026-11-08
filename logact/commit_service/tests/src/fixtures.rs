@@ -24,11 +24,12 @@ use logact_commit_service_engine::CachingStorageConfig;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::PolicyProvider;
-use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_engine::PolicyState;
 use logact_commit_service_engine::Storage;
 use logact_commit_service_engine::VoterFactory;
 use logact_commit_service_engine::validate_voter_configs;
+use logact_commit_service_policy_register::PolicyRegister;
+use logact_commit_service_policy_register::StoragePolicyRegister;
 use logact_commit_service_v1::CommitServiceV1;
 use logact_commit_service_v1::DelegatingVoterFactory;
 use logact_commit_service_v1::StaticConfigPolicyProvider;
@@ -131,11 +132,11 @@ pub trait TestPolicyProvider: PolicyProvider<Error: Into<anyhow::Error>> + Clone
 }
 
 impl TestPolicyProvider for SynchronousRegisterProvider<InMemoryStorage> {
-    type Controller = PolicyRegister<InMemoryStorage>;
+    type Controller = StoragePolicyRegister<InMemoryStorage>;
 
     fn for_test() -> (Self, Self::Controller) {
         let voter_factory = DelegatingVoterFactory::default();
-        let register = PolicyRegister::new(Rc::new(InMemoryStorage::new()), "test-policy");
+        let register = StoragePolicyRegister::new(Rc::new(InMemoryStorage::new()), "test-policy");
         futures::executor::block_on(register.set_policy(
             &PolicyState {
                 decider_policy: Some(DeciderPolicy::OnByDefault as i32),
@@ -178,7 +179,7 @@ pub trait SettableDeciderPolicy {
     ) -> impl std::future::Future<Output = anyhow::Result<(DeciderPolicy, i64)>>;
 }
 
-impl<S: Storage> SettableDeciderPolicy for PolicyRegister<S> {
+impl<S: Storage> SettableDeciderPolicy for StoragePolicyRegister<S> {
     async fn set_decider_policy(&self, policy: DeciderPolicy) -> anyhow::Result<i64> {
         let mut current = self.read_validated().await?;
         current.state.decider_policy = Some(policy as i32);

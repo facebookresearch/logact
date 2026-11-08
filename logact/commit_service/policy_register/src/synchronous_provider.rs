@@ -16,11 +16,12 @@ use std::rc::Rc;
 use logact_commit_service_api::PolicyProvider;
 use logact_commit_service_api::PolicyState;
 use logact_commit_service_api::VersionedPolicyState;
+use logact_commit_service_engine::Storage;
 use thiserror::Error;
 
 use crate::PolicyRegister;
 use crate::PolicyRegisterError;
-use crate::Storage;
+use crate::StoragePolicyRegister;
 
 /// Failures while reading a policy for use by this node.
 #[derive(Debug, Error)]
@@ -33,7 +34,7 @@ pub enum SynchronousRegisterProviderError {
 
 /// A synchronous read-consistency mechanism over a policy register.
 pub struct SynchronousRegisterProvider<S> {
-    register: PolicyRegister<S>,
+    register: StoragePolicyRegister<S>,
     validate_policy: Rc<dyn Fn(&PolicyState) -> anyhow::Result<()>>,
 }
 
@@ -50,7 +51,7 @@ impl<S: Storage> SynchronousRegisterProvider<S> {
     /// Create a provider that reads `register` and validates node support on
     /// every policy lookup.
     pub fn new(
-        register: PolicyRegister<S>,
+        register: StoragePolicyRegister<S>,
         validate_policy: impl Fn(&PolicyState) -> anyhow::Result<()> + 'static,
     ) -> Self {
         Self {
@@ -80,17 +81,17 @@ mod tests {
 
     use agent_bus_proto_rust::agent_bus::DeciderPolicy;
     use futures::executor::block_on;
+    use logact_commit_service_engine::InMemoryStorage;
 
     use super::*;
-    use crate::InMemoryStorage;
 
     fn register_and_provider(
         key: &str,
     ) -> (
-        PolicyRegister<InMemoryStorage>,
+        StoragePolicyRegister<InMemoryStorage>,
         SynchronousRegisterProvider<InMemoryStorage>,
     ) {
-        let register = PolicyRegister::new(Rc::new(InMemoryStorage::new()), key);
+        let register = StoragePolicyRegister::new(Rc::new(InMemoryStorage::new()), key);
         let provider = SynchronousRegisterProvider::new(register.clone(), |_| Ok(()));
         (register, provider)
     }
@@ -164,8 +165,8 @@ mod tests {
     #[test]
     fn distinct_registers_are_isolated_in_shared_storage() {
         let storage = Rc::new(InMemoryStorage::new());
-        let first_register = PolicyRegister::new(storage.clone(), "first-policy");
-        let second_register = PolicyRegister::new(storage, "second-policy");
+        let first_register = StoragePolicyRegister::new(storage.clone(), "first-policy");
+        let second_register = StoragePolicyRegister::new(storage, "second-policy");
         let first = SynchronousRegisterProvider::new(first_register.clone(), |_| Ok(()));
         let second = SynchronousRegisterProvider::new(second_register, |_| Ok(()));
 

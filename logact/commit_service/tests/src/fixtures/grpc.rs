@@ -19,8 +19,8 @@ use anyhow::Result;
 use conformance::ConformanceFixture;
 use conformance::IntegrationFixture;
 use fbinit::FacebookInit;
-use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_grpc::GrpcCommitSvcClient;
+use logact_commit_service_policy_register::StoragePolicyRegister;
 use logact_commit_service_sqlite_storage::SqliteStorage;
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
@@ -31,7 +31,7 @@ use crate::fixtures::DeciderPolicyFixture;
 
 pub struct GrpcCommitServiceFixture {
     client: GrpcCommitSvcClient,
-    policy_controller: PolicyRegister<SqliteStorage>,
+    policy_controller: StoragePolicyRegister<SqliteStorage>,
     environment: Rc<RealEnvironment>,
     server: JoinHandle<Result<()>>,
     _temp: Arc<TempDir>,
@@ -87,7 +87,7 @@ impl IntegrationFixture for GrpcCommitServiceFixture {
 
         Ok(Self {
             client,
-            policy_controller: PolicyRegister::new(
+            policy_controller: StoragePolicyRegister::new(
                 Rc::new(SqliteStorage::open(sqlite_path)?),
                 "policy",
             ),
@@ -123,7 +123,7 @@ async fn connect(socket: &Path) -> Result<Channel> {
 }
 
 impl DeciderPolicyFixture for GrpcCommitServiceFixture {
-    type Controller = PolicyRegister<SqliteStorage>;
+    type Controller = StoragePolicyRegister<SqliteStorage>;
 
     fn policy_controller(&self) -> Self::Controller {
         self.policy_controller.clone()

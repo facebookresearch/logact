@@ -15,8 +15,8 @@ use std::rc::Rc;
 use anyhow::Result;
 use conformance::TestConfig;
 use logact_commit_service_engine::InMemoryStorage;
-use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_inmem::InMemCommitService;
+use logact_commit_service_policy_register::StoragePolicyRegister;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 
 use crate::fixtures::ConformanceFixture;
@@ -26,7 +26,7 @@ use crate::fixtures::TestPolicyProvider;
 use crate::simulator::Simulator;
 
 type PolicyProvider = SynchronousRegisterProvider<InMemoryStorage>;
-type PolicyController = PolicyRegister<InMemoryStorage>;
+type PolicyController = StoragePolicyRegister<InMemoryStorage>;
 
 pub struct InMemCommitServiceFixture {
     env: Rc<Simulator>,

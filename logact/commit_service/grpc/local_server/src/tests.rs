@@ -16,8 +16,9 @@ use agentbus_api::AgentBus as _;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitSvc as _;
 use logact_commit_service_api::PolicyState;
-use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_grpc::GrpcCommitSvcClient;
+use logact_commit_service_policy_register::PolicyRegister;
+use logact_commit_service_policy_register::StoragePolicyRegister;
 use logact_commit_service_sqlite_storage::SqliteStorage;
 use tokio::sync::oneshot;
 use tonic::transport::Endpoint;
@@ -37,7 +38,7 @@ async fn preserves_an_existing_sqlite_policy() {
         .expect("private state directory should initialize");
     let storage =
         Rc::new(SqliteStorage::open(&sqlite_path).expect("policy storage should initialize"));
-    PolicyRegister::new(storage, POLICY_REGISTER_KEY)
+    StoragePolicyRegister::new(storage, POLICY_REGISTER_KEY)
         .set_policy(
             &PolicyState {
                 decider_policy: Some(DeciderPolicy::OffByDefault as i32),

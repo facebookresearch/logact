@@ -38,6 +38,8 @@ members = [
   "logact/commit_service/impls/v1/engine",
   "logact/commit_service/impls/v1/engine/tests",
   "logact/commit_service/local_fs",
+  "logact/commit_service/policy_register",
+  "logact/commit_service/policy_register/tests",
   "logact/commit_service/proto",
   "logact/commit_service/tests",
 ]

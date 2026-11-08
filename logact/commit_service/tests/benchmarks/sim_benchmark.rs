@@ -80,11 +80,12 @@ use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::Observability;
 use logact_commit_service_engine::ObservableStorage;
-use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_engine::validate_voter_configs;
 use logact_commit_service_engine_tests::fixtures::fault_injecting::FaultInjectingStorage;
 use logact_commit_service_engine_tests::fixtures::fault_injecting::StorageFaultConfig;
 use logact_commit_service_observable::ObservableCommitSvc;
+use logact_commit_service_policy_register::PolicyRegister;
+use logact_commit_service_policy_register::StoragePolicyRegister;
 use logact_commit_service_tests::fixtures::SettableDeciderPolicy;
 use logact_commit_service_tests::fixtures::random_routing::RandomRoutingCommitService;
 use logact_commit_service_v1::CommitServiceV1;
@@ -904,12 +905,12 @@ fn run_one(
                 }
             };
             // Initialization bypasses the observable storage so metrics cover only the workload.
-            PolicyRegister::new(policy_storage.clone(), key.clone())
+            StoragePolicyRegister::new(policy_storage.clone(), key.clone())
                 .set_policy(&initial_policy, None)
                 .await?;
             registers.push((
                 bus_id,
-                PolicyRegister::new(observed_policy_storage.clone(), key),
+                StoragePolicyRegister::new(observed_policy_storage.clone(), key),
             ));
         }
         let run = BenchmarkRun {

@@ -61,7 +61,6 @@ use logact_commit_service_engine::ObservableApplicator;
 use logact_commit_service_engine::ObservedDeciderFactory;
 use logact_commit_service_engine::PerBusEngineState;
 use logact_commit_service_engine::PolicyProvider;
-use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_engine::PolicyState;
 use logact_commit_service_engine::ProposalOutcome;
 use logact_commit_service_engine::RetryConfig;
@@ -71,7 +70,6 @@ use logact_commit_service_engine::StaticConfigPolicyProvider;
 use logact_commit_service_engine::Storage;
 use logact_commit_service_engine::StorageError;
 use logact_commit_service_engine::StorageResult;
-use logact_commit_service_engine::SynchronousRegisterProvider;
 use logact_commit_service_engine::VersionedPolicy;
 use logact_commit_service_engine::VersionedPolicyState;
 use logact_commit_service_engine::VoterFactory;
@@ -81,6 +79,9 @@ use logact_commit_service_engine_tests::voters::CountingVoterConfig;
 use logact_commit_service_engine_tests::voters::CountingVoterFactory;
 use logact_commit_service_engine_tests::voters::boolean_vote;
 use logact_commit_service_engine_tests::voters::counting_voter_config;
+use logact_commit_service_policy_register::PolicyRegister;
+use logact_commit_service_policy_register::StoragePolicyRegister;
+use logact_commit_service_policy_register::SynchronousRegisterProvider;
 use prost::Message;
 
 struct PlaceholderVoter;
@@ -1383,7 +1384,8 @@ fn missing_policy_register_fails_before_appending() {
 
     let handle = env.spawn(async move {
         let bus = fixture.create_impl();
-        let register = PolicyRegister::new(Rc::new(InMemoryStorage::new()), "missing-policy");
+        let register =
+            StoragePolicyRegister::new(Rc::new(InMemoryStorage::new()), "missing-policy");
         let provider = SynchronousRegisterProvider::new(register, |policy| {
             validate_voter_configs(
                 &TestVoterFactory::new(Rc::new(InMemoryStorage::new())),
@@ -2514,7 +2516,7 @@ fn standalone_policy_controls_are_rejected() {
 
     let handle = env.spawn(async move {
         let bus = fixture.create_impl();
-        let register = PolicyRegister::new(Rc::new(InMemoryStorage::new()), "test-policy");
+        let register = StoragePolicyRegister::new(Rc::new(InMemoryStorage::new()), "test-policy");
         register
             .set_policy(
                 &PolicyState {

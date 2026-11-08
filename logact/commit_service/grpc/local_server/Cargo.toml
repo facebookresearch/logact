@@ -24,6 +24,7 @@ logact_commit_service_core = { version = "0.1.0", path = "../../core" }
 logact_commit_service_engine = { version = "0.1.0", path = "../../impls/v1/engine" }
 logact_commit_service_grpc = { version = "0.1.0", path = ".." }
 logact_commit_service_grpc_proto-rust = { path = "../proto" }
+logact_commit_service_policy_register = { version = "0.1.0", path = "../../policy_register" }
 logact_commit_service_sqlite_storage = { version = "0.1.0", path = "../../impls/sqlite" }
 logact_commit_service_v1 = { version = "0.1.0", path = "../../impls/v1" }
 logact_private_fs = { version = "0.1.0", path = "../../local_fs" }

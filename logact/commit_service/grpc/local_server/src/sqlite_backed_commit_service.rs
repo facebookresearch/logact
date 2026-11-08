@@ -27,12 +27,12 @@ use logact_commit_service_core::ChanneledCommitService;
 use logact_commit_service_engine::BaseEngine;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::Observability;
-use logact_commit_service_engine::PolicyRegister;
 use logact_commit_service_engine::PolicyState;
-use logact_commit_service_engine::SynchronousRegisterProvider;
-use logact_commit_service_engine::bootstrap_policy_register_if_absent;
-use logact_commit_service_engine::default_policy_register_bootstrap_retry_config;
 use logact_commit_service_engine::validate_voter_configs;
+use logact_commit_service_policy_register::StoragePolicyRegister;
+use logact_commit_service_policy_register::SynchronousRegisterProvider;
+use logact_commit_service_policy_register::bootstrap_policy_register_if_absent;
+use logact_commit_service_policy_register::default_policy_register_bootstrap_retry_config;
 use logact_commit_service_sqlite_storage::SqliteStorage;
 use logact_commit_service_v1::CommitServiceV1;
 use logact_commit_service_v1::DelegatingVoterFactory;
@@ -64,7 +64,7 @@ fn initialize_policy_register(path: &Path) -> Result<()> {
     let storage =
         Rc::new(SqliteStorage::open(path).context("failed to initialize policy storage")?);
     let environment = RealEnvironment::new();
-    let register = PolicyRegister::new(storage, POLICY_REGISTER_KEY);
+    let register = StoragePolicyRegister::new(storage, POLICY_REGISTER_KEY);
     runtime
         .block_on(bootstrap_policy_register_if_absent(
             &register,
@@ -117,7 +117,7 @@ fn create_sqlite_backed_commit_service_blocking(
         let decider_factory = DeciderFactoryImpl::new(storage.clone());
         let policy_validator = voter_factory.clone();
         let policy_provider = SynchronousRegisterProvider::new(
-            PolicyRegister::new(storage.clone(), POLICY_REGISTER_KEY),
+            StoragePolicyRegister::new(storage.clone(), POLICY_REGISTER_KEY),
             move |policy| validate_voter_configs(&policy_validator, policy),
         );
 

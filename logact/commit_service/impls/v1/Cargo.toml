@@ -17,6 +17,7 @@ anyhow = "1.0.104"
 llm-voter-proto-rust = { path = "../../../../bus/voters/llm/proto" }
 logact_commit_service_api = { version = "0.1.0", path = "../../api" }
 logact_commit_service_engine = { version = "0.1.0", path = "engine" }
+logact_commit_service_policy_register = { version = "0.1.0", path = "../../policy_register" }
 prost = { version = "0.14.4", default-features = false }
 rule-based-voter-proto-rust = { path = "../../../../bus/voters/rule-based/proto" }
 
