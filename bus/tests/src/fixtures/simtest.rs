@@ -34,6 +34,7 @@ use crate::impls::chained_agentbus::ChainedAgentBus;
 use crate::impls::chained_agentbus::ChainedMode;
 use crate::impls::fault_injecting_agentbus::FaultInjectingAgentBus;
 use crate::impls::latency_wrapper::LatencyWrapper;
+use crate::impls::retrying_agentbus::RetryingAgentBus;
 use crate::simulator::Simulator;
 use crate::write_once_space::fixtures::simtest::AmbiguousOnceWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::CachingWriteOnceSpaceFixture;
@@ -104,16 +105,28 @@ impl<const CACHE_CAPACITY: usize> SimulatorFixture
     }
 }
 
+/// The bottom-most AgentBus a simulator fixture builds: `bus` behind the
+/// simulator's injected latency and, with `retry`, retried reads.
+type Backend<B> = RetryingAgentBus<LatencyWrapper<B>, Simulator>;
+
+fn backend<B>(bus: B, env: &Rc<Simulator>, config: &TestConfig) -> Backend<B> {
+    RetryingAgentBus::new(
+        LatencyWrapper::new(bus, env.clone()),
+        env.clone(),
+        config.retry_config(),
+    )
+}
+
 /// Fixture for testing InMemoryAgentBus
 /// Owns an InMemoryAgentBus instance that can be cloned to share state
 pub struct SimpleMemoryFixture {
-    agentbus: LatencyWrapper<InMemoryAgentBus<Simulator>>,
+    agentbus: Backend<InMemoryAgentBus<Simulator>>,
     env: Rc<Simulator>,
 }
 
 impl ConformanceFixture for SimpleMemoryFixture {
     type Env = Simulator;
-    type Impl = LatencyWrapper<InMemoryAgentBus<Simulator>>;
+    type Impl = Backend<InMemoryAgentBus<Simulator>>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -141,7 +154,7 @@ impl SimulatorFixture for SimpleMemoryFixture {
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let env = Rc::new(simulator);
         Ok(Self {
-            agentbus: LatencyWrapper::new(in_memory_agentbus(env.clone(), config.ttl), env.clone()),
+            agentbus: backend(in_memory_agentbus(env.clone(), config.ttl), &env, config),
             env,
         })
     }
@@ -149,13 +162,13 @@ impl SimulatorFixture for SimpleMemoryFixture {
 
 /// Fixture for testing ChanneledAgentBus (wrapper around InMemoryAgentBus)
 pub struct ChanneledAgentBusFixture {
-    agentbus: LatencyWrapper<ChanneledAgentBus>,
+    agentbus: Backend<ChanneledAgentBus>,
     env: Rc<Simulator>,
 }
 
 impl ConformanceFixture for ChanneledAgentBusFixture {
     type Env = Simulator;
-    type Impl = LatencyWrapper<ChanneledAgentBus>;
+    type Impl = Backend<ChanneledAgentBus>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -182,7 +195,7 @@ impl SimulatorFixture for ChanneledAgentBusFixture {
             in_memory_agentbus(worker_env.clone(), ttl)
         });
         Ok(Self {
-            agentbus: LatencyWrapper::new(agentbus, env.clone()),
+            agentbus: backend(agentbus, &env, config),
             env,
         })
     }
@@ -302,13 +315,13 @@ where
 
 /// Generic fixture for testing ChainedAgentBus with configurable mode
 pub struct ChainedAgentBusGenericFixture<const MODE: u8> {
-    agentbus: LatencyWrapper<ChainedAgentBus>,
+    agentbus: Backend<ChainedAgentBus>,
     env: Rc<Simulator>,
 }
 
 impl<const MODE: u8> ConformanceFixture for ChainedAgentBusGenericFixture<MODE> {
     type Env = Simulator;
-    type Impl = LatencyWrapper<ChainedAgentBus>;
+    type Impl = Backend<ChainedAgentBus>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -333,9 +346,10 @@ impl<const MODE: u8> SimulatorFixture for ChainedAgentBusGenericFixture<MODE> {
         };
         let env = Rc::new(simulator);
         Ok(Self {
-            agentbus: LatencyWrapper::new(
+            agentbus: backend(
                 ChainedAgentBus::new(env.clone(), mode, config.ttl),
-                env.clone(),
+                &env,
+                config,
             ),
             env,
         })

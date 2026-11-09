@@ -9,3 +9,4 @@ pub mod chained_agentbus;
 pub mod fault_injecting_agentbus;
 pub mod fault_injecting_write_once_space;
 pub mod latency_wrapper;
+pub mod retrying_agentbus;
