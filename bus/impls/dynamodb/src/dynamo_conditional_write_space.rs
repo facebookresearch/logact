@@ -122,13 +122,13 @@ impl ConditionalWriteSpace for DynamoConditionalWriteSpace {
         address: u64,
         expected_version: Option<Version>,
         value: Bytes,
-    ) -> ConditionalWriteResult<bool> {
+    ) -> ConditionalWriteResult<Option<Version>> {
         let (new_version, condition_expr, condition_val) = match expected_version {
             None => (0u64, "attribute_not_exists(#ver)", None),
             Some(v) => {
                 let current = match try_version_to_u64(&v) {
                     Some(n) => n,
-                    None => return Ok(false),
+                    None => return Ok(None),
                 };
                 (
                     current + 1,
@@ -158,11 +158,11 @@ impl ConditionalWriteSpace for DynamoConditionalWriteSpace {
         }
 
         match req.send().await {
-            Ok(_) => Ok(true),
+            Ok(_) => Ok(Some(version_from_u64(new_version))),
             Err(err) => {
                 let service_err = err.into_service_error();
                 if service_err.is_conditional_check_failed_exception() {
-                    Ok(false)
+                    Ok(None)
                 } else {
                     Err(ConditionalWriteError::BackendUnavailable(AnyhowError::new(
                         service_err,

@@ -22,6 +22,7 @@ use agentbus_api::Version;
 use agentbus_api::VersionedValue;
 use agentbus_api::WallClockTtl;
 use bytes::Bytes;
+use rand::RngExt as _;
 
 /// In-memory implementation of a conditional write space.
 ///
@@ -29,10 +30,15 @@ use bytes::Bytes;
 /// expires that long after it is stored, by the environment's unsafe wall clock.
 /// An expired entry is treated as absent, so a write expecting an empty address
 /// can reclaim it.
+///
+/// Each successful write gets a random version from the environment, so
+/// versions are unordered and callers can rely only on comparing them for
+/// equality.
 #[derive(Clone)]
 pub struct InMemoryConditionalWriteSpace {
     state: Rc<RefCell<HashMap<String, HashMap<u64, Entry>>>>,
     ttl: Option<WallClockTtl>,
+    random_version: Rc<dyn Fn() -> Version>,
 }
 
 struct Entry {
@@ -49,42 +55,29 @@ impl Entry {
     }
 }
 
-impl Default for InMemoryConditionalWriteSpace {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl InMemoryConditionalWriteSpace {
-    pub fn new() -> Self {
+    pub fn new<E: Environment + 'static>(environment: Rc<E>) -> Self {
         Self {
             state: Rc::new(RefCell::new(HashMap::new())),
             ttl: None,
+            random_version: Rc::new(move || {
+                let version: u64 = environment.with_rng(|rng| rng.random());
+                Version(Bytes::copy_from_slice(&version.to_be_bytes()))
+            }),
         }
     }
 
     /// Expire each successful write `ttl` after it is stored.
     pub fn with_ttl<E: Environment + 'static>(environment: Rc<E>, ttl: Duration) -> Self {
         Self {
-            ttl: Some(WallClockTtl::new(environment, ttl)),
-            ..Self::new()
+            ttl: Some(WallClockTtl::new(environment.clone(), ttl)),
+            ..Self::new(environment)
         }
     }
 
     fn check(&self) -> Option<TtlCheck> {
         self.ttl.as_ref().map(WallClockTtl::check)
     }
-}
-
-fn version_from_u64(n: u64) -> Version {
-    Version(Bytes::copy_from_slice(&n.to_be_bytes()))
-}
-
-fn version_to_u64(v: &Version) -> u64 {
-    let bytes: [u8; 8] = v.0[..]
-        .try_into()
-        .expect("in-memory version is always 8 bytes");
-    u64::from_be_bytes(bytes)
 }
 
 impl TailableSpace for InMemoryConditionalWriteSpace {
@@ -122,7 +115,7 @@ impl ConditionalWriteSpace for InMemoryConditionalWriteSpace {
         address: u64,
         expected_version: Option<Version>,
         value: Bytes,
-    ) -> ConditionalWriteResult<bool> {
+    ) -> ConditionalWriteResult<Option<Version>> {
         let check = self.check();
         let mut state = self.state.borrow_mut();
         let space = state.entry(space_id.to_string()).or_default();
@@ -134,25 +127,22 @@ impl ConditionalWriteSpace for InMemoryConditionalWriteSpace {
         match (&expected_version, existing) {
             (None, None) => {}
             (Some(expected), Some(actual)) if *expected == actual.version => {}
-            _ => return Ok(false),
+            _ => return Ok(None),
         }
 
-        let next_version = match expected_version {
-            None => 0u64,
-            Some(v) => version_to_u64(&v) + 1,
-        };
+        let next_version = (self.random_version)();
 
         space.insert(
             address,
             Entry {
                 value: VersionedValue {
-                    version: version_from_u64(next_version),
+                    version: next_version.clone(),
                     value,
                 },
                 written_at: check.map(|check| check.now()),
             },
         );
-        Ok(true)
+        Ok(Some(next_version))
     }
 
     async fn read(

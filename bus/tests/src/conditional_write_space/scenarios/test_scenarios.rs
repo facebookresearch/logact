@@ -12,6 +12,7 @@ mod defs {
     use agentbus_api::ConditionalWriteSpace;
     use agentbus_api::TailableSpace;
     use agentbus_api::Version;
+    use agentbus_api::VersionedValue;
     use agentbus_api::environment::Environment;
     use anyhow::Result;
     use bytes::Bytes;
@@ -23,10 +24,6 @@ mod defs {
     const DEFAULT_SPACE: &str = "default";
     const DEFAULT_ADDRESS: u64 = 0;
 
-    fn version_from_u64(n: u64) -> Version {
-        Version(Bytes::copy_from_slice(&n.to_be_bytes()))
-    }
-
     /// Test basic write then read cycle.
     #[scenario]
     pub async fn run_test_write_then_read<F: ConditionalWriteSpaceTestFixture>(
@@ -37,15 +34,15 @@ mod defs {
         let ok = client
             .write(DEFAULT_SPACE, DEFAULT_ADDRESS, None, Bytes::from("hello"))
             .await?;
-        assert!(ok, "first write should succeed");
+        assert!(ok.is_some(), "first write should succeed");
 
         let entry = client.read(DEFAULT_SPACE, DEFAULT_ADDRESS).await?;
         let entry = entry.expect("should have a value");
         assert_eq!(entry.value, Bytes::from("hello"));
         assert_eq!(
-            entry.version,
-            version_from_u64(0),
-            "first write should produce version 0"
+            ok,
+            Some(entry.version.clone()),
+            "write should return the stored version"
         );
 
         Ok(())
@@ -74,7 +71,10 @@ mod defs {
         let ok = client
             .write(DEFAULT_SPACE, DEFAULT_ADDRESS, None, Bytes::from("value"))
             .await?;
-        assert!(ok, "create should succeed with expected_version=None");
+        assert!(
+            ok.is_some(),
+            "create should succeed with expected_version=None"
+        );
 
         let entry = client.read(DEFAULT_SPACE, DEFAULT_ADDRESS).await?;
         let entry = entry.expect("should have a value");
@@ -84,7 +84,7 @@ mod defs {
         let ok = client
             .write(DEFAULT_SPACE, DEFAULT_ADDRESS, None, Bytes::from("value2"))
             .await?;
-        assert!(!ok, "duplicate create should fail");
+        assert!(ok.is_none(), "duplicate create should fail");
 
         // Original value unchanged
         let entry = client.read(DEFAULT_SPACE, DEFAULT_ADDRESS).await?;
@@ -111,7 +111,10 @@ mod defs {
         let ok = client
             .write(DEFAULT_SPACE, DEFAULT_ADDRESS, None, Bytes::from("v2"))
             .await?;
-        assert!(!ok, "write with None to occupied address should fail");
+        assert!(
+            ok.is_none(),
+            "write with None to occupied address should fail"
+        );
 
         // Read the current version, then use a wrong-but-well-formed version.
         // (Implementations may reject malformed versions with an error rather than
@@ -127,7 +130,7 @@ mod defs {
                 Bytes::from("v2"),
             )
             .await?;
-        assert!(!ok, "write with wrong version should fail");
+        assert!(ok.is_none(), "write with wrong version should fail");
 
         // Value unchanged
         let entry = client.read(DEFAULT_SPACE, DEFAULT_ADDRESS).await?.unwrap();
@@ -136,7 +139,7 @@ mod defs {
         Ok(())
     }
 
-    /// Test that write with the correct version updates and increments.
+    /// Test that write with the correct version updates the value and version.
     #[scenario]
     pub async fn run_test_conditional_write_update<F: ConditionalWriteSpaceTestFixture>(
         fixture: &F,
@@ -148,47 +151,98 @@ mod defs {
             .await?;
 
         let v1 = client.read(DEFAULT_SPACE, DEFAULT_ADDRESS).await?.unwrap();
-        assert_eq!(
-            v1.version,
-            version_from_u64(0),
-            "first write should be version 0"
-        );
         let ok = client
             .write(
                 DEFAULT_SPACE,
                 DEFAULT_ADDRESS,
-                Some(v1.version),
+                Some(v1.version.clone()),
                 Bytes::from("v2"),
             )
             .await?;
-        assert!(ok, "update with correct version should succeed");
+        assert!(ok.is_some(), "update with correct version should succeed");
 
         let v2 = client.read(DEFAULT_SPACE, DEFAULT_ADDRESS).await?.unwrap();
         assert_eq!(v2.value, Bytes::from("v2"));
-        assert_eq!(
-            v2.version,
-            version_from_u64(1),
-            "second write should be version 1"
+        assert_eq!(ok, Some(v2.version.clone()));
+        assert_ne!(
+            v2.version, v1.version,
+            "an update should change the version"
         );
 
         let ok = client
             .write(
                 DEFAULT_SPACE,
                 DEFAULT_ADDRESS,
-                Some(v2.version),
+                Some(v2.version.clone()),
                 Bytes::from("v3"),
             )
             .await?;
-        assert!(ok, "second update with correct version should succeed");
+        assert!(
+            ok.is_some(),
+            "second update with correct version should succeed"
+        );
 
         let v3 = client.read(DEFAULT_SPACE, DEFAULT_ADDRESS).await?.unwrap();
         assert_eq!(v3.value, Bytes::from("v3"));
-        assert_eq!(
-            v3.version,
-            version_from_u64(2),
-            "third write should be version 2"
+        assert_eq!(ok, Some(v3.version.clone()));
+        assert_ne!(
+            v3.version, v2.version,
+            "an update should change the version"
         );
 
+        Ok(())
+    }
+
+    /// Versions returned by `write` are the stored versions, can be used for the
+    /// next write without reading, and never repeat at an address. A superseded
+    /// version is rejected.
+    #[scenario]
+    pub async fn run_test_write_returns_usable_versions<F: ConditionalWriteSpaceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let mut client = fixture.create_impl();
+        let mut versions: Vec<Version> = Vec::new();
+        for round in 0..5 {
+            let value = Bytes::from(format!("v{round}"));
+            let version = client
+                .write(
+                    DEFAULT_SPACE,
+                    DEFAULT_ADDRESS,
+                    versions.last().cloned(),
+                    value.clone(),
+                )
+                .await?
+                .expect("a write with the returned version should succeed");
+            let stored = client.read(DEFAULT_SPACE, DEFAULT_ADDRESS).await?.unwrap();
+            assert_eq!(
+                stored,
+                VersionedValue {
+                    version: version.clone(),
+                    value
+                }
+            );
+            assert!(!versions.contains(&version), "versions must not repeat");
+            versions.push(version);
+        }
+
+        let stale = versions[versions.len() - 2].clone();
+        let ok = client
+            .write(
+                DEFAULT_SPACE,
+                DEFAULT_ADDRESS,
+                Some(stale),
+                Bytes::from("stale"),
+            )
+            .await?;
+        assert!(ok.is_none(), "a superseded version should be rejected");
+        assert_eq!(
+            client
+                .read(DEFAULT_SPACE, DEFAULT_ADDRESS)
+                .await?
+                .unwrap()
+                .version,
+            versions[versions.len() - 1]
+        );
         Ok(())
     }
 
@@ -217,7 +271,7 @@ mod defs {
                 Bytes::from("from_c2"),
             )
             .await?;
-        assert!(ok);
+        assert!(ok.is_some());
 
         // client1 sees client2's update
         let entry = client1.read(DEFAULT_SPACE, DEFAULT_ADDRESS).await?.unwrap();
@@ -243,11 +297,13 @@ mod defs {
             reg1.write(DEFAULT_SPACE, DEFAULT_ADDRESS, None, Bytes::from("r1"))
                 .await
                 .unwrap()
+                .is_some()
         });
         let h2 = env.spawn(async move {
             reg2.write(DEFAULT_SPACE, DEFAULT_ADDRESS, None, Bytes::from("r2"))
                 .await
                 .unwrap()
+                .is_some()
         });
 
         let ok1 = h1.await.expect("task 1 should complete");
@@ -272,11 +328,13 @@ mod defs {
                     reg1.write(DEFAULT_SPACE, DEFAULT_ADDRESS, None, Bytes::from("r1"))
                         .await
                         .unwrap()
+                        .is_some()
                 });
                 let h2 = tokio::task::spawn_local(async move {
                     reg2.write(DEFAULT_SPACE, DEFAULT_ADDRESS, None, Bytes::from("r2"))
                         .await
                         .unwrap()
+                        .is_some()
                 });
                 (
                     h1.await.expect("task 1 should complete"),
@@ -388,7 +446,7 @@ mod defs {
                 )
                 .await
                 .unwrap();
-            if ok {
+            if ok.is_some() {
                 successes += 1;
             }
         }
@@ -423,7 +481,7 @@ mod defs {
         let ok = client
             .write("space_a", DEFAULT_ADDRESS, None, Bytes::from("in_a"))
             .await?;
-        assert!(ok, "write to space_a should succeed");
+        assert!(ok.is_some(), "write to space_a should succeed");
 
         // Same address in space_b is unaffected
         let entry = client.read("space_b", DEFAULT_ADDRESS).await?;
@@ -433,7 +491,10 @@ mod defs {
         let ok = client
             .write("space_b", DEFAULT_ADDRESS, None, Bytes::from("in_b"))
             .await?;
-        assert!(ok, "write to space_b should succeed independently");
+        assert!(
+            ok.is_some(),
+            "write to space_b should succeed independently"
+        );
 
         // Each space holds its own value
         let entry_a = client.read("space_a", DEFAULT_ADDRESS).await?.unwrap();

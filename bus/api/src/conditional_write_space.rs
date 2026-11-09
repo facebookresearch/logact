@@ -8,7 +8,9 @@
 //! Conditional Write Space API
 //!
 //! A versioned address space with conditional write (compare-and-swap) semantics.
-//! Each address starts at version 0 (empty) and increments on each successful write.
+//! Each successful write gives an address a new version that differs from every
+//! earlier version at that address. Versions are opaque: callers compare them
+//! only for equality.
 
 use bytes::Bytes;
 use thiserror::Error;
@@ -44,16 +46,17 @@ pub struct VersionedValue {
 pub trait ConditionalWriteSpace: TailableSpace {
     /// Conditionally write a value to the given address within a space.
     ///
-    /// Succeeds (returns `true`) only if the current version at `address` matches
-    /// `expected_version`. Use `None` to write to an empty address.
-    /// Returns `false` on version mismatch; the existing value is unchanged.
+    /// Succeeds only if the current version at `address` matches
+    /// `expected_version`, returning the new version. Use `None` to write to an
+    /// empty address. Returns `None` on version mismatch; the existing value is
+    /// unchanged.
     fn write(
         &mut self,
         space_id: &str,
         address: u64,
         expected_version: Option<Version>,
         value: Bytes,
-    ) -> impl std::future::Future<Output = ConditionalWriteResult<bool>>;
+    ) -> impl std::future::Future<Output = ConditionalWriteResult<Option<Version>>>;
 
     /// Read the versioned value at the given address within a space.
     ///

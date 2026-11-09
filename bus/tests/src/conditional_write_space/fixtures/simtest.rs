@@ -45,7 +45,7 @@ impl SimulatorFixture for InMemoryConditionalWriteSpaceFixture {
         let env = Rc::new(simulator);
         let space = match config.ttl {
             Some(ttl) => InMemoryConditionalWriteSpace::with_ttl(env.clone(), ttl),
-            None => InMemoryConditionalWriteSpace::new(),
+            None => InMemoryConditionalWriteSpace::new(env.clone()),
         };
         Ok(Self { space, env })
     }

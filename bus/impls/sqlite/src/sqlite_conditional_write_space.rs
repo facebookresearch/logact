@@ -126,19 +126,21 @@ impl ConditionalWriteSpace for SqliteConditionalWriteSpace {
         address: u64,
         expected_version: Option<Version>,
         value: Bytes,
-    ) -> ConditionalWriteResult<bool> {
+    ) -> ConditionalWriteResult<Option<Version>> {
         let addr = to_sqlite_address(address)?;
-        let rows_changed = match expected_version {
+        let (rows_changed, new_version) = match expected_version {
             None => {
                 // Write to empty address — INSERT only if row does not exist.
-                self.db
+                let rows_changed = self
+                    .db
                     .execute(
                         "INSERT OR IGNORE INTO conditional_write (space_id, address, version, val)
                          VALUES (?1, ?2, 0, ?3)",
                         (space_id.to_owned(), addr, SqliteBlob(value)),
                     )
                     .await
-                    .map_err(write_error)?
+                    .map_err(write_error)?;
+                (rows_changed, 0)
             }
             Some(v) => {
                 let current = match try_version_to_u64(&v) {
@@ -152,7 +154,8 @@ impl ConditionalWriteSpace for SqliteConditionalWriteSpace {
                 };
                 let new_version = current + 1;
                 // CAS update — only update if the current version matches.
-                self.db
+                let rows_changed = self
+                    .db
                     .execute(
                         "UPDATE conditional_write SET version = ?1, val = ?2
                          WHERE space_id = ?3 AND address = ?4 AND version = ?5",
@@ -165,11 +168,12 @@ impl ConditionalWriteSpace for SqliteConditionalWriteSpace {
                         ),
                     )
                     .await
-                    .map_err(write_error)?
+                    .map_err(write_error)?;
+                (rows_changed, new_version)
             }
         };
 
-        Ok(rows_changed > 0)
+        Ok((rows_changed > 0).then(|| version_from_u64(new_version)))
     }
 
     async fn read(
@@ -226,7 +230,10 @@ mod tests {
             .write("s", 0, None, Bytes::from_static(b"hello"))
             .await
             .unwrap();
-        assert!(wrote, "First write to empty address should succeed");
+        assert!(
+            wrote.is_some(),
+            "First write to empty address should succeed"
+        );
 
         let val = space.read("s", 0).await.unwrap().unwrap();
         assert_eq!(val.version, version_from_u64(0));
@@ -249,7 +256,7 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            !wrote,
+            wrote.is_none(),
             "Second write with None should fail on occupied address"
         );
     }
@@ -270,7 +277,7 @@ mod tests {
             .write("s", 0, Some(v0), Bytes::from_static(b"v2"))
             .await
             .unwrap();
-        assert!(wrote, "CAS with matching version should succeed");
+        assert!(wrote.is_some(), "CAS with matching version should succeed");
 
         let val = space.read("s", 0).await.unwrap().unwrap();
         assert_eq!(
@@ -301,7 +308,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!wrote, "CAS with wrong version should fail");
+        assert!(wrote.is_none(), "CAS with wrong version should fail");
     }
 
     #[tokio::test]
@@ -388,6 +395,7 @@ mod tests {
                         Bytes::from_static(value),
                     ))
                     .unwrap()
+                    .is_some()
             })
         };
 
@@ -435,6 +443,7 @@ mod tests {
                 .write("s", 0, None, Bytes::from_static(b"written"))
                 .await
                 .unwrap()
+                .is_some()
         );
     }
 

@@ -17,8 +17,8 @@ use bytes::Bytes;
 /// Adapts any [`ConditionalWriteSpace`] to implement [`WriteOnceSpace`].
 ///
 /// Write-once semantics are achieved by writing with `expected_version=None`,
-/// which the underlying CAS succeeds only if the address is empty. A `false`
-/// result maps to [`WriteOnceError::AddressAlreadyExists`].
+/// which the underlying CAS succeeds only if the address is empty. A version
+/// mismatch maps to [`WriteOnceError::AddressAlreadyExists`].
 #[derive(Clone)]
 pub struct WriteOnceSpaceAdapter<C> {
     inner: C,
@@ -57,7 +57,7 @@ impl<C: ConditionalWriteSpace> WriteOnceSpace for WriteOnceSpaceAdapter<C> {
             .await
             .map_err(map_conditional_write_error)?;
 
-        if wrote {
+        if wrote.is_some() {
             Ok(())
         } else {
             Err(WriteOnceError::AddressAlreadyExists(address))
