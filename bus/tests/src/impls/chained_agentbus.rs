@@ -220,6 +220,7 @@ impl ChainedAgentBus {
 #[cfg(test)]
 mod tests {
     use agentbus_simulator::LatencyConfig;
+    use agentbus_simulator::LatencyDistribution;
 
     use super::*;
     use crate::common::helpers::append_string_intention;
@@ -232,6 +233,7 @@ mod tests {
             Some(LatencyConfig {
                 max_latency: Duration::from_millis(20),
                 loss_fraction: 0.0,
+                distribution: LatencyDistribution::Uniform,
             }),
         ] {
             let env = Rc::new(Simulator::new(0).with_latency(latency));

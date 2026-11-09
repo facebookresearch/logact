@@ -12,3 +12,4 @@ license = "MIT"
 agentbus_api = { version = "0.1.0", path = "../api" }
 futures = { version = "0.3.34", features = ["async-await", "compat"] }
 rand = "0.10.3"
+rand_distr = "0.6"

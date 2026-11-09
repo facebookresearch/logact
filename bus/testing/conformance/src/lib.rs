@@ -32,6 +32,7 @@ use std::time::Duration;
 use agentbus_api::RetryConfig;
 use agentbus_api::environment::Environment;
 pub use agentbus_simulator::LatencyConfig;
+pub use agentbus_simulator::LatencyDistribution;
 use agentbus_simulator::Simulator;
 use anyhow::Result;
 use fbinit::FacebookInit;

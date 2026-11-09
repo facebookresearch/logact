@@ -19,6 +19,8 @@ use futures::future;
 use futures::select_biased;
 use rand::RngExt as _;
 use rand::rngs::StdRng;
+use rand_distr::Distribution as _;
+use rand_distr::Zipf;
 
 use crate::Simulator;
 
@@ -29,10 +31,21 @@ use crate::Simulator;
 /// backend, and a lost response never reaches the caller, who times out.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LatencyConfig {
-    /// Each hop's latency is uniform in `[0, max_latency]`...
+    /// Each hop's latency is drawn from `distribution`, up to `max_latency`...
     pub max_latency: Duration,
     /// ...unless the hop is lost, which happens with this probability.
     pub loss_fraction: f64,
+    pub distribution: LatencyDistribution,
+}
+
+/// How a hop's latency is drawn, up to [`LatencyConfig::max_latency`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LatencyDistribution {
+    /// Uniform in `[0, max_latency]`.
+    Uniform,
+    /// `k` milliseconds for `k` in `[1, max_latency]`, with probability
+    /// proportional to `1 / k^exponent`: mostly fast hops with a heavy tail.
+    Zipf { exponent: f64 },
 }
 
 impl LatencyConfig {
@@ -42,10 +55,19 @@ impl LatencyConfig {
     /// A hop's latency, or `None` if the hop is lost.
     fn sample(&self, rng: &mut StdRng) -> Option<Duration> {
         if rng.random_bool(self.loss_fraction) {
-            None
-        } else {
-            Some(rng.random_range(Duration::ZERO..=self.max_latency))
+            return None;
         }
+        Some(match self.distribution {
+            LatencyDistribution::Uniform => rng.random_range(Duration::ZERO..=self.max_latency),
+            LatencyDistribution::Zipf { exponent } => {
+                let max_ms = self.max_latency.as_millis() as f64;
+                if max_ms < 1.0 {
+                    return Some(Duration::ZERO);
+                }
+                let zipf = Zipf::new(max_ms, exponent).expect("the Zipf exponent should be valid");
+                Duration::from_millis(zipf.sample(rng) as u64)
+            }
+        })
     }
 }
 
@@ -164,6 +186,7 @@ mod tests {
     use std::rc::Rc;
 
     use agentbus_api::environment::Clock;
+    use rand::SeedableRng as _;
 
     use super::*;
     use crate::generate_seed;
@@ -174,6 +197,7 @@ mod tests {
         let config = LatencyConfig {
             max_latency: Duration::from_millis(10),
             loss_fraction,
+            distribution: LatencyDistribution::Uniform,
         };
         let env = Rc::new(Simulator::new(generate_seed()).with_latency(Some(config)));
         if !enabled {
@@ -218,6 +242,35 @@ mod tests {
             "the caller should time out at the timeout, got {waited:?}"
         );
         assert!(applied.is_none(), "a lost request should never run");
+    }
+
+    #[test]
+    fn zipf_latency_is_mostly_fast_with_a_tail_up_to_the_max() {
+        let config = LatencyConfig {
+            max_latency: Duration::from_millis(100),
+            loss_fraction: 0.0,
+            distribution: LatencyDistribution::Zipf { exponent: 1.5 },
+        };
+        let mut rng = StdRng::seed_from_u64(generate_seed());
+        let mut samples: Vec<_> = (0..1000)
+            .map(|_| config.sample(&mut rng).expect("no hop should be lost"))
+            .collect();
+        samples.sort();
+        assert!(
+            samples
+                .iter()
+                .all(|sample| (Duration::from_millis(1)..=config.max_latency).contains(sample)),
+            "every hop should take between 1ms and the max"
+        );
+        assert!(
+            samples[samples.len() / 2] <= Duration::from_millis(5),
+            "most hops should be fast, got median {:?}",
+            samples[samples.len() / 2]
+        );
+        assert!(
+            samples[samples.len() - 1] >= Duration::from_millis(20),
+            "the tail should reach well past the median"
+        );
     }
 
     #[test]

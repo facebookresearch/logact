@@ -233,42 +233,42 @@ mod defs {
     // The scenarios above, through lossy storage with retries: no transient
     // error may reach the caller.
 
-    #[scenario(sim_only, latency_ms = 20, loss = 0.05, retry)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_test_write_then_read_with_retry<F: WriteOnceSpaceTestFixture>(
         fixture: &F,
     ) -> Result<()> {
         run_test_write_then_read(fixture).await
     }
 
-    #[scenario(sim_only, latency_ms = 20, loss = 0.05, retry)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_test_read_nonexistent_with_retry<F: WriteOnceSpaceTestFixture>(
         fixture: &F,
     ) -> Result<()> {
         run_test_read_nonexistent(fixture).await
     }
 
-    #[scenario(sim_only, latency_ms = 20, loss = 0.05, retry)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_test_read_miss_then_write_with_retry<F: WriteOnceSpaceTestFixture>(
         fixture: &F,
     ) -> Result<()> {
         run_test_read_miss_then_write(fixture).await
     }
 
-    #[scenario(sim_only, latency_ms = 20, loss = 0.05, retry)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_test_space_isolation_with_retry<F: WriteOnceSpaceTestFixture>(
         fixture: &F,
     ) -> Result<()> {
         run_test_space_isolation(fixture).await
     }
 
-    #[scenario(sim_only, latency_ms = 20, loss = 0.05, retry)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_test_write_once_semantics_with_retry<F: WriteOnceSpaceTestFixture>(
         fixture: &F,
     ) -> Result<()> {
         run_test_write_once_semantics(fixture).await
     }
 
-    #[scenario(sim_only, latency_ms = 20, loss = 0.05, retry)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_test_different_clients_with_retry<F: WriteOnceSpaceTestFixture>(
         fixture: &F,
     ) -> Result<()> {
@@ -279,7 +279,7 @@ mod defs {
     /// lossy storage with retries. A writer that sees `AmbiguousWrite` reads the
     /// address back to learn whether it won. Each address has exactly one winner,
     /// whose value is stored, and no transient error reaches a writer.
-    #[scenario(sim_only, latency_ms = 20, loss = 0.05, retry)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_test_racing_writers_with_retry<F>(fixture: &F) -> Result<()>
     where
         F: WriteOnceSpaceTestFixture<Env = Simulator>,

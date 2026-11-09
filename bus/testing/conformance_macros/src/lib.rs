@@ -49,6 +49,11 @@
 //! simulator, which a scenario can pause and resume with
 //! `fixture.get_env().latency_injector().disable()` / `.enable()`.
 //!
+//! `zipf = <float>` (with `latency_ms`) instead draws each hop's latency from a
+//! Zipf distribution with that exponent: `k` milliseconds for `k` in
+//! `[1, latency_ms]`, with probability proportional to `1 / k^zipf`, i.e. mostly
+//! fast hops with a heavy tail.
+//!
 //! `#[scenario(sim_only, retry)]` wraps the bottom-most APIs a fixture builds in
 //! their retrying wrappers (e.g. `RetryingWriteOnceSpace`), with the fixed policy
 //! of `conformance::TestConfig::retry_config`. It requires `sim_only`.
@@ -90,6 +95,15 @@ fn parse_ttl(input: ParseStream) -> syn::Result<LitInt> {
     Ok(ttl)
 }
 
+/// Parse a non-negative Zipf exponent literal.
+fn parse_zipf(input: ParseStream) -> syn::Result<LitFloat> {
+    let exponent: LitFloat = input.parse()?;
+    if exponent.base10_parse::<f64>()? < 0.0 {
+        return Err(syn::Error::new_spanned(exponent, "`zipf` must be >= 0"));
+    }
+    Ok(exponent)
+}
+
 /// Parse a loss fraction literal in `[0, 1]`.
 fn parse_loss(input: ParseStream) -> syn::Result<LitFloat> {
     let loss: LitFloat = input.parse()?;
@@ -105,6 +119,7 @@ struct ConfigArgs {
     ttl_ms: Option<LitInt>,
     latency_ms: Option<LitInt>,
     loss: Option<LitFloat>,
+    zipf: Option<LitFloat>,
     retry: bool,
 }
 
@@ -122,6 +137,9 @@ impl ConfigArgs {
         } else if key == "loss" {
             input.parse::<Token![=]>()?;
             self.loss = Some(parse_loss(input)?);
+        } else if key == "zipf" {
+            input.parse::<Token![=]>()?;
+            self.zipf = Some(parse_zipf(input)?);
         } else if key == "retry" {
             self.retry = true;
         } else {
@@ -136,6 +154,9 @@ impl ConfigArgs {
         }
         if (self.latency_ms.is_some() || self.loss.is_some()) && envs != "sim_only" {
             return Err(input.error("`latency_ms` and `loss` require `sim_only`"));
+        }
+        if self.zipf.is_some() && self.latency_ms.is_none() {
+            return Err(input.error("`zipf` requires `latency_ms`"));
         }
         if self.retry && envs != "sim_only" {
             return Err(input.error("`retry` requires `sim_only`"));
@@ -164,10 +185,17 @@ impl ConfigArgs {
                 let loss = loss
                     .as_ref()
                     .map_or(quote! { 0.0 }, |loss| quote! { #loss });
+                let distribution = match &self.zipf {
+                    Some(exponent) => {
+                        quote! { ::conformance::LatencyDistribution::Zipf { exponent: #exponent } }
+                    }
+                    None => quote! { ::conformance::LatencyDistribution::Uniform },
+                };
                 some(quote! {
                     ::conformance::LatencyConfig {
                         max_latency: ::core::time::Duration::from_millis(#latency_ms),
                         loss_fraction: #loss,
+                        distribution: #distribution,
                     }
                 })
             }
@@ -213,7 +241,7 @@ impl Parse for ScenarioForArgs {
             } else if !config.parse_key(&key, input)? {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `suffix = <ident>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `retry`, `sim_only`, or `int_only`",
+                    "expected `suffix = <ident>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, `retry`, `sim_only`, or `int_only`",
                 ));
             }
         }
@@ -282,7 +310,7 @@ impl Parse for ScenarioArgs {
             } else if !config.parse_key(&key, input)? {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `sim_only`, `int_only`, `cardinality = <int>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, or `retry`",
+                    "expected `sim_only`, `int_only`, `cardinality = <int>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, or `retry`",
                 ));
             }
         }
@@ -500,6 +528,12 @@ mod tests {
             0.01
         );
         assert!(syn::parse_str::<ScenarioArgs>("sim_only, latency_ms = 0").is_ok());
+        let args =
+            syn::parse_str::<ScenarioArgs>("sim_only, latency_ms = 100, zipf = 1.5").unwrap();
+        assert_eq!(
+            args.config.zipf.unwrap().base10_parse::<f64>().unwrap(),
+            1.5
+        );
         assert!(syn::parse_str::<ScenarioArgs>("sim_only, loss = 1.0").is_ok());
         assert!(
             syn::parse_str::<ScenarioForArgs>("Fixture, suffix = test, sim_only, latency_ms = 5")
@@ -518,6 +552,9 @@ mod tests {
             "sim_only, loss = 1",
             "sim_only, loss = 1.5",
             "sim_only, loss = -0.5",
+            "sim_only, zipf = 1.5",
+            "sim_only, latency_ms = 10, zipf = -1.0",
+            "sim_only, latency_ms = 10, zipf = 1",
         ] {
             assert!(
                 syn::parse_str::<ScenarioArgs>(input).is_err(),

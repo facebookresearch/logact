@@ -520,6 +520,7 @@ impl SimulatorBarrier {
 mod latency;
 
 pub use latency::LatencyConfig;
+pub use latency::LatencyDistribution;
 pub use latency::LatencyInjector;
 
 #[cfg(test)]
