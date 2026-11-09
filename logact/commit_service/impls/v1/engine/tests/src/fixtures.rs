@@ -16,6 +16,8 @@ use std::rc::Rc;
 use agentbus_simulator::Simulator;
 use anyhow::Result;
 use conformance::TestConfig;
+use logact_commit_service_engine::RetryConfig;
+use logact_commit_service_engine::RetryingStorage;
 use logact_commit_service_engine::Storage;
 
 pub mod fault_injecting;
@@ -46,4 +48,16 @@ impl<F: ConformanceFixture<Impl: Storage>> StorageTestFixture for F {}
 /// (e.g. a commit service over a bus fixture) can share that simulator.
 pub trait EnvStorageFixture: StorageTestFixture<Env = Simulator> {
     fn try_new_on_env(env: Rc<Simulator>, config: &TestConfig) -> Result<Self>;
+}
+
+/// The bottom-most storage a simulator fixture builds: `storage` behind the
+/// simulator's injected latency and, with `retry`, retried.
+type Backend<S> = RetryingStorage<LatencyStorage<S>, Simulator>;
+
+fn backend<S>(storage: S, env: &Rc<Simulator>, retry: RetryConfig) -> Backend<S> {
+    RetryingStorage::new(
+        LatencyStorage::new(storage, env.clone()),
+        env.clone(),
+        retry,
+    )
 }

@@ -11,22 +11,25 @@ use agentbus_simulator::Simulator;
 use anyhow::Result;
 use conformance::TestConfig;
 use logact_commit_service_engine::InMemoryStorage;
+use logact_commit_service_engine::RetryConfig;
 use logact_commit_service_engine::ScopedStorage;
 
+use crate::fixtures::Backend;
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::EnvStorageFixture;
-use crate::fixtures::LatencyStorage;
 use crate::fixtures::SimulatorFixture;
+use crate::fixtures::backend;
 
 /// Runs the generic Storage conformance suite against a `ScopedStorage` wrapping
 /// an `InMemoryStorage`, so the prefix adapter is exercised as a full `Storage`.
 pub struct ScopedStorageFixture {
     env: Rc<Simulator>,
+    retry: RetryConfig,
 }
 
 impl ConformanceFixture for ScopedStorageFixture {
     type Env = Simulator;
-    type Impl = ScopedStorage<LatencyStorage<InMemoryStorage>>;
+    type Impl = ScopedStorage<Backend<InMemoryStorage>>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -35,15 +38,18 @@ impl ConformanceFixture for ScopedStorageFixture {
     fn create_impl(&self) -> Self::Impl {
         ScopedStorage::new(
             "scope/",
-            LatencyStorage::new(InMemoryStorage::new(), self.env.clone()),
+            backend(InMemoryStorage::new(), &self.env, self.retry),
         )
     }
 }
 
 impl EnvStorageFixture for ScopedStorageFixture {
     /// `InMemoryStorage` has no TTL, so `ttl` is ignored.
-    fn try_new_on_env(env: Rc<Simulator>, _config: &TestConfig) -> Result<Self> {
-        Ok(Self { env })
+    fn try_new_on_env(env: Rc<Simulator>, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            env,
+            retry: config.retry_config(),
+        })
     }
 }
 

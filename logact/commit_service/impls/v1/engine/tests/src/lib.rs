@@ -35,7 +35,7 @@ conformance::define_driver! {
     $,
     // Inputs — where this suite's scenarios and fixtures live.
     root = logact_commit_service_engine_tests, // this crate, by name (not `$crate`)
-    scenario_mods = [test_scenarios, fault_injection_scenarios], // files under `scenarios/`
+    scenario_mods = [test_scenarios, fault_injection_scenarios, retry], // files under `scenarios/`
     fixtures = storage_fixtures,               // fixture registry (variants.rs)
     // Suite name prefix. The driver derives every generated macro from it —
     // `storage_sim_suite!` / `storage_integration_suite!` (the entry points the
