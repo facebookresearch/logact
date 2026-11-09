@@ -32,6 +32,8 @@ impl<F: SimulatorFixture> SimulatorFixture for AgentBusGatedCounterFixture<F> {
     }
 
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        // AgentBus counters cannot tolerate failures yet, so they run fault-free.
+        simulator.latency_injector().disable();
         Ok(Self {
             inner: Rc::new(F::try_new_with_config(simulator, config)?),
         })

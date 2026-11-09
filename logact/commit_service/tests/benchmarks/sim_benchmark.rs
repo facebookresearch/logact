@@ -654,7 +654,7 @@ where
         &self,
         id: OperationId,
         operation: GatedCounterOperation,
-    ) -> OperationResult<GatedCounterOutput, Self::Tag> {
+    ) -> Option<OperationResult<GatedCounterOutput, Self::Tag>> {
         if let GatedCounterOperation::Counter(_) = operation
             && let Some(barrier) = &self.counter_barrier
         {

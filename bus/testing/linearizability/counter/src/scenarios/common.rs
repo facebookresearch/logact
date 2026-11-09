@@ -46,6 +46,7 @@ mod defs {
         Ok(())
     }
 
+    /// Fault-free, so every operation's output is checked.
     #[scenario(sim_only)]
     pub async fn run_counter_linearizability_3x8<F>(fixture: &F) -> Result<()>
     where
@@ -56,7 +57,7 @@ mod defs {
         check_counter_linearizability(fixture, 3, 8).await
     }
 
-    #[scenario(sim_only)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_counter_linearizability_2x2<F>(fixture: &F) -> Result<()>
     where
         F: ConformanceFixture<Env = Simulator>,
@@ -66,7 +67,7 @@ mod defs {
         check_counter_linearizability(fixture, 2, 2).await
     }
 
-    #[scenario(sim_only)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_counter_linearizability_4x5<F>(fixture: &F) -> Result<()>
     where
         F: ConformanceFixture<Env = Simulator>,
@@ -76,6 +77,8 @@ mod defs {
         check_counter_linearizability(fixture, 4, 5).await
     }
 
+    /// Fault-free: under loss, its hours of virtual time in timeouts would exceed
+    /// the simulator's iteration budget.
     #[scenario(sim_only)]
     pub async fn run_counter_linearizability_3x100<F>(fixture: &F) -> Result<()>
     where
@@ -86,7 +89,7 @@ mod defs {
         check_counter_linearizability(fixture, 3, 100).await
     }
 
-    #[scenario(sim_only)]
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
     pub async fn run_counter_linearizability_10x3<F>(fixture: &F) -> Result<()>
     where
         F: ConformanceFixture<Env = Simulator>,
@@ -94,16 +97,6 @@ mod defs {
         <F::Impl as LinearizabilityImplementation>::Object: LinearizableObject<Spec = CounterSpec>,
     {
         check_counter_linearizability(fixture, 10, 3).await
-    }
-
-    #[scenario(sim_only, latency_ms = 20)]
-    pub async fn run_counter_linearizability_4x5_with_latency<F>(fixture: &F) -> Result<()>
-    where
-        F: ConformanceFixture<Env = Simulator>,
-        F::Impl: LinearizabilityImplementation,
-        <F::Impl as LinearizabilityImplementation>::Object: LinearizableObject<Spec = CounterSpec>,
-    {
-        check_counter_linearizability(fixture, 4, 5).await
     }
 
     #[scenario_for(

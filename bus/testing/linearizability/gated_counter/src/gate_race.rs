@@ -72,12 +72,12 @@ impl<const STALE_GATE_WRITE: bool> LinearizableObject for GateRaceCounter<STALE_
         &self,
         _id: OperationId,
         operation: GatedCounterOperation,
-    ) -> OperationResult<GatedCounterOutput, Self::Tag> {
+    ) -> Option<OperationResult<GatedCounterOutput, Self::Tag>> {
         if !operation.is_write() {
             self.readers_ready.wait().await;
         }
         let mut state = self.state.get();
-        match operation {
+        Some(match operation {
             GatedCounterOperation::SetGate(open) => {
                 self.writers_ready.wait().await;
                 self.counter_written.wait().await;
@@ -119,7 +119,7 @@ impl<const STALE_GATE_WRITE: bool> LinearizableObject for GateRaceCounter<STALE_
                 output: GatedCounterOutput::Gate(state.gate_open),
                 tag: self.tag(),
             },
-        }
+        })
     }
 }
 
@@ -145,7 +145,7 @@ impl<const STALE_GATE_WRITE: bool> LinearizabilityImplementation
         &self,
         history: &History<GatedCounterOperation, GatedCounterOutput, u64>,
     ) -> Result<Vec<OperationId>> {
-        Ok(candidate_from_ordered_tags::<GatedCounterSpec, _>(history))
+        candidate_from_ordered_tags::<GatedCounterSpec, _>(history, [])
     }
 }
 

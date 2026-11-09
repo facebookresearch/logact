@@ -18,6 +18,7 @@ use super::history::CompletedOperation;
 use super::history::History;
 use super::history::Observation;
 use super::history::OperationId;
+use super::history::UnknownOperation;
 use super::operation::OperationResult;
 
 /// Executes one client's commands and records their observed results.
@@ -59,7 +60,7 @@ where
         action: Action,
     ) where
         Action: Fn(OperationId, Operation) -> ActionFuture,
-        ActionFuture: Future<Output = OperationResult<Output, Tag>>,
+        ActionFuture: Future<Output = Option<OperationResult<Output, Tag>>>,
     {
         for (sequence, operation) in self.operations.into_iter().enumerate() {
             if let Some((_, pause)) = self.pause.filter(|(at, _)| *at == sequence) {
@@ -78,16 +79,24 @@ where
             let start_time = environment.with_clock(|clock| clock.monotonic_time());
             let result = action(id, operation.clone()).await;
             let end_time = environment.with_clock(|clock| clock.monotonic_time());
-            self.history.record(Observation {
-                id,
-                start_time,
-                end_time,
-                completed: CompletedOperation {
+            match result {
+                Some(result) => self.history.record(Observation {
+                    id,
+                    start_time,
+                    end_time,
+                    completed: CompletedOperation {
+                        operation,
+                        output: result.output,
+                        tag: result.tag,
+                    },
+                }),
+                None => self.history.record_unknown(UnknownOperation {
+                    id,
+                    start_time,
+                    end_time,
                     operation,
-                    output: result.output,
-                    tag: result.tag,
-                },
-            });
+                }),
+            }
         }
     }
 }

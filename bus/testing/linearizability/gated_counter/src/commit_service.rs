@@ -7,6 +7,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -25,6 +26,7 @@ use agentbus_tests::common::helpers::read_linearizable_snapshot;
 use anyhow::Context as _;
 use anyhow::Result;
 use anyhow::bail;
+use counter_suite::commit_service::commit_outcome_unknown;
 use counter_suite::counter::CounterCommand;
 use counter_suite::counter::CounterCommandExt as _;
 use counter_suite::counter::CounterError;
@@ -32,6 +34,7 @@ use counter_suite::counter::CounterSpec;
 use linearizability::history::History;
 use linearizability::history::Observation;
 use linearizability::history::OperationId;
+use linearizability::history::UnknownOperation;
 use linearizability::object::LinearizabilityImplementation;
 use linearizability::object::LinearizableObject;
 use linearizability::object::OperationResult;
@@ -146,7 +149,11 @@ where
             Some(1000),
         )
         .await;
-        let candidate = candidate_from_bus(&entries, &history.observations())?;
+        let candidate = candidate_from_bus(
+            &entries,
+            &history.observations(),
+            &history.unknown_operations(),
+        )?;
         history.complete_candidate(candidate)
     }
 }
@@ -285,10 +292,15 @@ where
         &self,
         id: OperationId,
         operation: GatedCounterOperation,
-    ) -> OperationResult<GatedCounterOutput, Self::Tag> {
-        self.execute_gated(GatedCounterCommand::new(id, operation))
+    ) -> Option<OperationResult<GatedCounterOutput, Self::Tag>> {
+        match self
+            .execute_gated(GatedCounterCommand::new(id, operation))
             .await
-            .expect("CommitService gated-counter adapter should execute")
+        {
+            Ok(result) => Some(result),
+            Err(error) if commit_outcome_unknown(&error) => None,
+            Err(error) => panic!("CommitService gated-counter adapter should execute: {error:#}"),
+        }
     }
 }
 
@@ -415,9 +427,12 @@ fn policy_batch_applies(applied_version: Option<i64>, batch: &PolicyBatch) -> bo
             .is_none_or(|current| batch.new_version > current)
 }
 
+/// Places completed counter operations, and the unknown ones whose logged
+/// attempt committed, at their AgentBus positions among the gate writes.
 fn candidate_from_bus(
     entries: &[BusEntry],
     observations: &[Observation<GatedCounterOperation, GatedCounterOutput, PolicyTag>],
+    unknown: &[UnknownOperation<GatedCounterOperation>],
 ) -> Result<Vec<OperationId>> {
     let mut writes: Vec<_> = observations
         .iter()
@@ -455,9 +470,42 @@ fn candidate_from_bus(
             );
         };
         anyhow::ensure!(
-            proposals.insert(position, observation).is_none(),
+            proposals.insert(position, observation.id).is_none(),
             "multiple counter operations recorded at AgentBus position {position}"
         );
+    }
+    let unknown: HashMap<_, _> = unknown
+        .iter()
+        .filter_map(|operation| match operation.operation {
+            GatedCounterOperation::Counter(counter) => Some((operation.id, counter)),
+            _ => None,
+        })
+        .collect();
+    let committed: HashSet<_> = entries
+        .iter()
+        .filter_map(|entry| match entry.payload.as_ref()?.payload.as_ref()? {
+            payload::Payload::Commit(commit) => Some(commit.intention_id),
+            _ => None,
+        })
+        .collect();
+    let mut landed = HashSet::new();
+    for entry in entries {
+        let position = entry
+            .header
+            .as_ref()
+            .map(|header| header.log_position)
+            .context("AgentBus entry has no header")?;
+        if let Some(command) = counter_command(entry)?
+            && unknown.get(&command.id) == Some(&command.operation)
+            && committed.contains(&position)
+        {
+            anyhow::ensure!(
+                landed.insert(command.id),
+                "operation {:?} committed twice",
+                command.id
+            );
+            proposals.insert(position, command.id);
+        }
     }
 
     let mut candidate = Vec::with_capacity(observations.len());
@@ -487,7 +535,7 @@ fn candidate_from_bus(
             applied_version.is_some_and(|applied| applied >= minimum_version),
             "completed proposal at {position} requires policy version {minimum_version}, but only {applied_version:?} is applied"
         );
-        candidate.push(proposal.id.clone());
+        candidate.push(proposal);
     }
     candidate.extend(writes.map(|(_, id)| id));
     anyhow::ensure!(proposals.is_empty(), "AgentBus candidate omitted proposals");

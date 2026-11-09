@@ -5,11 +5,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::rc::Rc;
 use std::time::Duration;
 
 use agentbus_simulator::Simulator;
+use anyhow::Context as _;
 use anyhow::Result;
 
 use crate::history::History;
@@ -52,11 +54,13 @@ pub trait LinearizableObject {
     type Spec: SequentialSpec;
     type Tag: Clone + 'static;
 
+    /// Returns `None` when the outcome is unknown (e.g. the operation timed
+    /// out): it may or may not have taken effect.
     async fn execute(
         &self,
         id: OperationId,
         operation: <Self::Spec as SequentialSpec>::Operation,
-    ) -> OperationResult<<Self::Spec as SequentialSpec>::Output, Self::Tag>;
+    ) -> Option<OperationResult<<Self::Spec as SequentialSpec>::Output, Self::Tag>>;
 }
 
 /// The operation history recorded for a linearizable object.
@@ -155,12 +159,16 @@ where
     history.verify(
         &candidate,
         <<Implementation as LinearizabilityImplementation>::Object as LinearizableObject>::Spec::new(),
-        |state, operation, output| {
-            <Implementation::Object as LinearizableObject>::Spec::verify_and_apply(
-                state,
-                operation,
-                output,
-            )
+        |state, operation, output| match output {
+            Some(output) => {
+                <Implementation::Object as LinearizableObject>::Spec::verify_and_apply(
+                    state, operation, output,
+                )
+            }
+            None => {
+                SequentialSpec::apply(state, operation);
+                Ok(())
+            }
         },
     )?;
     Ok(completed)
@@ -205,29 +213,52 @@ where
 }
 
 /// Construct a candidate order when every operation has a comparable tag.
+/// `landed` gives the tags of the operations with an unknown outcome that took
+/// effect.
 pub fn candidate_from_ordered_tags<Spec, Tag>(
     history: &History<Spec::Operation, Spec::Output, Tag>,
-) -> Vec<OperationId>
+    landed: impl IntoIterator<Item = (OperationId, Tag)>,
+) -> Result<Vec<OperationId>>
 where
     Spec: SequentialSpec,
     Tag: Clone + Ord,
 {
-    let mut observations = history.observations();
-    observations.sort_by(|first, second| {
-        first
-            .completed
-            .tag
-            .cmp(&second.completed.tag)
-            .then(
-                (!Spec::is_write(&first.completed.operation))
-                    .cmp(&!Spec::is_write(&second.completed.operation)),
-            )
-            .then(first.start_time.cmp(&second.start_time))
-            .then(first.id.client.cmp(&second.id.client))
-            .then(first.id.sequence.cmp(&second.id.sequence))
-    });
-    observations
+    let unknown: HashMap<_, _> = history
+        .unknown_operations()
         .into_iter()
-        .map(|observation| observation.id)
-        .collect()
+        .map(|operation| (operation.id, operation))
+        .collect();
+    let mut entries = history
+        .observations()
+        .into_iter()
+        .map(|observation| {
+            (
+                observation.completed.tag,
+                !Spec::is_write(&observation.completed.operation),
+                observation.start_time,
+                observation.id,
+            )
+        })
+        .collect::<Vec<_>>();
+    for (id, tag) in landed {
+        let operation = unknown
+            .get(&id)
+            .with_context(|| format!("{id:?} is not an operation with an unknown outcome"))?;
+        entries.push((
+            tag,
+            !Spec::is_write(&operation.operation),
+            operation.start_time,
+            id,
+        ));
+    }
+    entries.sort_by(|first, second| {
+        first
+            .0
+            .cmp(&second.0)
+            .then(first.1.cmp(&second.1))
+            .then(first.2.cmp(&second.2))
+            .then(first.3.client.cmp(&second.3.client))
+            .then(first.3.sequence.cmp(&second.3.sequence))
+    });
+    Ok(entries.into_iter().map(|(_, _, _, id)| id).collect())
 }

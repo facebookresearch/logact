@@ -22,8 +22,25 @@ mod defs {
     use crate::model::GatedCounterSpec;
     use crate::model::GatedCounterWorkload;
 
+    /// Fault-free, so every operation's output is checked.
     #[scenario(sim_only)]
     pub async fn run_gated_counter_linearizability<F>(fixture: &F) -> Result<()>
+    where
+        F: ConformanceFixture<Env = Simulator>,
+        F::Impl: LinearizabilityImplementation,
+        <F::Impl as LinearizabilityImplementation>::Object:
+            LinearizableObject<Spec = GatedCounterSpec>,
+    {
+        run_linearizability_test(
+            GatedCounterWorkload::new(3, 8, 8),
+            Rc::new(fixture.create_impl()),
+        )
+        .await?;
+        Ok(())
+    }
+
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
+    pub async fn run_gated_counter_linearizability_with_failures<F>(fixture: &F) -> Result<()>
     where
         F: ConformanceFixture<Env = Simulator>,
         F::Impl: LinearizabilityImplementation,

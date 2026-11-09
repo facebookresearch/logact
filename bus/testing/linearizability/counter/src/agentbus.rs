@@ -20,6 +20,7 @@ use agent_bus_proto_rust::agent_bus::Intention;
 use agent_bus_proto_rust::agent_bus::Payload;
 use agent_bus_proto_rust::agent_bus::Vote;
 use agentbus_api::AgentBus;
+use agentbus_api::AgentBusError;
 use agentbus_api::Environment;
 use agentbus_core::decider::Decider;
 use agentbus_core::vote_trackers::create_vote_tracker_for_decider_policy;
@@ -336,10 +337,12 @@ impl<T: AgentBus, E: Environment> LinearizableObject for AgentBusCounter<T, E> {
         &self,
         id: OperationId,
         operation: CounterOperation,
-    ) -> OperationResult<CounterOutput, Self::Tag> {
-        self.execute_counter(CounterCommand::new(id, operation))
-            .await
-            .expect("AgentBus counter adapter should execute")
+    ) -> Option<OperationResult<CounterOutput, Self::Tag>> {
+        Some(
+            self.execute_counter(CounterCommand::new(id, operation))
+                .await
+                .expect("AgentBus counter adapter should execute"),
+        )
     }
 }
 
@@ -460,7 +463,7 @@ where
             )?);
         }
         verify_log_evidence(&history.observations(), &command_histories)?;
-        Ok(candidate_from_ordered_tags::<CounterSpec, _>(history))
+        candidate_from_ordered_tags::<CounterSpec, _>(history, [])
     }
 
     fn on_complete(&self) -> Option<Rc<dyn Fn()>> {
@@ -579,6 +582,14 @@ fn verify_log_evidence(
         );
     }
     Ok(())
+}
+
+/// Whether a failed AgentBus operation may or may not have taken effect.
+pub fn outcome_unknown(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<AgentBusError>(),
+        Some(AgentBusError::Timeout(_) | AgentBusError::Unavailable(_))
+    )
 }
 
 pub fn decisions(entries: &[BusEntry]) -> HashMap<i64, Decision> {

@@ -25,6 +25,7 @@ use anyhow::Context as _;
 use anyhow::Result;
 use linearizability::history::Observation;
 use linearizability::history::OperationId;
+use linearizability::history::UnknownOperation;
 use linearizability::object::Client;
 use linearizability::object::HistoryFor;
 use linearizability::object::LinearizabilityImplementation;
@@ -32,11 +33,13 @@ use linearizability::object::LinearizableObject;
 use linearizability::object::OperationResult;
 use linearizability::object::candidate_from_ordered_tags;
 use linearizability::object::run_linearizability_test;
+use logact_commit_service_api::CommitError;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_tests::fixtures::CommitServiceTestFixture;
 use rand::RngExt as _;
 
+use crate::agentbus::outcome_unknown;
 use crate::counter::CounterCommand;
 use crate::counter::CounterCommandExt as _;
 use crate::counter::CounterError;
@@ -45,7 +48,8 @@ use crate::counter::CounterOutput;
 use crate::counter::CounterSpec;
 use crate::counter::counter_command;
 
-type CounterLog = BTreeMap<i64, (CounterCommand, bool)>;
+/// Each counter intention and its decision, if any.
+type CounterLog = BTreeMap<i64, (CounterCommand, Option<bool>)>;
 
 /// The reason V1 records when it aborts an intention it found no decision for.
 const FORCED_ABORT_REASON: &str = "no decision before the log was drained";
@@ -113,15 +117,11 @@ impl CounterReplay {
         Some(self.counter.value())
     }
 
-    fn counter_log(&self) -> Result<CounterLog> {
+    fn counter_log(&self) -> CounterLog {
         self.intentions
             .iter()
             .map(|(&position, &command)| {
-                let approved = *self
-                    .decisions
-                    .get(&position)
-                    .with_context(|| format!("counter intention at {position} has no decision"))?;
-                Ok((position, (command, approved)))
+                (position, (command, self.decisions.get(&position).copied()))
             })
             .collect()
     }
@@ -153,10 +153,15 @@ impl<S: CommitSvc> LinearizableObject for CommitServiceCounter<S> {
         &self,
         id: OperationId,
         operation: CounterOperation,
-    ) -> OperationResult<CounterOutput, Self::Tag> {
-        self.execute_counter(CounterCommand::new(id, operation))
+    ) -> Option<OperationResult<CounterOutput, Self::Tag>> {
+        match self
+            .execute_counter(CounterCommand::new(id, operation))
             .await
-            .expect("CommitService counter adapter should execute")
+        {
+            Ok(result) => Some(result),
+            Err(error) if commit_outcome_unknown(&error) => None,
+            Err(error) => panic!("CommitService counter adapter should execute: {error:#}"),
+        }
     }
 }
 
@@ -249,7 +254,7 @@ impl<S: CommitSvc> CommitServiceCounter<S> {
         while self.replay.borrow().next_log_position < tail {
             self.poll_and_process().await?;
         }
-        self.replay.borrow().counter_log()
+        Ok(self.replay.borrow().counter_log())
     }
 }
 
@@ -323,15 +328,31 @@ where
         for client in clients {
             logs.push(client.counter_log().await?);
         }
-        verify_log_evidence(&history.observations(), &logs)?;
-        Ok(candidate_from_ordered_tags::<CounterSpec, _>(history))
+        let landed = verify_log_evidence(
+            &history.observations(),
+            &history.unknown_operations(),
+            &logs,
+        )?;
+        candidate_from_ordered_tags::<CounterSpec, _>(history, landed)
     }
 }
 
+/// Whether a failed commit-service counter operation may or may not have taken
+/// effect.
+pub fn commit_outcome_unknown(error: &anyhow::Error) -> bool {
+    matches!(
+        error.downcast_ref::<CommitError>(),
+        Some(CommitError::Timeout(_) | CommitError::Unavailable(_))
+    ) || outcome_unknown(error)
+}
+
+/// Checks the completed operations against the log, and returns the operations
+/// with an unknown outcome that took effect, with their intention positions.
 fn verify_log_evidence(
     observations: &[Observation<CounterOperation, CounterOutput, i64>],
+    unknown: &[UnknownOperation<CounterOperation>],
     logs: &[CounterLog],
-) -> Result<()> {
+) -> Result<Vec<(OperationId, i64)>> {
     let log = logs
         .first()
         .context("counter should retain at least one client")?;
@@ -355,18 +376,38 @@ fn verify_log_evidence(
             command.id == observation.id && command.operation == observation.completed.operation,
             "counter response at {position} does not match its logged command"
         );
+        let approved =
+            approved.with_context(|| format!("counter response at {position} has no decision"))?;
         anyhow::ensure!(
-            observation.completed.output.is_ok() == (*approved || !command.operation.is_write()),
+            observation.completed.output.is_ok() == (approved || !command.operation.is_write()),
             "counter response at {position} disagrees with its logged decision"
         );
     }
-    anyhow::ensure!(
-        observations.len() == log.len(),
-        "counter response count {} differs from logged intention count {}",
-        observations.len(),
-        log.len()
-    );
-    Ok(())
+
+    let unknown: HashMap<_, _> = unknown
+        .iter()
+        .map(|operation| (operation.id, operation.operation))
+        .collect();
+    let mut logged_unknown = HashSet::new();
+    let mut landed = Vec::new();
+    for (&position, (command, approved)) in log {
+        if observed_positions.contains(&position) {
+            continue;
+        }
+        anyhow::ensure!(
+            unknown.get(&command.id) == Some(&command.operation),
+            "logged intention at {position} matches no counter operation"
+        );
+        anyhow::ensure!(
+            logged_unknown.insert(command.id),
+            "operation {:?} is logged twice",
+            command.id
+        );
+        if *approved == Some(true) && command.operation.is_write() {
+            landed.push((command.id, position));
+        }
+    }
+    Ok(landed)
 }
 
 pub async fn run_counter_with_denials<F>(fixture: Rc<F>) -> Result<()>
@@ -389,9 +430,15 @@ where
     let clients = implementation.clients.clone();
     run_linearizability_test(vec![Client::new("counter", operations)], implementation).await?;
     let client = clients.borrow()[0].clone();
-    let log = client.replay.borrow().counter_log()?;
-    let committed = log.values().filter(|(_, approved)| *approved).count();
-    let aborted = log.len() - committed;
+    let log = client.replay.borrow().counter_log();
+    let committed = log
+        .values()
+        .filter(|(_, approved)| *approved == Some(true))
+        .count();
+    let aborted = log
+        .values()
+        .filter(|(_, approved)| *approved == Some(false))
+        .count();
     anyhow::ensure!(
         log.len() == write_count
             && committed == write_count.div_ceil(2)
@@ -497,9 +544,10 @@ mod tests {
                 tag: 0,
             },
         };
-        let log = CounterLog::from([(0, (command, true))]);
+        let log = CounterLog::from([(0, (command, Some(true)))]);
         verify_log_evidence(
             std::slice::from_ref(&observation),
+            &[],
             std::slice::from_ref(&log),
         )
         .unwrap();
@@ -545,11 +593,13 @@ mod tests {
                 "no logged intention",
             ),
         ] {
-            let error = verify_log_evidence(&[mutated], std::slice::from_ref(&log)).unwrap_err();
+            let error =
+                verify_log_evidence(&[mutated], &[], std::slice::from_ref(&log)).unwrap_err();
             assert!(error.to_string().contains(expected));
         }
         let error = verify_log_evidence(
             &[observation.clone(), observation.clone()],
+            &[],
             std::slice::from_ref(&log),
         )
         .unwrap_err();
@@ -558,9 +608,10 @@ mod tests {
                 .to_string()
                 .contains("duplicate counter response position")
         );
-        let error = verify_log_evidence(&[], std::slice::from_ref(&log)).unwrap_err();
-        assert!(error.to_string().contains("response count"));
-        let error = verify_log_evidence(&[observation], &[log, CounterLog::new()]).unwrap_err();
+        let error = verify_log_evidence(&[], &[], std::slice::from_ref(&log)).unwrap_err();
+        assert!(error.to_string().contains("matches no counter operation"));
+        let error =
+            verify_log_evidence(&[observation], &[], &[log, CounterLog::new()]).unwrap_err();
         assert!(error.to_string().contains("history differs"));
     }
 }

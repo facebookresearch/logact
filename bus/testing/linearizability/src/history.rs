@@ -37,15 +37,82 @@ pub struct Observation<Operation, Output, Tag> {
     pub completed: CompletedOperation<Operation, Output, Tag>,
 }
 
-/// Completed concurrent operations and their observed results.
+/// An operation whose outcome its client never learned (e.g. it timed out). It
+/// may or may not have taken effect, and if it did, at any point after it
+/// started: it constrains no later operation, not even its own client's.
+#[derive(Clone, Debug)]
+pub struct UnknownOperation<Operation> {
+    pub id: OperationId,
+    pub start_time: MonotonicInstant,
+    /// When the client gave up on the operation.
+    pub end_time: MonotonicInstant,
+    pub operation: Operation,
+}
+
+/// Concurrent operations and their observed results.
 pub struct History<Operation, Output, Tag> {
     observations: RefCell<Vec<Observation<Operation, Output, Tag>>>,
+    unknown: RefCell<Vec<UnknownOperation<Operation>>>,
+}
+
+/// One recorded operation; `output` is `None` when its outcome is unknown.
+struct Record<'a, Operation, Output> {
+    id: OperationId,
+    start_time: MonotonicInstant,
+    client_end_time: MonotonicInstant,
+    operation: &'a Operation,
+    output: Option<&'a Output>,
+}
+
+impl<Operation, Output> Record<'_, Operation, Output> {
+    /// `None` denotes an unbounded linearization interval.
+    fn linearization_end_time(&self) -> Option<MonotonicInstant> {
+        self.output.map(|_| self.client_end_time)
+    }
+
+    fn precedes(&self, after: &Self) -> bool {
+        self.linearization_end_time().is_some_and(|end_time| {
+            (self.id.client == after.id.client && self.id.sequence < after.id.sequence)
+                || end_time < after.start_time
+        })
+    }
+}
+
+fn records<'a, Operation, Output, Tag>(
+    observations: &'a [Observation<Operation, Output, Tag>],
+    unknown: &'a [UnknownOperation<Operation>],
+) -> Result<HashMap<OperationId, Record<'a, Operation, Output>>> {
+    let records = observations
+        .iter()
+        .map(|observation| Record {
+            id: observation.id,
+            start_time: observation.start_time,
+            client_end_time: observation.end_time,
+            operation: &observation.completed.operation,
+            output: Some(&observation.completed.output),
+        })
+        .chain(unknown.iter().map(|operation| Record {
+            id: operation.id,
+            start_time: operation.start_time,
+            client_end_time: operation.end_time,
+            operation: &operation.operation,
+            output: None,
+        }));
+    let mut by_id = HashMap::new();
+    for record in records {
+        anyhow::ensure!(
+            by_id.insert(record.id, record).is_none(),
+            "history contains duplicate operation IDs"
+        );
+    }
+    Ok(by_id)
 }
 
 impl<Operation, Output, Tag> History<Operation, Output, Tag> {
     pub fn new() -> Self {
         Self {
             observations: RefCell::new(Vec::new()),
+            unknown: RefCell::new(Vec::new()),
         }
     }
 
@@ -54,7 +121,12 @@ impl<Operation, Output, Tag> History<Operation, Output, Tag> {
         self.observations.borrow_mut().push(observation);
     }
 
-    /// Return a cloned snapshot of the recorded observations.
+    /// Add one operation whose outcome is unknown to the history.
+    pub fn record_unknown(&self, operation: UnknownOperation<Operation>) {
+        self.unknown.borrow_mut().push(operation);
+    }
+
+    /// Return a cloned snapshot of the completed operations.
     pub fn observations(&self) -> Vec<Observation<Operation, Output, Tag>>
     where
         Operation: Clone,
@@ -64,8 +136,18 @@ impl<Operation, Output, Tag> History<Operation, Output, Tag> {
         self.observations.borrow().clone()
     }
 
-    /// Insert operations omitted from an anchored candidate while preserving
-    /// client order and real-time precedence.
+    /// Return a cloned snapshot of the operations whose outcome is unknown.
+    pub fn unknown_operations(&self) -> Vec<UnknownOperation<Operation>>
+    where
+        Operation: Clone,
+    {
+        self.unknown.borrow().clone()
+    }
+
+    /// Insert completed operations omitted from an anchored candidate while
+    /// preserving client order and real-time precedence. Operations whose outcome
+    /// is unknown are never inserted: the candidate includes exactly those that
+    /// took effect.
     ///
     /// Each missing operation is inserted at its earliest legal position. This
     /// is useful when the anchors identify the intended gap or when alternative
@@ -77,14 +159,8 @@ impl<Operation, Output, Tag> History<Operation, Output, Tag> {
     /// search alternative candidates themselves.
     pub fn complete_candidate(&self, mut candidate: Vec<OperationId>) -> Result<Vec<OperationId>> {
         let observations = self.observations.borrow();
-        let by_id: HashMap<_, _> = observations
-            .iter()
-            .map(|observation| (observation.id.clone(), observation))
-            .collect();
-        anyhow::ensure!(
-            by_id.len() == observations.len(),
-            "history contains duplicate operation IDs"
-        );
+        let unknown = self.unknown.borrow();
+        let by_id = records(&observations, &unknown)?;
 
         let candidate_ids: HashSet<_> = candidate.iter().cloned().collect();
         anyhow::ensure!(
@@ -96,14 +172,13 @@ impl<Operation, Output, Tag> History<Operation, Output, Tag> {
         let mut missing: Vec<_> = observations
             .iter()
             .filter(|observation| !candidate_ids.contains(&observation.id))
+            .map(|observation| &by_id[&observation.id])
             .collect();
         while !missing.is_empty() {
             let source = missing
                 .iter()
                 .enumerate()
-                .filter(|(_, observation)| {
-                    !missing.iter().any(|other| precedes(other, observation))
-                })
+                .filter(|(_, record)| !missing.iter().any(|other| other.precedes(record)))
                 .min_by(|(_, left), (_, right)| {
                     left.id
                         .client
@@ -114,80 +189,75 @@ impl<Operation, Output, Tag> History<Operation, Output, Tag> {
                 .ok_or_else(|| {
                     anyhow::anyhow!("unanchored operations contain an ordering cycle")
                 })?;
-            let observation = missing.remove(source);
+            let record = missing.remove(source);
 
             let mut after = 0;
             let mut before = candidate.len();
             for (index, id) in candidate.iter().enumerate() {
-                let placed = by_id[id];
-                if precedes(placed, observation) {
+                let placed = &by_id[id];
+                if placed.precedes(record) {
                     after = after.max(index + 1);
                 }
-                if precedes(observation, placed) {
+                if record.precedes(placed) {
                     before = before.min(index);
                 }
             }
-            anyhow::ensure!(
-                after <= before,
-                "no candidate position for {:?}",
-                observation.id
-            );
-            candidate.insert(after, observation.id.clone());
+            anyhow::ensure!(after <= before, "no candidate position for {:?}", record.id);
+            candidate.insert(after, record.id);
         }
         Ok(candidate)
     }
 
     /// Verify that `candidate` is a legal linearization of the observed history.
+    /// It must contain every completed operation once, and exactly those
+    /// operations with an unknown outcome that took effect, whose outputs are
+    /// then `None`.
     pub fn verify<State>(
         &self,
         candidate: &[OperationId],
         mut state: State,
-        mut verify_and_apply: impl FnMut(&mut State, &Operation, &Output) -> Result<()>,
+        mut verify_and_apply: impl FnMut(&mut State, &Operation, Option<&Output>) -> Result<()>,
     ) -> Result<()> {
         let observations = self.observations.borrow();
-        let by_id: HashMap<_, _> = observations
-            .iter()
-            .map(|observation| (observation.id.clone(), observation))
-            .collect();
-        anyhow::ensure!(
-            by_id.len() == observations.len(),
-            "history contains duplicate operation IDs"
-        );
+        let unknown = self.unknown.borrow();
+        let by_id = records(&observations, &unknown)?;
 
         let candidate_ids: HashSet<_> = candidate.iter().collect();
         anyhow::ensure!(
-            candidate.len() == observations.len()
-                && candidate_ids.len() == candidate.len()
-                && candidate.iter().all(|id| by_id.contains_key(id)),
-            "candidate must contain every observed operation exactly once"
+            candidate_ids.len() == candidate.len()
+                && candidate.iter().all(|id| by_id.contains_key(id))
+                && observations
+                    .iter()
+                    .all(|observation| candidate_ids.contains(&observation.id)),
+            "candidate must contain every completed operation exactly once"
         );
 
-        let mut observations_by_client: HashMap<usize, Vec<_>> = HashMap::new();
-        for observation in observations.iter() {
+        let mut records_by_client: HashMap<usize, Vec<_>> = HashMap::new();
+        for record in by_id.values() {
             anyhow::ensure!(
-                observation.start_time <= observation.end_time,
+                record.start_time <= record.client_end_time,
                 "operation {:?} ended before it started",
-                observation.id
+                record.id
             );
-            observations_by_client
-                .entry(observation.id.client)
+            records_by_client
+                .entry(record.id.client)
                 .or_default()
-                .push(observation);
+                .push(record);
         }
-        for (client, client_observations) in &mut observations_by_client {
-            client_observations.sort_unstable_by_key(|observation| observation.id.sequence);
+        for (client, client_records) in &mut records_by_client {
+            client_records.sort_unstable_by_key(|record| record.id.sequence);
             anyhow::ensure!(
-                client_observations
+                client_records
                     .iter()
-                    .map(|observation| observation.id.sequence)
-                    .eq(0..client_observations.len()),
+                    .map(|record| record.id.sequence)
+                    .eq(0..client_records.len()),
                 "client {client} has a malformed operation sequence"
             );
-            for neighbours in client_observations.windows(2) {
+            for neighbours in client_records.windows(2) {
                 let before = neighbours[0];
                 let after = neighbours[1];
                 anyhow::ensure!(
-                    before.end_time <= after.start_time,
+                    before.client_end_time <= after.start_time,
                     "client {client} operations {} and {} overlap",
                     before.id.sequence,
                     after.id.sequence
@@ -200,51 +270,33 @@ impl<Operation, Output, Tag> History<Operation, Output, Tag> {
             .enumerate()
             .map(|(position, id)| (id, position))
             .collect();
-        let mut last_sequence_by_client = HashMap::new();
-        for id in candidate {
-            if let Some(previous) = last_sequence_by_client.insert(id.client, id.sequence) {
+        for before in candidate.iter().map(|id| &by_id[id]) {
+            for after in candidate.iter().map(|id| &by_id[id]) {
+                if !before.precedes(after) || positions[&before.id] < positions[&after.id] {
+                    continue;
+                }
                 anyhow::ensure!(
-                    previous < id.sequence,
+                    before.id.client != after.id.client,
                     "candidate reverses client {} operations {} and {}",
-                    id.client,
-                    previous,
-                    id.sequence
+                    before.id.client,
+                    before.id.sequence,
+                    after.id.sequence
+                );
+                anyhow::bail!(
+                    "candidate places {:?} after {:?}, despite real-time precedence",
+                    before.id,
+                    after.id
                 );
             }
         }
 
-        for before in observations.iter() {
-            for after in observations.iter() {
-                if before.end_time < after.start_time {
-                    anyhow::ensure!(
-                        positions[&before.id] < positions[&after.id],
-                        "candidate places {:?} after {:?}, despite real-time precedence",
-                        before.id,
-                        after.id
-                    );
-                }
-            }
-        }
-
         for id in candidate {
-            let observed = by_id[id];
-            verify_and_apply(
-                &mut state,
-                &observed.completed.operation,
-                &observed.completed.output,
-            )
-            .map_err(|error| anyhow::anyhow!("operation {id:?}: {error}"))?;
+            let record = &by_id[id];
+            verify_and_apply(&mut state, record.operation, record.output)
+                .map_err(|error| anyhow::anyhow!("operation {id:?}: {error}"))?;
         }
         Ok(())
     }
-}
-
-fn precedes<Operation, Output, Tag>(
-    before: &Observation<Operation, Output, Tag>,
-    after: &Observation<Operation, Output, Tag>,
-) -> bool {
-    (before.id.client == after.id.client && before.id.sequence < after.id.sequence)
-        || before.end_time < after.start_time
 }
 
 #[cfg(test)]
@@ -319,11 +371,82 @@ mod tests {
                 0,
                 |state, operation, observed| {
                     *state += operation;
-                    anyhow::ensure!(*state == *observed, "unexpected sum");
+                    anyhow::ensure!(Some(&*state) == observed, "unexpected sum");
                     Ok(())
                 },
             )
             .expect("candidate should satisfy the observed history");
+    }
+
+    #[test]
+    fn unknown_operation_takes_effect_late_but_after_what_preceded_it() {
+        let history = History::new();
+        let first = observation(TestObservation {
+            client: 1,
+            sequence: 0,
+            start_ms: 0,
+            end_ms: 1,
+            operation: 1,
+            output: 1,
+        });
+        let unknown = UnknownOperation {
+            id: OperationId {
+                client: 0,
+                sequence: 0,
+            },
+            start_time: MonotonicInstant::from_duration_since_clock_origin(Duration::from_millis(
+                2,
+            )),
+            end_time: MonotonicInstant::from_duration_since_clock_origin(Duration::from_millis(3)),
+            operation: 10,
+        };
+        let next = observation(TestObservation {
+            client: 0,
+            sequence: 1,
+            start_ms: 4,
+            end_ms: 5,
+            operation: 2,
+            output: 3,
+        });
+        let last = observation(TestObservation {
+            client: 1,
+            sequence: 1,
+            start_ms: 6,
+            end_ms: 7,
+            operation: 0,
+            output: 13,
+        });
+        history.record(first.clone());
+        history.record_unknown(unknown.clone());
+        history.record(next.clone());
+        history.record(last.clone());
+        let verify = |candidate: &[OperationId]| {
+            history.verify(candidate, 0, |state, operation, observed| {
+                *state += operation;
+                anyhow::ensure!(
+                    observed.is_none_or(|observed| observed == state),
+                    "unexpected sum"
+                );
+                Ok(())
+            })
+        };
+
+        verify(&[first.id, next.id, unknown.id, last.id])
+            .expect("the unknown operation may take effect after its client's next operation");
+        assert!(
+            verify(&[unknown.id, first.id, next.id, last.id])
+                .unwrap_err()
+                .to_string()
+                .contains("real-time precedence"),
+            "an operation that ended before the unknown one started must precede it"
+        );
+        assert!(
+            verify(&[first.id, next.id, last.id])
+                .unwrap_err()
+                .to_string()
+                .contains("unexpected sum"),
+            "the last read observed the unknown operation's effect"
+        );
     }
 
     #[test]

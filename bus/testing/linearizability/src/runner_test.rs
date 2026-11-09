@@ -74,7 +74,7 @@ impl LinearizableObject for TestToggle {
         &self,
         _id: OperationId,
         _operation: ToggleOperation,
-    ) -> OperationResult<bool, Self::Tag> {
+    ) -> Option<OperationResult<bool, Self::Tag>> {
         let previous = self.value.get();
         if self.buggy {
             self.writers_ready.wait().await;
@@ -83,7 +83,7 @@ impl LinearizableObject for TestToggle {
         self.value.set(output);
         let tag = self.next_tag.get();
         self.next_tag.set(tag + 1);
-        OperationResult { output, tag }
+        Some(OperationResult { output, tag })
     }
 }
 
@@ -116,7 +116,7 @@ impl LinearizabilityImplementation for TestToggleImplementation {
         &self,
         history: &History<ToggleOperation, bool, <Self::Object as LinearizableObject>::Tag>,
     ) -> Result<Vec<OperationId>> {
-        Ok(candidate_from_ordered_tags::<ToggleSpec, _>(history))
+        candidate_from_ordered_tags::<ToggleSpec, _>(history, [])
     }
 }
 

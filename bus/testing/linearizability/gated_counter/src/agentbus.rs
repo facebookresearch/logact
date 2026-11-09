@@ -103,7 +103,7 @@ where
             <Self::Object as LinearizableObject>::Tag,
         >,
     ) -> Result<Vec<OperationId>> {
-        Ok(candidate_from_ordered_tags::<GatedCounterSpec, _>(history))
+        candidate_from_ordered_tags::<GatedCounterSpec, _>(history, [])
     }
 
     fn on_complete(&self) -> Option<Rc<dyn Fn()>> {
@@ -196,10 +196,12 @@ impl<T: AgentBus, E: Environment> LinearizableObject for AgentBusGatedCounter<T,
         &self,
         id: OperationId,
         operation: GatedCounterOperation,
-    ) -> OperationResult<GatedCounterOutput, Self::Tag> {
-        self.execute_gated(GatedCounterCommand::new(id, operation))
-            .await
-            .expect("AgentBus gated-counter adapter should execute")
+    ) -> Option<OperationResult<GatedCounterOutput, Self::Tag>> {
+        Some(
+            self.execute_gated(GatedCounterCommand::new(id, operation))
+                .await
+                .expect("AgentBus gated-counter adapter should execute"),
+        )
     }
 }
 

@@ -29,10 +29,10 @@ fn records_outputs_timing_and_tags() {
                 let action_environment = action_environment.clone();
                 async move {
                     action_environment.sleep(Duration::from_millis(2)).await;
-                    OperationResult {
+                    Some(OperationResult {
                         output: operation * 10,
                         tag: id.sequence,
-                    }
+                    })
                 }
             })
             .await
