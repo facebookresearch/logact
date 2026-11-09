@@ -20,8 +20,11 @@ use crate::tailable_space::TailableSpace;
 pub enum WriteOnceError {
     #[error("address already exists: {0}")]
     AddressAlreadyExists(u64),
-    #[error("transaction conflict")]
-    TransactionConflict(#[source] anyhow::Error),
+    /// The write's outcome is unknown: the address may hold this write's value,
+    /// another write's value, or no value. A caller that needs to know reads the
+    /// address back and identifies its write by content.
+    #[error("write outcome unknown at address {0}")]
+    AmbiguousWrite(u64),
     #[error("timeout")]
     Timeout(#[source] anyhow::Error),
     #[error("backend unavailable")]

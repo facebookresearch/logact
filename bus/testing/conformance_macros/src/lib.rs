@@ -49,6 +49,10 @@
 //! simulator, which a scenario can pause and resume with
 //! `fixture.get_env().latency_injector().disable()` / `.enable()`.
 //!
+//! `#[scenario(sim_only, retry)]` wraps the bottom-most APIs a fixture builds in
+//! their retrying wrappers (e.g. `RetryingWriteOnceSpace`), with the fixed policy
+//! of `conformance::TestConfig::retry_config`. It requires `sim_only`.
+//!
 //! `#[scenario(sim_only, cardinality = N)]` (N > 1) marks a *determinism* scenario:
 //! the driver runs it N times on fresh fixtures built from one held-fixed seed
 //! (optionally pinned via `seed = <int>`) and asserts identical output, via
@@ -101,6 +105,7 @@ struct ConfigArgs {
     ttl_ms: Option<LitInt>,
     latency_ms: Option<LitInt>,
     loss: Option<LitFloat>,
+    retry: bool,
 }
 
 impl ConfigArgs {
@@ -117,6 +122,8 @@ impl ConfigArgs {
         } else if key == "loss" {
             input.parse::<Token![=]>()?;
             self.loss = Some(parse_loss(input)?);
+        } else if key == "retry" {
+            self.retry = true;
         } else {
             return Ok(false);
         }
@@ -130,12 +137,16 @@ impl ConfigArgs {
         if (self.latency_ms.is_some() || self.loss.is_some()) && envs != "sim_only" {
             return Err(input.error("`latency_ms` and `loss` require `sim_only`"));
         }
+        if self.retry && envs != "sim_only" {
+            return Err(input.error("`retry` requires `sim_only`"));
+        }
         Ok(())
     }
 
     /// The `TestConfig` these keys select, or `None` for the default config.
     fn test_config(&self) -> Option<proc_macro2::TokenStream> {
-        if self.ttl_ms.is_none() && self.latency_ms.is_none() && self.loss.is_none() {
+        if self.ttl_ms.is_none() && self.latency_ms.is_none() && self.loss.is_none() && !self.retry
+        {
             return None;
         }
         let some = |value| quote! { ::core::option::Option::Some(#value) };
@@ -161,7 +172,8 @@ impl ConfigArgs {
                 })
             }
         };
-        Some(quote! { ::conformance::TestConfig { ttl: #ttl, latency: #latency } })
+        let retry = self.retry;
+        Some(quote! { ::conformance::TestConfig { ttl: #ttl, latency: #latency, retry: #retry } })
     }
 }
 
@@ -201,7 +213,7 @@ impl Parse for ScenarioForArgs {
             } else if !config.parse_key(&key, input)? {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `suffix = <ident>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `sim_only`, or `int_only`",
+                    "expected `suffix = <ident>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `retry`, `sim_only`, or `int_only`",
                 ));
             }
         }
@@ -270,7 +282,7 @@ impl Parse for ScenarioArgs {
             } else if !config.parse_key(&key, input)? {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `sim_only`, `int_only`, `cardinality = <int>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, or `loss = <float>`",
+                    "expected `sim_only`, `int_only`, `cardinality = <int>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, or `retry`",
                 ));
             }
         }
@@ -513,5 +525,17 @@ mod tests {
             );
         }
         assert!(syn::parse_str::<ScenarioForArgs>("Fixture, suffix = test, loss = 0.1").is_err());
+    }
+
+    #[test]
+    fn parses_scenario_retry() {
+        let args = syn::parse_str::<ScenarioArgs>("sim_only, latency_ms = 20, retry").unwrap();
+        assert!(args.config.retry);
+        assert!(args.config.test_config().is_some());
+        assert!(syn::parse_str::<ScenarioArgs>("retry").is_err());
+        assert!(syn::parse_str::<ScenarioArgs>("int_only, retry").is_err());
+        assert!(
+            syn::parse_str::<ScenarioForArgs>("Fixture, suffix = test, sim_only, retry").is_ok()
+        );
     }
 }

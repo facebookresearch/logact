@@ -52,13 +52,12 @@ fn read_error_to_bus(error: WriteOnceError) -> AgentBusError {
         error @ WriteOnceError::Timeout(_) => {
             AgentBusError::Timeout(anyhow::Error::new(error).context("WriteOnceSpace read failed"))
         }
-        error
-        @ (WriteOnceError::BackendUnavailable(_) | WriteOnceError::TransactionConflict(_)) => {
-            AgentBusError::Unavailable(
-                anyhow::Error::new(error).context("WriteOnceSpace read failed"),
-            )
-        }
-        error @ (WriteOnceError::InternalError(_) | WriteOnceError::AddressAlreadyExists(_)) => {
+        error @ WriteOnceError::BackendUnavailable(_) => AgentBusError::Unavailable(
+            anyhow::Error::new(error).context("WriteOnceSpace read failed"),
+        ),
+        error @ (WriteOnceError::InternalError(_)
+        | WriteOnceError::AddressAlreadyExists(_)
+        | WriteOnceError::AmbiguousWrite(_)) => {
             AgentBusError::Internal(anyhow::Error::new(error).context("WriteOnceSpace read failed"))
         }
     }
@@ -188,11 +187,7 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
                         log_position: position as i64,
                     });
                 }
-                Err(
-                    WriteOnceError::AddressAlreadyExists(_)
-                    | WriteOnceError::TransactionConflict(_),
-                ) => {
-                    // Slot already taken (or likely taken); use tail() to find the first unwritten position
+                Err(WriteOnceError::AddressAlreadyExists(_)) => {
                     let new_position = space
                         .tail(&prefixed_space_id(&bus_id), TAIL_WINDOW_SIZE)
                         .await
@@ -206,6 +201,10 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
                 }
                 Err(error @ WriteOnceError::Timeout(_)) => AgentBusError::Timeout(
                     anyhow::Error::new(error).context("WriteOnceSpace write failed"),
+                ),
+                // The entry may or may not be at `position`; the append's outcome is unknown.
+                Err(error @ WriteOnceError::AmbiguousWrite(_)) => AgentBusError::Timeout(
+                    anyhow::Error::new(error).context("WriteOnceSpace write outcome unknown"),
                 ),
                 Err(error @ WriteOnceError::BackendUnavailable(_)) => AgentBusError::Unavailable(
                     anyhow::Error::new(error).context("WriteOnceSpace write failed"),

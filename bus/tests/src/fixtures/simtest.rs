@@ -20,7 +20,6 @@ use agentbus_api::metrics::AgentBusMetrics;
 use agentbus_core::ChanneledAgentBus;
 use agentbus_observable::ObservableAgentBus;
 use agentbus_simple::InMemoryAgentBus;
-use agentbus_writeonce::InMemoryWriteOnceSpace;
 use agentbus_writeonce::ObservableWriteOnceSpace;
 use agentbus_writeonce::WriteOnceAgentBus;
 use anyhow::Result;
@@ -36,9 +35,9 @@ use crate::impls::chained_agentbus::ChainedMode;
 use crate::impls::fault_injecting_agentbus::FaultInjectingAgentBus;
 use crate::impls::latency_wrapper::LatencyWrapper;
 use crate::simulator::Simulator;
+use crate::write_once_space::fixtures::simtest::AmbiguousOnceWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::CachingWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::ChanneledWriteOnceSpaceFixture;
-use crate::write_once_space::fixtures::simtest::ConflictOnceWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::FaultInjectingWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::InMemoryWriteOnceSpaceFixture;
 
@@ -61,7 +60,10 @@ impl<const CACHE_CAPACITY: usize> ConformanceFixture
 {
     type Env = Simulator;
     type Impl = WriteOnceAgentBus<
-        ObservableWriteOnceSpace<LatencyWrapper<InMemoryWriteOnceSpace>, Simulator>,
+        ObservableWriteOnceSpace<
+            <InMemoryWriteOnceSpaceFixture as ConformanceFixture>::Impl,
+            Simulator,
+        >,
         Simulator,
     >;
 
@@ -485,9 +487,9 @@ pub type SpaceCaching = WriteOnceAgentBusGenericFixture<
 pub type SpaceChanneled = WriteOnceAgentBusGenericFixture<
     FaultInjectingWriteOnceSpaceFixture<ChanneledWriteOnceSpaceFixture>,
 >;
-pub type SpaceTransactionConflictEmpty = WriteOnceAgentBusGenericFixture<
-    ConflictOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, false>,
+pub type SpaceAmbiguousWriteEmpty = WriteOnceAgentBusGenericFixture<
+    AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, false>,
 >;
-pub type SpaceTransactionConflictOccupied = WriteOnceAgentBusGenericFixture<
-    ConflictOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, true>,
+pub type SpaceAmbiguousWriteOccupied = WriteOnceAgentBusGenericFixture<
+    AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, true>,
 >;

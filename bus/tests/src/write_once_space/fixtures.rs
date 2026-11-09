@@ -9,8 +9,10 @@
 
 use std::rc::Rc;
 
+use agentbus_api::RetryConfig;
 use agentbus_api::WriteOnceSpace;
 use agentbus_conditional_write_space::WriteOnceSpaceAdapter;
+use agentbus_writeonce::RetryingWriteOnceSpace;
 use anyhow::Result;
 use conformance::ConformanceFixture;
 use conformance::TestConfig;
@@ -28,9 +30,11 @@ pub trait WriteOnceSpaceTestFixture: ConformanceFixture<Impl: WriteOnceSpace + '
 impl<F: ConformanceFixture<Impl: WriteOnceSpace + 'static>> WriteOnceSpaceTestFixture for F {}
 
 /// Generic fixture that adapts any ConditionalWriteSpaceTestFixture into a
-/// WriteOnceSpaceTestFixture via WriteOnceSpaceAdapter.
+/// WriteOnceSpaceTestFixture via WriteOnceSpaceAdapter, the bottom-most
+/// write-once space, so it applies the scenario's `retry`.
 pub struct WriteOnceAdapterFixture<F> {
     inner: F,
+    retry: RetryConfig,
 }
 
 impl<F> ConformanceFixture for WriteOnceAdapterFixture<F>
@@ -38,14 +42,18 @@ where
     F: ConditionalWriteSpaceTestFixture,
 {
     type Env = F::Env;
-    type Impl = WriteOnceSpaceAdapter<F::Impl>;
+    type Impl = RetryingWriteOnceSpace<WriteOnceSpaceAdapter<F::Impl>, F::Env>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.inner.get_env()
     }
 
     fn create_impl(&self) -> Self::Impl {
-        WriteOnceSpaceAdapter::new(self.inner.create_impl())
+        RetryingWriteOnceSpace::new(
+            WriteOnceSpaceAdapter::new(self.inner.create_impl()),
+            self.inner.get_env(),
+            self.retry,
+        )
     }
 }
 
@@ -56,13 +64,15 @@ where
     fn new(simulator: Simulator) -> Self {
         Self {
             inner: F::new(simulator),
+            retry: TestConfig::default().retry_config(),
         }
     }
 
-    /// The backing conditional-write space applies the config.
+    /// The backing conditional-write space applies the rest of the config.
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         Ok(Self {
             inner: F::try_new_with_config(simulator, config)?,
+            retry: config.retry_config(),
         })
     }
 }
@@ -74,6 +84,7 @@ where
     async fn new_async(fb: FacebookInit) -> Result<Self> {
         Ok(Self {
             inner: F::new_async(fb).await?,
+            retry: TestConfig::default().retry_config(),
         })
     }
 }

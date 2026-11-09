@@ -20,6 +20,7 @@ mod channeled_write_once_space;
 mod in_memory_write_once_space;
 mod in_memory_write_once_space_state;
 mod observable_write_once_space;
+mod retrying_write_once_space;
 mod write_once_agentbus;
 
 pub use caching_write_once_space::CachingWriteOnceSpace;
@@ -27,13 +28,15 @@ pub use channeled_write_once_space::ChanneledWriteOnceSpace;
 pub use channeled_write_once_space::ChanneledWriteOnceSpaceBackend;
 pub use in_memory_write_once_space::InMemoryWriteOnceSpace;
 pub use observable_write_once_space::ObservableWriteOnceSpace;
+pub use retrying_write_once_space::RetryingWriteOnceSpace;
 pub use write_once_agentbus::WriteOnceAgentBus;
 
 fn write_once_error_message(error: &WriteOnceError) -> String {
     match error {
-        WriteOnceError::AddressAlreadyExists(_) => error.to_string(),
-        WriteOnceError::TransactionConflict(source)
-        | WriteOnceError::Timeout(source)
+        WriteOnceError::AddressAlreadyExists(_) | WriteOnceError::AmbiguousWrite(_) => {
+            error.to_string()
+        }
+        WriteOnceError::Timeout(source)
         | WriteOnceError::BackendUnavailable(source)
         | WriteOnceError::InternalError(source) => format!("{error}: {source:#}"),
     }

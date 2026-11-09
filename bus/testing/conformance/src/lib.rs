@@ -29,6 +29,7 @@
 use std::rc::Rc;
 use std::time::Duration;
 
+use agentbus_api::RetryConfig;
 use agentbus_api::environment::Environment;
 pub use agentbus_simulator::LatencyConfig;
 use agentbus_simulator::Simulator;
@@ -58,6 +59,23 @@ pub struct TestConfig {
     /// into the bottom-most APIs a fixture builds. It configures the simulator,
     /// not the fixture (see [`try_new_fixture`]).
     pub latency: Option<LatencyConfig>,
+    /// `retry`: wrap the bottom-most APIs a fixture builds in their retrying
+    /// wrappers, per [`TestConfig::retry_config`].
+    pub retry: bool,
+}
+
+impl TestConfig {
+    /// The retry policy fixtures apply: with `retry`, up to 10 retries with
+    /// backoff; otherwise a single attempt. Not set by scenario.
+    pub fn retry_config(&self) -> RetryConfig {
+        let max_retries = if self.retry { 10 } else { 0 };
+        RetryConfig::try_new(
+            max_retries,
+            Duration::from_millis(10),
+            Duration::from_secs(1),
+        )
+        .expect("the retry policy should be valid")
+    }
 }
 
 /// Builds `F` for a scenario's `config`: `latency` configures the simulator,

@@ -15,8 +15,8 @@
 //!
 //! - single-fate tests force one fate (lost / commit-then-error / error-then-commit)
 //!   and assert the resulting append/poll outcome;
-//! - one-shot transaction-conflict tests cover retrying an empty slot and advancing
-//!   past a slot occupied by a competing writer;
+//! - one-shot ambiguous-write tests cover reporting an unknown append outcome
+//!   whether the write applied or not;
 //! - permutation tests run the mixed-fault workload and assert the exact set of
 //!   legal commit orderings, which differs by injection layer (16 at the bus layer,
 //!   12 at the space layer, where per-client FIFO is preserved).
@@ -25,8 +25,6 @@
 mod defs {
     use anyhow::Result;
 
-    use crate::common::helpers::append_string_intention;
-    use crate::common::helpers::poll;
     use crate::fault_injection_helpers::BUS_LEVEL_OUTCOMES;
     use crate::fault_injection_helpers::SPACE_LEVEL_OUTCOMES;
     use crate::fault_injection_helpers::run_fault_test;
@@ -51,47 +49,33 @@ mod defs {
         Ok(())
     }
 
-    async fn assert_transaction_conflict_retry<F>(fixture: &F, expected_position: i64)
+    #[scenario_for(agentbus_tests::SpaceAmbiguousWriteEmpty, suffix = empty_slot, sim_only)]
+    pub async fn run_ambiguous_write_without_commit<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
     {
-        let agentbus = fixture.create_impl();
-        let bus_id = "transaction-conflict".to_string();
-        let position =
-            append_string_intention(&agentbus, bus_id.clone(), "value".to_string()).await;
-
-        assert_eq!(position, expected_position);
-
-        let response = poll(&agentbus, bus_id, 0, 10).await;
-        let positions = response
-            .entries
-            .iter()
-            .map(|entry| {
-                entry
-                    .header
-                    .as_ref()
-                    .expect("stored entry should have a header")
-                    .log_position
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(positions, (0..=expected_position).collect::<Vec<_>>());
-    }
-
-    #[scenario_for(agentbus_tests::SpaceTransactionConflictEmpty, suffix = empty_slot, sim_only)]
-    pub async fn run_transaction_conflict_retries_same_slot<F>(fixture: &F) -> Result<()>
-    where
-        F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
-    {
-        assert_transaction_conflict_retry(fixture, 0).await;
+        run_fault_test(
+            fixture.create_impl(),
+            fixture.get_env(),
+            false,
+            false,
+            Some("write outcome unknown"),
+        );
         Ok(())
     }
 
-    #[scenario_for(agentbus_tests::SpaceTransactionConflictOccupied, suffix = occupied_slot, sim_only)]
-    pub async fn run_transaction_conflict_refreshes_tail<F>(fixture: &F) -> Result<()>
+    #[scenario_for(agentbus_tests::SpaceAmbiguousWriteOccupied, suffix = occupied_slot, sim_only)]
+    pub async fn run_ambiguous_write_with_commit<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
     {
-        assert_transaction_conflict_retry(fixture, 1).await;
+        run_fault_test(
+            fixture.create_impl(),
+            fixture.get_env(),
+            false,
+            true,
+            Some("write outcome unknown"),
+        );
         Ok(())
     }
 

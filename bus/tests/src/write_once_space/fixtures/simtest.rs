@@ -14,6 +14,7 @@ use agentbus_api::WriteOnceSpace;
 use agentbus_writeonce::CachingWriteOnceSpace;
 use agentbus_writeonce::ChanneledWriteOnceSpace;
 use agentbus_writeonce::InMemoryWriteOnceSpace;
+use agentbus_writeonce::RetryingWriteOnceSpace;
 use anyhow::Result;
 use conformance::ConformanceFixture;
 use conformance::TestConfig;
@@ -21,20 +22,32 @@ use rand::distr::Uniform;
 
 use crate::common::fault_config::FaultConfig;
 use crate::fixtures::SimulatorFixture;
-use crate::impls::fault_injecting_write_once_space::ConflictOnceWriteOnceSpace;
+use crate::impls::fault_injecting_write_once_space::AmbiguousOnceWriteOnceSpace;
 use crate::impls::fault_injecting_write_once_space::FaultInjectingWriteOnceSpace;
 use crate::impls::latency_wrapper::LatencyWrapper;
 use crate::simulator::Simulator;
 
 /// Fixture for testing InMemoryWriteOnceSpace directly.
+/// The bottom-most write-once space a simulator fixture builds: `space` behind
+/// the scenario's injected latency and, with `retry`, retries.
+type Backend<S> = RetryingWriteOnceSpace<LatencyWrapper<S>, Simulator>;
+
+fn backend<S>(space: S, env: &Rc<Simulator>, config: &TestConfig) -> Backend<S> {
+    RetryingWriteOnceSpace::new(
+        LatencyWrapper::new(space, env.clone()),
+        env.clone(),
+        config.retry_config(),
+    )
+}
+
 pub struct InMemoryWriteOnceSpaceFixture {
-    space: LatencyWrapper<InMemoryWriteOnceSpace>,
+    space: Backend<InMemoryWriteOnceSpace>,
     env: Rc<Simulator>,
 }
 
 impl ConformanceFixture for InMemoryWriteOnceSpaceFixture {
     type Env = Simulator;
-    type Impl = LatencyWrapper<InMemoryWriteOnceSpace>;
+    type Impl = Backend<InMemoryWriteOnceSpace>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -62,7 +75,7 @@ impl SimulatorFixture for InMemoryWriteOnceSpaceFixture {
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let env = Rc::new(simulator);
         Ok(Self {
-            space: LatencyWrapper::new(in_memory_space(&env, config.ttl), env.clone()),
+            space: backend(in_memory_space(&env, config.ttl), &env, config),
             env,
         })
     }
@@ -134,13 +147,13 @@ where
 
 /// Fixture for testing ChanneledWriteOnceSpace explicitly.
 pub struct ChanneledWriteOnceSpaceFixture {
-    space: LatencyWrapper<ChanneledWriteOnceSpace>,
+    space: Backend<ChanneledWriteOnceSpace>,
     env: Rc<Simulator>,
 }
 
 impl ConformanceFixture for ChanneledWriteOnceSpaceFixture {
     type Env = Simulator;
-    type Impl = LatencyWrapper<ChanneledWriteOnceSpace>;
+    type Impl = Backend<ChanneledWriteOnceSpace>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -163,37 +176,37 @@ impl SimulatorFixture for ChanneledWriteOnceSpaceFixture {
             ChanneledWriteOnceSpace::new(in_memory_space(&env, config.ttl));
         let _space_handle = env.spawn(space_backend.run());
         Ok(Self {
-            space: LatencyWrapper::new(channeled_space, env.clone()),
+            space: backend(channeled_space, &env, config),
             env,
         })
     }
 }
 
-/// Fixture that injects one transaction conflict into an in-memory write-once space.
-pub struct ConflictOnceWriteOnceSpaceFixture<F, const OCCUPY_CONFLICTING_SLOT: bool> {
+/// Fixture that injects one ambiguous write into an in-memory write-once space.
+pub struct AmbiguousOnceWriteOnceSpaceFixture<F, const APPLY_AMBIGUOUS_WRITE: bool> {
     inner: F,
 }
 
-impl<F, const OCCUPY_CONFLICTING_SLOT: bool> ConformanceFixture
-    for ConflictOnceWriteOnceSpaceFixture<F, OCCUPY_CONFLICTING_SLOT>
+impl<F, const APPLY_AMBIGUOUS_WRITE: bool> ConformanceFixture
+    for AmbiguousOnceWriteOnceSpaceFixture<F, APPLY_AMBIGUOUS_WRITE>
 where
     F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace> + SimulatorFixture,
     F::Impl: Clone + 'static,
 {
     type Env = Simulator;
-    type Impl = ConflictOnceWriteOnceSpace<F::Impl>;
+    type Impl = AmbiguousOnceWriteOnceSpace<F::Impl>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.inner.get_env()
     }
 
     fn create_impl(&self) -> Self::Impl {
-        ConflictOnceWriteOnceSpace::new(self.inner.create_impl(), OCCUPY_CONFLICTING_SLOT)
+        AmbiguousOnceWriteOnceSpace::new(self.inner.create_impl(), APPLY_AMBIGUOUS_WRITE)
     }
 }
 
-impl<F, const OCCUPY_CONFLICTING_SLOT: bool> SimulatorFixture
-    for ConflictOnceWriteOnceSpaceFixture<F, OCCUPY_CONFLICTING_SLOT>
+impl<F, const APPLY_AMBIGUOUS_WRITE: bool> SimulatorFixture
+    for AmbiguousOnceWriteOnceSpaceFixture<F, APPLY_AMBIGUOUS_WRITE>
 where
     F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace> + SimulatorFixture,
     F::Impl: Clone + 'static,

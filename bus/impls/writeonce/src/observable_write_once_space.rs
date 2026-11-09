@@ -106,7 +106,7 @@ fn tail_error_code(err: &TailError) -> &'static str {
 fn write_once_error_code(err: &WriteOnceError) -> &'static str {
     match err {
         WriteOnceError::AddressAlreadyExists(_) => "AddressAlreadyExists",
-        WriteOnceError::TransactionConflict(_) => "TransactionConflict",
+        WriteOnceError::AmbiguousWrite(_) => "AmbiguousWrite",
         WriteOnceError::Timeout(_) => "Timeout",
         WriteOnceError::BackendUnavailable(_) => "BackendUnavailable",
         WriteOnceError::InternalError(_) => "InternalError",
@@ -191,7 +191,7 @@ impl<W: WriteOnceSpace, E: Environment> WriteOnceSpace for ObservableWriteOnceSp
                     .record_counter(&self.metric_key("write", "num_conflicts"), 1, NO_TAGS);
             }
             Err(
-                WriteOnceError::TransactionConflict(_)
+                WriteOnceError::AmbiguousWrite(_)
                 | WriteOnceError::Timeout(_)
                 | WriteOnceError::BackendUnavailable(_)
                 | WriteOnceError::InternalError(_),
@@ -371,9 +371,9 @@ mod tests {
                 "address already exists: 1",
             ),
             (
-                WriteOnceError::TransactionConflict(anyhow!("conflict source")),
-                "TransactionConflict",
-                "transaction conflict: conflict source",
+                WriteOnceError::AmbiguousWrite(1),
+                "AmbiguousWrite",
+                "write outcome unknown at address 1",
             ),
             (
                 WriteOnceError::Timeout(anyhow!("timeout source")),
