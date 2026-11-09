@@ -111,7 +111,7 @@ fn create_sqlite_backed_commit_service_blocking(
         };
         let voter_factory = DelegatingVoterFactory::new(
             LlmVoterFactory::default(),
-            RuleBasedVoterFactory::default(),
+            RuleBasedVoterFactory,
             observability,
         );
         let decider_factory = DeciderFactoryImpl::new(storage.clone());
