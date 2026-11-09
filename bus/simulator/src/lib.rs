@@ -80,6 +80,7 @@ pub struct Simulator {
     pub executor: DeterministicExecutor,
     pub rng: RefCell<StdRng>,
     pub clock: LogicalClock,
+    latency_injector: LatencyInjector,
 }
 
 impl Simulator {
@@ -91,6 +92,7 @@ impl Simulator {
             executor: DeterministicExecutor::new(),
             rng: RefCell::new(rng),
             clock,
+            latency_injector: LatencyInjector::new(None),
         }
     }
 
@@ -102,6 +104,7 @@ impl Simulator {
             executor: DeterministicExecutor::with_jitter(jitter_distribution),
             rng: RefCell::new(rng),
             clock,
+            latency_injector: LatencyInjector::new(None),
         }
     }
 
@@ -513,6 +516,11 @@ impl SimulatorBarrier {
         let _ = receiver.await;
     }
 }
+
+mod latency;
+
+pub use latency::LatencyConfig;
+pub use latency::LatencyInjector;
 
 #[cfg(test)]
 mod simulator_tests;

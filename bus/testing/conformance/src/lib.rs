@@ -30,6 +30,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use agentbus_api::environment::Environment;
+pub use agentbus_simulator::LatencyConfig;
 use agentbus_simulator::Simulator;
 use anyhow::Result;
 use fbinit::FacebookInit;
@@ -53,6 +54,25 @@ pub trait ConformanceFixture: Sized {
 pub struct TestConfig {
     /// `ttl_ms = <int>`: how long each write lives before it expires.
     pub ttl: Option<Duration>,
+    /// `latency_ms = <int>` / `loss = <float>`: latency the simulator injects
+    /// into the bottom-most APIs a fixture builds. It configures the simulator,
+    /// not the fixture (see [`try_new_fixture`]).
+    pub latency: Option<LatencyConfig>,
+}
+
+/// Builds `F` for a scenario's `config`: `latency` configures the simulator,
+/// which every latency wrapper consults, and the rest goes to the fixture.
+pub fn try_new_fixture<F: SimulatorFixture>(
+    simulator: Simulator,
+    config: &TestConfig,
+) -> Result<F> {
+    F::try_new_with_config(
+        simulator.with_latency(config.latency.clone()),
+        &TestConfig {
+            latency: None,
+            ..config.clone()
+        },
+    )
 }
 
 /// A fixture that can be built from a deterministic simulator.
@@ -108,7 +128,7 @@ macro_rules! sim_test {
     ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, config = $config:expr $(, $seed:tt)?) => {
         $crate::sim_test!(@run $test_fn, $test_name, $suffix, $fix,
             $crate::sim_test!(@seed $($seed)?),
-            |simulator| <$fix as $crate::SimulatorFixture>::try_new_with_config(simulator, &$config)
+            |simulator| $crate::try_new_fixture::<$fix>(simulator, &$config)
                 .expect("fixture should support the scenario's config")
         );
     };
@@ -176,7 +196,7 @@ macro_rules! sim_determinism_test {
     ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $cardinality:tt, config = $config:expr $(, $seed:tt)?) => {
         $crate::sim_determinism_test!(@run $test_fn, $test_name, $suffix, $fix, $cardinality,
             $crate::sim_test!(@seed $($seed)?),
-            |simulator| <$fix as $crate::SimulatorFixture>::try_new_with_config(simulator, &$config)
+            |simulator| $crate::try_new_fixture::<$fix>(simulator, &$config)
                 .expect("fixture should support the scenario's config")
         );
     };

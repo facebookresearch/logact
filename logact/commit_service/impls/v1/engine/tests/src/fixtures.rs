@@ -20,6 +20,7 @@ use logact_commit_service_engine::Storage;
 
 pub mod fault_injecting;
 pub mod in_memory;
+pub mod latency;
 pub mod scoped;
 pub mod sqlite;
 
@@ -30,6 +31,7 @@ pub use conformance::ConformanceFixture;
 pub use conformance::SimulatorFixture;
 pub use fault_injecting::FaultInjectingStorageFixture;
 pub use in_memory::InMemoryStorageFixture;
+pub use latency::LatencyStorage;
 pub use scoped::ScopedStorageFixture;
 pub use sqlite::SqliteFileStorageFixture;
 

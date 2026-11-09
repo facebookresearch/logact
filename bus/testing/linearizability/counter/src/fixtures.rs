@@ -85,6 +85,13 @@ impl<F: SimulatorFixture, C> SimulatorFixture for AgentBusCounterFixture<F, C> {
             configuration: PhantomData,
         }
     }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: Rc::new(F::try_new_with_config(simulator, config)?),
+            configuration: PhantomData,
+        })
+    }
 }
 
 impl<F, C> ConformanceFixture for AgentBusCounterFixture<F, C>

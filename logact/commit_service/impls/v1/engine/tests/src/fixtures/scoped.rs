@@ -15,6 +15,7 @@ use logact_commit_service_engine::ScopedStorage;
 
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::EnvStorageFixture;
+use crate::fixtures::LatencyStorage;
 use crate::fixtures::SimulatorFixture;
 
 /// Runs the generic Storage conformance suite against a `ScopedStorage` wrapping
@@ -25,14 +26,17 @@ pub struct ScopedStorageFixture {
 
 impl ConformanceFixture for ScopedStorageFixture {
     type Env = Simulator;
-    type Impl = ScopedStorage<InMemoryStorage>;
+    type Impl = ScopedStorage<LatencyStorage<InMemoryStorage>>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
     }
 
     fn create_impl(&self) -> Self::Impl {
-        ScopedStorage::new("scope/", InMemoryStorage::new())
+        ScopedStorage::new(
+            "scope/",
+            LatencyStorage::new(InMemoryStorage::new(), self.env.clone()),
+        )
     }
 }
 

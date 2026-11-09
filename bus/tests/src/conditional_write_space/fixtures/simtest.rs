@@ -15,16 +15,17 @@ use conformance::ConformanceFixture;
 use conformance::TestConfig;
 
 use crate::fixtures::SimulatorFixture;
+use crate::impls::latency_wrapper::LatencyWrapper;
 use crate::simulator::Simulator;
 
 pub struct InMemoryConditionalWriteSpaceFixture {
-    space: InMemoryConditionalWriteSpace,
+    space: LatencyWrapper<InMemoryConditionalWriteSpace>,
     env: Rc<Simulator>,
 }
 
 impl ConformanceFixture for InMemoryConditionalWriteSpaceFixture {
     type Env = Simulator;
-    type Impl = InMemoryConditionalWriteSpace;
+    type Impl = LatencyWrapper<InMemoryConditionalWriteSpace>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -47,6 +48,9 @@ impl SimulatorFixture for InMemoryConditionalWriteSpaceFixture {
             Some(ttl) => InMemoryConditionalWriteSpace::with_ttl(env.clone(), ttl),
             None => InMemoryConditionalWriteSpace::new(env.clone()),
         };
-        Ok(Self { space, env })
+        Ok(Self {
+            space: LatencyWrapper::new(space, env.clone()),
+            env,
+        })
     }
 }

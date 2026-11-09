@@ -34,6 +34,7 @@ use crate::common::fault_config::FaultConfig;
 use crate::impls::chained_agentbus::ChainedAgentBus;
 use crate::impls::chained_agentbus::ChainedMode;
 use crate::impls::fault_injecting_agentbus::FaultInjectingAgentBus;
+use crate::impls::latency_wrapper::LatencyWrapper;
 use crate::simulator::Simulator;
 use crate::write_once_space::fixtures::simtest::CachingWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::ChanneledWriteOnceSpaceFixture;
@@ -59,8 +60,10 @@ impl<const CACHE_CAPACITY: usize> ConformanceFixture
     for InMemoryWriteOnceAgentBusFixture<CACHE_CAPACITY>
 {
     type Env = Simulator;
-    type Impl =
-        WriteOnceAgentBus<ObservableWriteOnceSpace<InMemoryWriteOnceSpace, Simulator>, Simulator>;
+    type Impl = WriteOnceAgentBus<
+        ObservableWriteOnceSpace<LatencyWrapper<InMemoryWriteOnceSpace>, Simulator>,
+        Simulator,
+    >;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.space_fixture.get_env()
@@ -102,15 +105,16 @@ impl<const CACHE_CAPACITY: usize> SimulatorFixture
 /// Fixture for testing InMemoryAgentBus
 /// Owns an InMemoryAgentBus instance that can be cloned to share state
 pub struct SimpleMemoryFixture {
-    agentbus: InMemoryAgentBus<Simulator>,
+    agentbus: LatencyWrapper<InMemoryAgentBus<Simulator>>,
+    env: Rc<Simulator>,
 }
 
 impl ConformanceFixture for SimpleMemoryFixture {
     type Env = Simulator;
-    type Impl = InMemoryAgentBus<Simulator>;
+    type Impl = LatencyWrapper<InMemoryAgentBus<Simulator>>;
 
     fn get_env(&self) -> Rc<Self::Env> {
-        self.agentbus.environment()
+        self.env.clone()
     }
 
     fn create_impl(&self) -> Self::Impl {
@@ -133,21 +137,23 @@ impl SimulatorFixture for SimpleMemoryFixture {
     }
 
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        let env = Rc::new(simulator);
         Ok(Self {
-            agentbus: in_memory_agentbus(Rc::new(simulator), config.ttl),
+            agentbus: LatencyWrapper::new(in_memory_agentbus(env.clone(), config.ttl), env.clone()),
+            env,
         })
     }
 }
 
 /// Fixture for testing ChanneledAgentBus (wrapper around InMemoryAgentBus)
 pub struct ChanneledAgentBusFixture {
-    agentbus: ChanneledAgentBus,
+    agentbus: LatencyWrapper<ChanneledAgentBus>,
     env: Rc<Simulator>,
 }
 
 impl ConformanceFixture for ChanneledAgentBusFixture {
     type Env = Simulator;
-    type Impl = ChanneledAgentBus;
+    type Impl = LatencyWrapper<ChanneledAgentBus>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -173,7 +179,10 @@ impl SimulatorFixture for ChanneledAgentBusFixture {
         let agentbus = ChanneledAgentBus::new_on_environment(env.clone(), move || {
             in_memory_agentbus(worker_env.clone(), ttl)
         });
-        Ok(Self { agentbus, env })
+        Ok(Self {
+            agentbus: LatencyWrapper::new(agentbus, env.clone()),
+            env,
+        })
     }
 }
 
@@ -291,15 +300,16 @@ where
 
 /// Generic fixture for testing ChainedAgentBus with configurable mode
 pub struct ChainedAgentBusGenericFixture<const MODE: u8> {
-    agentbus: ChainedAgentBus,
+    agentbus: LatencyWrapper<ChainedAgentBus>,
+    env: Rc<Simulator>,
 }
 
 impl<const MODE: u8> ConformanceFixture for ChainedAgentBusGenericFixture<MODE> {
     type Env = Simulator;
-    type Impl = ChainedAgentBus;
+    type Impl = LatencyWrapper<ChainedAgentBus>;
 
     fn get_env(&self) -> Rc<Self::Env> {
-        self.agentbus.environment()
+        self.env.clone()
     }
 
     fn create_impl(&self) -> Self::Impl {
@@ -319,8 +329,13 @@ impl<const MODE: u8> SimulatorFixture for ChainedAgentBusGenericFixture<MODE> {
             1 => ChainedMode::BuggyPoll,
             _ => panic!("Invalid mode"),
         };
+        let env = Rc::new(simulator);
         Ok(Self {
-            agentbus: ChainedAgentBus::new(Rc::new(simulator), mode, config.ttl),
+            agentbus: LatencyWrapper::new(
+                ChainedAgentBus::new(env.clone(), mode, config.ttl),
+                env.clone(),
+            ),
+            env,
         })
     }
 }

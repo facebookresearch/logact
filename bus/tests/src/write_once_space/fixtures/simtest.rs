@@ -23,17 +23,18 @@ use crate::common::fault_config::FaultConfig;
 use crate::fixtures::SimulatorFixture;
 use crate::impls::fault_injecting_write_once_space::ConflictOnceWriteOnceSpace;
 use crate::impls::fault_injecting_write_once_space::FaultInjectingWriteOnceSpace;
+use crate::impls::latency_wrapper::LatencyWrapper;
 use crate::simulator::Simulator;
 
 /// Fixture for testing InMemoryWriteOnceSpace directly.
 pub struct InMemoryWriteOnceSpaceFixture {
-    space: InMemoryWriteOnceSpace,
+    space: LatencyWrapper<InMemoryWriteOnceSpace>,
     env: Rc<Simulator>,
 }
 
 impl ConformanceFixture for InMemoryWriteOnceSpaceFixture {
     type Env = Simulator;
-    type Impl = InMemoryWriteOnceSpace;
+    type Impl = LatencyWrapper<InMemoryWriteOnceSpace>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -61,7 +62,7 @@ impl SimulatorFixture for InMemoryWriteOnceSpaceFixture {
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let env = Rc::new(simulator);
         Ok(Self {
-            space: in_memory_space(&env, config.ttl),
+            space: LatencyWrapper::new(in_memory_space(&env, config.ttl), env.clone()),
             env,
         })
     }
@@ -133,13 +134,13 @@ where
 
 /// Fixture for testing ChanneledWriteOnceSpace explicitly.
 pub struct ChanneledWriteOnceSpaceFixture {
-    space: ChanneledWriteOnceSpace,
+    space: LatencyWrapper<ChanneledWriteOnceSpace>,
     env: Rc<Simulator>,
 }
 
 impl ConformanceFixture for ChanneledWriteOnceSpaceFixture {
     type Env = Simulator;
-    type Impl = ChanneledWriteOnceSpace;
+    type Impl = LatencyWrapper<ChanneledWriteOnceSpace>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -162,7 +163,7 @@ impl SimulatorFixture for ChanneledWriteOnceSpaceFixture {
             ChanneledWriteOnceSpace::new(in_memory_space(&env, config.ttl));
         let _space_handle = env.spawn(space_backend.run());
         Ok(Self {
-            space: channeled_space,
+            space: LatencyWrapper::new(channeled_space, env.clone()),
             env,
         })
     }

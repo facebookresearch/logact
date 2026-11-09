@@ -9,8 +9,10 @@ use std::rc::Rc;
 
 use agentbus_simulator::Simulator;
 use agentbus_tests::fixtures::AgentBusTestFixture;
+use anyhow::Result;
 use conformance::ConformanceFixture;
 use conformance::SimulatorFixture;
+use conformance::TestConfig;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_tests::fixtures::DeciderPolicyFixture;
 
@@ -27,6 +29,12 @@ impl<F: SimulatorFixture> SimulatorFixture for AgentBusGatedCounterFixture<F> {
         Self {
             inner: Rc::new(F::new(simulator)),
         }
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: Rc::new(F::try_new_with_config(simulator, config)?),
+        })
     }
 }
 
@@ -56,6 +64,12 @@ impl<F: SimulatorFixture> SimulatorFixture for CommitServiceGatedCounterFixture<
         Self {
             inner: F::new(simulator),
         }
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: F::try_new_with_config(simulator, config)?,
+        })
     }
 }
 

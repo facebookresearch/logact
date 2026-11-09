@@ -14,6 +14,7 @@ use logact_commit_service_engine::InMemoryStorage;
 
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::EnvStorageFixture;
+use crate::fixtures::LatencyStorage;
 use crate::fixtures::SimulatorFixture;
 
 pub struct InMemoryStorageFixture {
@@ -22,14 +23,14 @@ pub struct InMemoryStorageFixture {
 
 impl ConformanceFixture for InMemoryStorageFixture {
     type Env = Simulator;
-    type Impl = InMemoryStorage;
+    type Impl = LatencyStorage<InMemoryStorage>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
     }
 
     fn create_impl(&self) -> Self::Impl {
-        InMemoryStorage::new()
+        LatencyStorage::new(InMemoryStorage::new(), self.env.clone())
     }
 }
 

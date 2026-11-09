@@ -34,6 +34,7 @@ use agent_bus_proto_rust::agent_bus::payload;
 use agent_bus_proto_rust::agent_bus::vote_type;
 use agent_bus_proto_rust::agent_bus::voter_config;
 use agent_bus_proto_rust::agent_bus::voter_op;
+use agentbus_api::AgentBus;
 use agentbus_api::Environment;
 use agentbus_api::InMemoryLogger;
 use agentbus_api::InMemoryMetrics;

@@ -15,6 +15,7 @@ use agentbus_api::WriteOnceSpace;
 use anyhow::Result;
 use bytes::Bytes;
 use conformance::ConformanceFixture;
+use conformance::TestConfig;
 use fbinit::FacebookInit;
 
 use crate::conditional_write_space::fixtures::ConditionalWriteSpaceTestFixture;
@@ -74,6 +75,12 @@ impl<F: WriteOnceSpaceTestFixture + SimulatorFixture> SimulatorFixture for WosTa
             inner: F::new(simulator),
         }
     }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: F::try_new_with_config(simulator, config)?,
+        })
+    }
 }
 
 impl<F: WriteOnceSpaceTestFixture + IntegrationFixture> IntegrationFixture
@@ -127,6 +134,12 @@ impl<F: ConditionalWriteSpaceTestFixture + SimulatorFixture> SimulatorFixture
         Self {
             inner: F::new(simulator),
         }
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: F::try_new_with_config(simulator, config)?,
+        })
     }
 }
 

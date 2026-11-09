@@ -96,6 +96,16 @@ mod defs {
         check_counter_linearizability(fixture, 10, 3).await
     }
 
+    #[scenario(sim_only, latency_ms = 20)]
+    pub async fn run_counter_linearizability_4x5_with_latency<F>(fixture: &F) -> Result<()>
+    where
+        F: ConformanceFixture<Env = Simulator>,
+        F::Impl: LinearizabilityImplementation,
+        <F::Impl as LinearizabilityImplementation>::Object: LinearizableObject<Spec = CounterSpec>,
+    {
+        check_counter_linearizability(fixture, 4, 5).await
+    }
+
     #[scenario_for(
         counter_suite::fixtures::BuggyPollCounterFixture,
         suffix = chained_agentbus_buggy_poll,

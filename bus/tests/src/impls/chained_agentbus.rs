@@ -216,3 +216,66 @@ impl ChainedAgentBus {
         my_bus.poll(request).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use agentbus_simulator::LatencyConfig;
+
+    use super::*;
+    use crate::common::helpers::append_string_intention;
+    use crate::impls::latency_wrapper::LatencyWrapper;
+
+    #[test]
+    fn latency_wrapper_preserves_client_routing() {
+        for latency in [
+            None,
+            Some(LatencyConfig {
+                max_latency: Duration::from_millis(20),
+                loss_fraction: 0.0,
+            }),
+        ] {
+            let env = Rc::new(Simulator::new(0).with_latency(latency));
+            let bus = ChainedAgentBus::new(env.clone(), ChainedMode::BuggyPoll, None);
+            let head = bus.state.borrow().buses[0].clone();
+            let bus = LatencyWrapper::new(bus, env.clone());
+            let other_client = bus.clone();
+            env.spawn(async move {
+                append_string_intention(&head, "routing".to_owned(), "entry".to_owned()).await;
+                let bus_id = BusId {
+                    agent_bus_id: "routing".to_owned(),
+                };
+                for (client, expected_tail) in [(&bus, 1), (&other_client, 0)] {
+                    for _ in 0..2 {
+                        let tail = client
+                            .check_tail(CheckTailRequest {
+                                bus_id: Some(bus_id.clone()),
+                            })
+                            .await
+                            .expect("checking the replica tail should succeed");
+                        assert_eq!(
+                            tail.tail_position, expected_tail,
+                            "each client should keep reading its own replica"
+                        );
+                    }
+                    let entries = client
+                        .blocking_poll(BlockingPollRequest {
+                            bus_id: Some(bus_id.clone()),
+                            start_log_position: 0,
+                            max_entries: 1,
+                            filter: None,
+                            timeout_ms: 0,
+                        })
+                        .await
+                        .expect("polling the replica should succeed")
+                        .entries;
+                    assert_eq!(
+                        entries.len(),
+                        expected_tail as usize,
+                        "blocking polls should use the same replica as other calls"
+                    );
+                }
+            });
+            env.run();
+        }
+    }
+}
