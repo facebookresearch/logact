@@ -134,9 +134,9 @@ mod defs {
         fixture: &F,
         reuse_id: bool,
     ) -> Result<()> {
-        const MAX_POLLS: usize = 1_000_000;
+        const MAX_POLLS: usize = 2_000_000;
         const BATCH: usize = 8192;
-        const FLAT_BATCHES: usize = 8;
+        const FLAT_BATCHES: usize = 32;
         check_heap_counter()?;
         let env = fixture.get_env();
         let service = Rc::new(fixture.create_impl());

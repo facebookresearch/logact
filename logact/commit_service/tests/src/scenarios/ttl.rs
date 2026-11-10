@@ -41,9 +41,9 @@ mod defs {
         }
     }
 
-    #[scenario(sim_only, ttl_ms = 2592000000)]
-    pub async fn run_test_checkpointed_history_can_expire<F: CommitServiceTestFixture>(
+    async fn check_checkpointed_history_can_expire<F: CommitServiceTestFixture>(
         fixture: &F,
+        allow_data_loss: bool,
     ) -> Result<()> {
         let env = fixture.get_env();
         let bus_id = format!("ttl-{}", env.with_rng(|rng| rng.random::<u64>()));
@@ -79,18 +79,31 @@ mod defs {
                 .await,
             Err(AgentBusError::PositionNotFound(_))
         ));
-        // A replica whose bus has never appended to this log may take its tail from
-        // the expired history and reclaim an expired position, which the engine
-        // detects as data loss. Otherwise the commit proceeds.
         match service.commit_intention(command(&bus_id, "d")).await {
             Ok(outcome) => assert!(outcome.approved),
-            Err(CommitError::BusDataLoss(_)) => {}
+            Err(CommitError::BusDataLoss(_)) if allow_data_loss => {}
             Err(error) => return Err(error.into()),
         }
         Ok(())
     }
 
-    #[scenario(sim_only, ttl_ms = 1000)]
+    #[scenario(sim_only, ttl_ms = 2592000000, sticky = 1.0)]
+    pub async fn run_test_checkpointed_history_can_expire<F: CommitServiceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        check_checkpointed_history_can_expire(fixture, false).await
+    }
+
+    #[scenario(sim_only, ttl_ms = 2592000000, sticky = 0.0)]
+    pub async fn run_test_checkpointed_history_can_expire_with_misrouting<
+        F: CommitServiceTestFixture,
+    >(
+        fixture: &F,
+    ) -> Result<()> {
+        check_checkpointed_history_can_expire(fixture, true).await
+    }
+
+    #[scenario(sim_only, ttl_ms = 1000, sticky = 1.0)]
     pub async fn run_test_replay_detects_expired_history<F: CommitServiceTestFixture>(
         fixture: &F,
     ) -> Result<()> {
@@ -123,24 +136,13 @@ mod defs {
         );
         env.sleep(Duration::from_millis(1200)).await;
         assert_eq!(service.agent_bus().append(append).await?.log_position, 2);
-        // The commit has one of three outcomes, depending on which replica's bus
-        // appends the intention:
-        // - A bus that remembers its next position appends at 3. Replay then finds
-        //   positions 0 and 1 expired and reports data loss.
-        // - A bus that has never appended to this log takes its tail from the
-        //   expired history and reclaims a position at or below the engine's
-        //   checkpoint. The engine reports that reuse as data loss.
-        // - Such a bus reclaims expired position 1, past the checkpoint. Replay
-        //   finds the new intention where the unapplied entry was, and the commit
-        //   is approved: the loss goes undetected.
-        let result = service
-            .commit_intention(command(&bus_id, "after expiry"))
-            .await;
-        assert!(
-            matches!(result, Ok(_) | Err(CommitError::BusDataLoss(_))),
-            "unexpected outcome {result:?}"
-        );
-        assert!(
+        assert!(matches!(
+            service
+                .commit_intention(command(&bus_id, "after expiry"))
+                .await,
+            Err(CommitError::BusDataLoss(_))
+        ));
+        assert_eq!(
             service
                 .agent_bus()
                 .check_tail(CheckTailRequest {
@@ -149,14 +151,20 @@ mod defs {
                     }),
                 })
                 .await?
-                .tail_position
-                <= 4,
+                .tail_position,
+            4,
             "data loss must not append a fallback abort"
         );
         Ok(())
     }
 
-    #[scenario(sim_only, ttl_ms = 1000)]
+    /// `create_impl()` may build a fresh server or return a handle to existing
+    /// replicas. A fresh write-once bus can reclaim expired positions, so the new
+    /// policy and intention advance its post-expiry tail by two. A bus retaining
+    /// its append position writes past the expired entries, advancing the
+    /// pre-expiry tail by two. Both must report `BusDataLoss` without a fallback
+    /// abort.
+    #[scenario(sim_only, ttl_ms = 1000, sticky = 1.0)]
     pub async fn run_test_detects_lost_bus_tail<F>(fixture: &F) -> Result<()>
     where
         F: DeciderPolicyFixture<Env = Simulator>,
@@ -183,6 +191,15 @@ mod defs {
                 }),
             })
             .await?;
+        let tail_before_expiry = service
+            .agent_bus()
+            .check_tail(CheckTailRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.clone(),
+                }),
+            })
+            .await?
+            .tail_position;
         env.sleep(Duration::from_millis(1200)).await;
         fixture
             .set_decider_policy(DeciderPolicy::OffByDefault)
@@ -203,17 +220,17 @@ mod defs {
                 .await,
             Err(CommitError::BusDataLoss(_))
         ));
-        assert_eq!(
-            fresh
-                .agent_bus()
-                .check_tail(CheckTailRequest {
-                    bus_id: Some(BusId {
-                        agent_bus_id: bus_id
-                    }),
-                })
-                .await?
-                .tail_position,
-            tail + 2,
+        let tail_after = fresh
+            .agent_bus()
+            .check_tail(CheckTailRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id,
+                }),
+            })
+            .await?
+            .tail_position;
+        assert!(
+            tail_after == tail + 2 || tail_after == tail_before_expiry + 2,
             "data loss must leave only the new policy and intention appended"
         );
         Ok(())

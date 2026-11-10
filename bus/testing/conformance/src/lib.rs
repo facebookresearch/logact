@@ -63,9 +63,18 @@ pub struct TestConfig {
     /// `retry`: wrap the bottom-most APIs a fixture builds in their retrying
     /// wrappers, per [`TestConfig::retry_config`].
     pub retry: bool,
+    /// `sticky = <float>`: the probability that a routed request goes to its bus's
+    /// home service, rather than a random one. Routing fixtures read it through
+    /// [`TestConfig::stickiness`].
+    pub sticky: Option<f64>,
 }
 
 impl TestConfig {
+    /// [`TestConfig::sticky`], defaulting to mostly sticky.
+    pub fn stickiness(&self) -> f64 {
+        self.sticky.unwrap_or(0.99)
+    }
+
     /// The retry policy fixtures apply: with `retry`, up to 10 retries with
     /// backoff; otherwise a single attempt. Not set by scenario.
     pub fn retry_config(&self) -> RetryConfig {

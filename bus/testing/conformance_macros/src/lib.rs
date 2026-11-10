@@ -54,6 +54,11 @@
 //! `[1, latency_ms]`, with probability proportional to `1 / k^zipf`, i.e. mostly
 //! fast hops with a heavy tail.
 //!
+//! `#[scenario(sim_only, sticky = 0.5)]` sets the probability that a routing
+//! fixture sends a request to its bus's home service, rather than a random one
+//! (default 0.99; `sticky = 0` picks a random service every time). It
+//! requires `sim_only`.
+//!
 //! `#[scenario(sim_only, retry)]` wraps the bottom-most APIs a fixture builds in
 //! their retrying wrappers (e.g. `RetryingWriteOnceSpace`), with the fixed policy
 //! of `conformance::TestConfig::retry_config`. It requires `sim_only`.
@@ -104,13 +109,16 @@ fn parse_zipf(input: ParseStream) -> syn::Result<LitFloat> {
     Ok(exponent)
 }
 
-/// Parse a loss fraction literal in `[0, 1]`.
-fn parse_loss(input: ParseStream) -> syn::Result<LitFloat> {
-    let loss: LitFloat = input.parse()?;
-    if !(0.0..=1.0).contains(&loss.base10_parse::<f64>()?) {
-        return Err(syn::Error::new_spanned(loss, "`loss` must be in [0, 1]"));
+/// Parse the value of `key`, a probability literal in `[0, 1]`.
+fn parse_probability(input: ParseStream, key: &str) -> syn::Result<LitFloat> {
+    let probability: LitFloat = input.parse()?;
+    if !(0.0..=1.0).contains(&probability.base10_parse::<f64>()?) {
+        return Err(syn::Error::new_spanned(
+            probability,
+            format!("`{key}` must be in [0, 1]"),
+        ));
     }
-    Ok(loss)
+    Ok(probability)
 }
 
 /// The `TestConfig` keys shared by `#[scenario]` and `#[scenario_for]`.
@@ -120,6 +128,7 @@ struct ConfigArgs {
     latency_ms: Option<LitInt>,
     loss: Option<LitFloat>,
     zipf: Option<LitFloat>,
+    sticky: Option<LitFloat>,
     retry: bool,
 }
 
@@ -136,7 +145,10 @@ impl ConfigArgs {
             self.latency_ms = Some(latency_ms);
         } else if key == "loss" {
             input.parse::<Token![=]>()?;
-            self.loss = Some(parse_loss(input)?);
+            self.loss = Some(parse_probability(input, "loss")?);
+        } else if key == "sticky" {
+            input.parse::<Token![=]>()?;
+            self.sticky = Some(parse_probability(input, "sticky")?);
         } else if key == "zipf" {
             input.parse::<Token![=]>()?;
             self.zipf = Some(parse_zipf(input)?);
@@ -161,12 +173,19 @@ impl ConfigArgs {
         if self.retry && envs != "sim_only" {
             return Err(input.error("`retry` requires `sim_only`"));
         }
+        if self.sticky.is_some() && envs != "sim_only" {
+            return Err(input.error("`sticky` requires `sim_only`"));
+        }
         Ok(())
     }
 
     /// The `TestConfig` these keys select, or `None` for the default config.
     fn test_config(&self) -> Option<proc_macro2::TokenStream> {
-        if self.ttl_ms.is_none() && self.latency_ms.is_none() && self.loss.is_none() && !self.retry
+        if self.ttl_ms.is_none()
+            && self.latency_ms.is_none()
+            && self.loss.is_none()
+            && self.sticky.is_none()
+            && !self.retry
         {
             return None;
         }
@@ -201,7 +220,18 @@ impl ConfigArgs {
             }
         };
         let retry = self.retry;
-        Some(quote! { ::conformance::TestConfig { ttl: #ttl, latency: #latency, retry: #retry } })
+        let sticky = match &self.sticky {
+            Some(sticky) => some(quote! { #sticky }),
+            None => quote! { ::core::option::Option::None },
+        };
+        Some(quote! {
+            ::conformance::TestConfig {
+                ttl: #ttl,
+                latency: #latency,
+                retry: #retry,
+                sticky: #sticky,
+            }
+        })
     }
 }
 
@@ -241,7 +271,7 @@ impl Parse for ScenarioForArgs {
             } else if !config.parse_key(&key, input)? {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `suffix = <ident>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, `retry`, `sim_only`, or `int_only`",
+                    "expected `suffix = <ident>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, `sticky = <float>`, `retry`, `sim_only`, or `int_only`",
                 ));
             }
         }
@@ -310,7 +340,7 @@ impl Parse for ScenarioArgs {
             } else if !config.parse_key(&key, input)? {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `sim_only`, `int_only`, `cardinality = <int>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, or `retry`",
+                    "expected `sim_only`, `int_only`, `cardinality = <int>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, `sticky = <float>`, or `retry`",
                 ));
             }
         }
@@ -562,6 +592,32 @@ mod tests {
             );
         }
         assert!(syn::parse_str::<ScenarioForArgs>("Fixture, suffix = test, loss = 0.1").is_err());
+    }
+
+    #[test]
+    fn parses_scenario_stickiness() {
+        let args = syn::parse_str::<ScenarioArgs>("sim_only, sticky = 0.0").unwrap();
+        assert_eq!(
+            args.config
+                .sticky
+                .as_ref()
+                .unwrap()
+                .base10_parse::<f64>()
+                .unwrap(),
+            0.0
+        );
+        assert!(args.config.test_config().is_some());
+        for input in [
+            "sticky = 0.5",
+            "int_only, sticky = 0.5",
+            "sim_only, sticky = 1.5",
+            "sim_only, sticky = 1",
+        ] {
+            assert!(
+                syn::parse_str::<ScenarioArgs>(input).is_err(),
+                "should reject {input}"
+            );
+        }
     }
 
     #[test]

@@ -5,22 +5,37 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! A test-only `CommitSvc` that fans requests out to one of N underlying
-//! instances at random, plus a fixture that runs the generic suite against it.
+//! A test-only `CommitSvc` that routes requests to each bus's home replica,
+//! with optional random misrouting, plus a fixture for the generic suite.
 //!
-//! Each `create_impl` fans `NUM_SERVICES` engine front-ends onto one shared bus
-//! (from the injected `AgentBusTestFixture`, whose `create_impl` hands out
-//! handles to a single shared log), one shared in-memory storage, and one shared
-//! decider-policy register, wrapped in a router that dispatches each request to a
-//! randomly picked one. Because the engines share the bus (one total order), the
-//! storage (one cursor / decider state, advanced under CAS), and the policy
-//! register, they behave as one logical service with several front-ends — so
+//! The fixture builds `NUM_SERVICES` engine front-ends once, each over its own
+//! bus from the injected `AgentBusTestFixture` (all onto one shared log), with one
+//! shared storage and one shared decider-policy register. Every `create_impl` is
+//! a router over those same engines, routing each request by its bus ID.
+//! Because the engines share the log (one total order), the storage (one cursor /
+//! decider state, advanced under CAS), and the policy register, they behave as
+//! one logical service with several front-ends, shared by every client, so
 //! routing requests across them stays linearizable.
 
+use std::hash::DefaultHasher;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::rc::Rc;
 
 use agentbus_api::AgentBus;
+use agentbus_api::AppendRequest;
+use agentbus_api::AppendResponse;
+use agentbus_api::BlockingPollRequest;
+use agentbus_api::BlockingPollResponse;
+use agentbus_api::BusResult;
+use agentbus_api::CheckTailRequest;
+use agentbus_api::CheckTailResponse;
 use agentbus_api::Environment;
+use agentbus_api::PollRequest;
+use agentbus_api::PollResponse;
+use agentbus_api::ReadNextRequest;
+use agentbus_api::ReadNextResponse;
+use agentbus_api::validation::validate_bus_id;
 use agentbus_tests::fixtures::AgentBusTestFixture;
 use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
 use anyhow::Result;
@@ -51,60 +66,148 @@ use crate::fixtures::TestPolicyProvider;
 use crate::fixtures::build_v1;
 use crate::simulator::Simulator;
 
-/// Routes each commit request to one of `services`, picked uniformly at random.
-/// Randomness comes from the `Environment` RNG so simulator tests stay
-/// deterministic.
+/// Routes each commit request by its bus ID, as production does: to the bus's
+/// home service, picked by a salted hash of the ID, so every clone agrees on it.
+/// With probability `switch_probability`, a request strays to a service picked
+/// uniformly at random instead. Randomness, including the salt, comes from the
+/// `Environment` RNG so simulator tests stay deterministic.
 pub struct RandomRoutingCommitService<S, E> {
+    bus: RandomRoutingAgentBus<S, E>,
+}
+
+/// Routes each AgentBus request using the same bus-ID policy as commit requests.
+pub struct RandomRoutingAgentBus<S, E> {
     services: Vec<S>,
     env: Rc<E>,
+    switch_probability: f64,
+    salt: u64,
+}
+
+impl<S: Clone, E> Clone for RandomRoutingAgentBus<S, E> {
+    fn clone(&self) -> Self {
+        Self {
+            services: self.services.clone(),
+            env: self.env.clone(),
+            switch_probability: self.switch_probability,
+            salt: self.salt,
+        }
+    }
 }
 
 impl<S: Clone, E> Clone for RandomRoutingCommitService<S, E> {
     fn clone(&self) -> Self {
         Self {
-            services: self.services.clone(),
-            env: self.env.clone(),
+            bus: self.bus.clone(),
         }
     }
 }
 
 impl<S: CommitSvc, E: Environment> RandomRoutingCommitService<S, E> {
-    /// Build a router over `services`. Panics if `services` is empty, since there
-    /// would be nowhere to route requests.
+    /// Build a router that picks a service uniformly at random for every request.
+    /// Panics if `services` is empty, since there would be nowhere to route requests.
     pub fn new(services: Vec<S>, env: Rc<E>) -> Self {
         assert!(
             !services.is_empty(),
             "RandomRoutingCommitService needs at least one service"
         );
-        Self { services, env }
+        Self {
+            bus: RandomRoutingAgentBus {
+                services,
+                env,
+                switch_probability: 1.0,
+                salt: 0,
+            },
+        }
     }
 
-    fn pick(&self) -> &S {
-        let index = self
-            .env
-            .with_rng(|rng| rng.random_range(0..self.services.len()));
+    /// Send a request to a random service only with `switch_probability`, so each
+    /// bus's requests mostly go to its home service.
+    pub fn with_switch_probability(mut self, switch_probability: f64) -> Self {
+        self.bus.switch_probability = switch_probability;
+        self.bus.salt = self.bus.env.with_rng(|rng| rng.random());
+        self
+    }
+}
+
+impl<S, E: Environment> RandomRoutingAgentBus<S, E> {
+    fn pick(&self, bus_id: &str) -> &S {
+        let index = if self.switch_probability < 1.0
+            && !self
+                .env
+                .with_rng(|rng| rng.random_bool(self.switch_probability))
+        {
+            let mut hasher = DefaultHasher::new();
+            (self.salt, bus_id).hash(&mut hasher);
+            (hasher.finish() % self.services.len() as u64) as usize
+        } else {
+            self.env
+                .with_rng(|rng| rng.random_range(0..self.services.len()))
+        };
         &self.services[index]
     }
 }
 
+impl<S: CommitSvc, E: Environment> AgentBus for RandomRoutingAgentBus<S, E> {
+    async fn append(&self, request: AppendRequest) -> BusResult<AppendResponse> {
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        self.pick(&bus_id.agent_bus_id)
+            .agent_bus()
+            .append(request)
+            .await
+    }
+
+    async fn poll(&self, request: PollRequest) -> BusResult<PollResponse> {
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        self.pick(&bus_id.agent_bus_id)
+            .agent_bus()
+            .poll(request)
+            .await
+    }
+
+    async fn read_next(&self, request: ReadNextRequest) -> BusResult<ReadNextResponse> {
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        self.pick(&bus_id.agent_bus_id)
+            .agent_bus()
+            .read_next(request)
+            .await
+    }
+
+    async fn check_tail(&self, request: CheckTailRequest) -> BusResult<CheckTailResponse> {
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        self.pick(&bus_id.agent_bus_id)
+            .agent_bus()
+            .check_tail(request)
+            .await
+    }
+
+    async fn blocking_poll(&self, request: BlockingPollRequest) -> BusResult<BlockingPollResponse> {
+        let bus_id = validate_bus_id(request.bus_id.as_ref())?;
+        self.pick(&bus_id.agent_bus_id)
+            .agent_bus()
+            .blocking_poll(request)
+            .await
+    }
+}
+
 impl<S: CommitSvc, E: Environment> CommitSvc for RandomRoutingCommitService<S, E> {
-    type Bus = S::Bus;
+    type Bus = RandomRoutingAgentBus<S, E>;
 
     fn agent_bus(&self) -> &Self::Bus {
-        // `new` rejects an empty service list, and every routed service is
-        // constructed over the same logical bus.
-        self.services[0].agent_bus()
+        &self.bus
     }
 
     async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
-        self.pick().create_bus(request).await
+        self.bus.pick(&request.bus_id).create_bus(request).await
     }
 
     async fn commit_intention(
         &self,
         request: CommitIntentionCommand,
     ) -> CommitResult<CommitIntentionOutcome> {
-        self.pick().commit_intention(request).await
+        self.bus
+            .pick(&request.bus_id.agent_bus_id)
+            .commit_intention(request)
+            .await
     }
 }
 
@@ -131,13 +234,13 @@ pub struct RandomRoutingCommitServiceFixture<
     P = SynchronousRegisterProvider<InMemoryStorage>,
     SF = InMemoryStorageFixture,
 > where
+    BF: AgentBusTestFixture<Env = Simulator>,
     P: TestPolicyProvider,
     SF: StorageTestFixture,
 {
     bus_fixture: BF,
-    policy: P,
     policy_controller: P::Controller,
-    storage: Rc<SF::Impl>,
+    router: RandomRoutingCommitService<RoutedV1<BF::Impl, P, SF::Impl>, Simulator>,
 }
 
 /// Build a v1 engine over a `bus` front-end, the shared `storage`, and the shared
@@ -183,29 +286,19 @@ where
         self.bus_fixture.get_env()
     }
 
+    /// A router over the shared engines. Every clone shares the salt, so it routes
+    /// each bus to the same home engine.
     fn create_impl(&self) -> Self::Impl {
-        let env = self.bus_fixture.get_env();
-        // Each `bus_fixture.create_impl()` is a fresh front-end onto the same
-        // shared log, so the N engines behave as one logical service.
-        let services = (0..NUM_SERVICES)
-            .map(|_| {
-                make_v1(
-                    self.bus_fixture.create_impl(),
-                    self.storage.clone(),
-                    self.policy.clone(),
-                    env.clone(),
-                )
-            })
-            .collect();
-        RandomRoutingCommitService::new(services, env)
+        self.router.clone()
     }
 }
 
 impl<BF, P, SF> SimulatorFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
 where
     BF: AgentBusTestFixture<Env = Simulator> + BusSimulatorFixture,
+    BF::Impl: Clone + 'static,
     P: TestPolicyProvider,
-    SF: EnvStorageFixture,
+    SF: EnvStorageFixture<Impl: 'static>,
 {
     fn new(simulator: Simulator) -> Self {
         Self::try_new_with_config(simulator, &TestConfig::default())
@@ -215,13 +308,24 @@ where
     /// The scenario's config goes to both the bus and the storage fixture.
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let bus_fixture = <BF as BusSimulatorFixture>::try_new_with_config(simulator, config)?;
-        let storage = SF::try_new_on_env(bus_fixture.get_env(), config)?.create_impl();
+        let env = bus_fixture.get_env();
+        let storage = Rc::new(SF::try_new_on_env(env.clone(), config)?.create_impl());
         let (policy, policy_controller) = P::for_test();
+        let services = (0..NUM_SERVICES)
+            .map(|_| {
+                make_v1(
+                    bus_fixture.create_impl(),
+                    storage.clone(),
+                    policy.clone(),
+                    env.clone(),
+                )
+            })
+            .collect();
         Ok(Self {
             bus_fixture,
-            policy,
             policy_controller,
-            storage: Rc::new(storage),
+            router: RandomRoutingCommitService::new(services, env)
+                .with_switch_probability(1.0 - config.stickiness()),
         })
     }
 }
@@ -262,6 +366,7 @@ mod tests {
     }
 
     /// A `CommitSvc` that just counts the requests it receives.
+    #[derive(Clone)]
     struct CountingService {
         hits: Rc<Cell<u32>>,
         bus: InMemoryAgentBus<RealEnvironment>,
@@ -306,6 +411,56 @@ mod tests {
             block_on(router.commit_intention(request())).unwrap();
         }
         assert_eq!(hits.get(), 5);
+    }
+
+    #[test]
+    fn sticky_router_sends_every_request_to_one_service() {
+        let env = Rc::new(RealEnvironment::new());
+        let hits: Vec<Rc<Cell<u32>>> = (0..3).map(|_| Rc::new(Cell::new(0))).collect();
+        let bus = InMemoryAgentBus::new(env.clone());
+        let services = hits
+            .iter()
+            .map(|hits| CountingService {
+                hits: hits.clone(),
+                bus: bus.clone(),
+            })
+            .collect();
+        let router = RandomRoutingCommitService::new(services, env).with_switch_probability(0.0);
+
+        for _ in 0..50 {
+            block_on(router.commit_intention(request())).unwrap();
+        }
+        assert_eq!(
+            hits.iter().map(|hits| hits.get()).max(),
+            Some(50),
+            "a router that never switches should keep every request on its first pick"
+        );
+    }
+
+    #[test]
+    fn clones_route_each_bus_to_the_same_service() {
+        let env = Rc::new(RealEnvironment::new());
+        let hits: Vec<Rc<Cell<u32>>> = (0..3).map(|_| Rc::new(Cell::new(0))).collect();
+        let bus = InMemoryAgentBus::new(env.clone());
+        let services = hits
+            .iter()
+            .map(|hits| CountingService {
+                hits: hits.clone(),
+                bus: bus.clone(),
+            })
+            .collect();
+        let router = RandomRoutingCommitService::new(services, env).with_switch_probability(0.0);
+        let clone = router.clone();
+
+        for _ in 0..25 {
+            block_on(router.commit_intention(request())).unwrap();
+            block_on(clone.commit_intention(request())).unwrap();
+        }
+        assert_eq!(
+            hits.iter().map(|hits| hits.get()).max(),
+            Some(50),
+            "every clone should route a bus to the service it is on"
+        );
     }
 
     #[test]

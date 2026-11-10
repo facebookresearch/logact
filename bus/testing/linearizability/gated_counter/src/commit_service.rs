@@ -118,7 +118,7 @@ impl<S, C, B> CommitServiceGatedCounterImplementation<S, C, B> {
 
 impl<S, C, B> LinearizabilityImplementation for CommitServiceGatedCounterImplementation<S, C, B>
 where
-    S: CommitSvc<Bus = B> + Clone + 'static,
+    S: CommitSvc + Clone + 'static,
     C: SettableDeciderPolicy + 'static,
     B: AgentBus + 'static,
 {
