@@ -74,7 +74,10 @@ pub async fn run<C: CommitSvc + ?Sized>(commit_client: &C, args: CommitArgs) -> 
                     intention: agentbus::intention::Intention::StringIntention(body),
                 })
                 .await?;
-            println!("approved={} reason={:?}", outcome.approved, outcome.reason);
+            println!(
+                "approved={} log_position={} reason={:?}",
+                outcome.approved, outcome.log_position, outcome.reason
+            );
             if !outcome.approved {
                 bail!("commit rejected");
             }
@@ -112,13 +115,14 @@ async fn append_payload<B: agentbus_api::AgentBus + ?Sized>(
     agent_id: String,
     payload: agentbus::Payload,
 ) -> Result<()> {
-    bus.append(AppendRequest {
-        bus_id: Some(BusId {
-            agent_bus_id: agent_id,
-        }),
-        payload: Some(payload),
-    })
-    .await?;
-    println!("committed");
+    let response = bus
+        .append(AppendRequest {
+            bus_id: Some(BusId {
+                agent_bus_id: agent_id,
+            }),
+            payload: Some(payload),
+        })
+        .await?;
+    println!("committed log_position={}", response.log_position);
     Ok(())
 }
