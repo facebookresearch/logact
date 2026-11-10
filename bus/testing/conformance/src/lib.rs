@@ -67,6 +67,9 @@ pub struct TestConfig {
     /// home service, rather than a random one. Routing fixtures read it through
     /// [`TestConfig::stickiness`].
     pub sticky: Option<f64>,
+    /// `max_iterations = <int>`: the simulator's bound on task polls, for a long
+    /// scenario. It configures the simulator, not the fixture.
+    pub max_iterations: Option<usize>,
 }
 
 impl TestConfig {
@@ -88,16 +91,20 @@ impl TestConfig {
     }
 }
 
-/// Builds `F` for a scenario's `config`: `latency` configures the simulator,
-/// which every latency wrapper consults, and the rest goes to the fixture.
+/// Builds `F` for a scenario's `config`: `latency` and `max_iterations` configure
+/// the simulator, which every latency wrapper consults, and the rest goes to the
+/// fixture.
 pub fn try_new_fixture<F: SimulatorFixture>(
     simulator: Simulator,
     config: &TestConfig,
 ) -> Result<F> {
     F::try_new_with_config(
-        simulator.with_latency(config.latency.clone()),
+        simulator
+            .with_latency(config.latency.clone())
+            .with_max_iterations(config.max_iterations),
         &TestConfig {
             latency: None,
+            max_iterations: None,
             ..config.clone()
         },
     )

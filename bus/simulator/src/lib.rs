@@ -71,6 +71,10 @@ impl<T> Future for SimulatorHandle<T> {
     }
 }
 
+/// The default bound on task polls per [`Simulator::run`], which catches
+/// infinite loops.
+pub const DEFAULT_MAX_ITERATIONS: usize = 100_000;
+
 /// MB: Simulator supports spawning of tasks on a deterministic, single-threaded executor.
 /// Tasks are spawned with a logical timestamp, and are executed in deterministic order.
 /// To ensure determinism, it uses a logical clock to advance time, and a RNG with a specific seed.
@@ -81,6 +85,7 @@ pub struct Simulator {
     pub rng: RefCell<StdRng>,
     pub clock: LogicalClock,
     latency_injector: LatencyInjector,
+    max_iterations: usize,
 }
 
 impl Simulator {
@@ -93,6 +98,7 @@ impl Simulator {
             rng: RefCell::new(rng),
             clock,
             latency_injector: LatencyInjector::new(None),
+            max_iterations: DEFAULT_MAX_ITERATIONS,
         }
     }
 
@@ -105,6 +111,7 @@ impl Simulator {
             rng: RefCell::new(rng),
             clock,
             latency_injector: LatencyInjector::new(None),
+            max_iterations: DEFAULT_MAX_ITERATIONS,
         }
     }
 
@@ -132,11 +139,19 @@ impl Simulator {
         SimulatorHandle::new(receiver)
     }
 
+    /// Sets the bound on task polls per [`Self::run`]. `None` keeps
+    /// [`DEFAULT_MAX_ITERATIONS`].
+    pub fn with_max_iterations(mut self, max_iterations: Option<usize>) -> Self {
+        self.max_iterations = max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
+        self
+    }
+
     /// Run all spawned tasks to completion in deterministic order
     pub fn run(&self) -> RunStats {
         let seed = self.rng.borrow_mut().random();
         let mut child_rng = StdRng::seed_from_u64(seed);
-        self.executor.run(&mut child_rng, &self.clock)
+        self.executor
+            .run(&mut child_rng, &self.clock, self.max_iterations)
     }
 }
 
@@ -337,15 +352,13 @@ impl DeterministicExecutor {
             .and_then(|Reverse(sleep)| sleep.target_time)
     }
 
-    pub fn run(&self, rng: &mut StdRng, clock: &LogicalClock) -> RunStats {
-        const MAX_ITERATIONS: usize = 100_000;
+    pub fn run(&self, rng: &mut StdRng, clock: &LogicalClock, max_iterations: usize) -> RunStats {
         let mut iteration_count = 0;
 
         loop {
-            if iteration_count >= MAX_ITERATIONS {
+            if iteration_count >= max_iterations {
                 panic!(
-                    "Simulator exceeded {} iterations, likely infinite loop!",
-                    MAX_ITERATIONS
+                    "Simulator exceeded {max_iterations} iterations, likely infinite loop! A long scenario can raise this with `max_iterations = <int>`."
                 );
             }
 

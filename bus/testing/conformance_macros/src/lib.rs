@@ -59,6 +59,10 @@
 //! (default 0.99; `sticky = 0` picks a random service every time). It
 //! requires `sim_only`.
 //!
+//! `#[scenario(sim_only, max_iterations = 1000000)]` raises the simulator's bound on
+//! task polls (default `agentbus_simulator::DEFAULT_MAX_ITERATIONS`), which catches
+//! infinite loops, for a scenario that is just long. It requires `sim_only`.
+//!
 //! `#[scenario(sim_only, retry)]` wraps the bottom-most APIs a fixture builds in
 //! their retrying wrappers (e.g. `RetryingWriteOnceSpace`), with the fixed policy
 //! of `conformance::TestConfig::retry_config`. It requires `sim_only`.
@@ -129,6 +133,7 @@ struct ConfigArgs {
     loss: Option<LitFloat>,
     zipf: Option<LitFloat>,
     sticky: Option<LitFloat>,
+    max_iterations: Option<LitInt>,
     retry: bool,
 }
 
@@ -152,6 +157,16 @@ impl ConfigArgs {
         } else if key == "zipf" {
             input.parse::<Token![=]>()?;
             self.zipf = Some(parse_zipf(input)?);
+        } else if key == "max_iterations" {
+            input.parse::<Token![=]>()?;
+            let max_iterations: LitInt = input.parse()?;
+            if max_iterations.base10_parse::<usize>()? == 0 {
+                return Err(syn::Error::new_spanned(
+                    max_iterations,
+                    "`max_iterations` must be positive",
+                ));
+            }
+            self.max_iterations = Some(max_iterations);
         } else if key == "retry" {
             self.retry = true;
         } else {
@@ -176,6 +191,9 @@ impl ConfigArgs {
         if self.sticky.is_some() && envs != "sim_only" {
             return Err(input.error("`sticky` requires `sim_only`"));
         }
+        if self.max_iterations.is_some() && envs != "sim_only" {
+            return Err(input.error("`max_iterations` requires `sim_only`"));
+        }
         Ok(())
     }
 
@@ -185,6 +203,7 @@ impl ConfigArgs {
             && self.latency_ms.is_none()
             && self.loss.is_none()
             && self.sticky.is_none()
+            && self.max_iterations.is_none()
             && !self.retry
         {
             return None;
@@ -224,12 +243,17 @@ impl ConfigArgs {
             Some(sticky) => some(quote! { #sticky }),
             None => quote! { ::core::option::Option::None },
         };
+        let max_iterations = match &self.max_iterations {
+            Some(max_iterations) => some(quote! { #max_iterations }),
+            None => quote! { ::core::option::Option::None },
+        };
         Some(quote! {
             ::conformance::TestConfig {
                 ttl: #ttl,
                 latency: #latency,
                 retry: #retry,
                 sticky: #sticky,
+                max_iterations: #max_iterations,
             }
         })
     }
@@ -271,7 +295,7 @@ impl Parse for ScenarioForArgs {
             } else if !config.parse_key(&key, input)? {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `suffix = <ident>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, `sticky = <float>`, `retry`, `sim_only`, or `int_only`",
+                    "expected `suffix = <ident>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, `sticky = <float>`, `max_iterations = <int>`, `retry`, `sim_only`, or `int_only`",
                 ));
             }
         }
@@ -340,7 +364,7 @@ impl Parse for ScenarioArgs {
             } else if !config.parse_key(&key, input)? {
                 return Err(syn::Error::new_spanned(
                     key,
-                    "expected `sim_only`, `int_only`, `cardinality = <int>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, `sticky = <float>`, or `retry`",
+                    "expected `sim_only`, `int_only`, `cardinality = <int>`, `seed = <int>`, `ttl_ms = <int>`, `latency_ms = <int>`, `loss = <float>`, `zipf = <float>`, `sticky = <float>`, `max_iterations = <int>`, or `retry`",
                 ));
             }
         }
@@ -616,6 +640,69 @@ mod tests {
             assert!(
                 syn::parse_str::<ScenarioArgs>(input).is_err(),
                 "should reject {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_scenario_max_iterations() {
+        let args = syn::parse_str::<ScenarioArgs>("sim_only, max_iterations = 1000000").unwrap();
+        assert_eq!(
+            args.config
+                .max_iterations
+                .as_ref()
+                .unwrap()
+                .base10_parse::<usize>()
+                .unwrap(),
+            1_000_000
+        );
+        assert!(args.config.test_config().is_some());
+        for input in [
+            "max_iterations = 10",
+            "int_only, max_iterations = 10",
+            "sim_only, max_iterations = 0",
+            "sim_only, max_iterations = -1",
+        ] {
+            assert!(
+                syn::parse_str::<ScenarioArgs>(input).is_err(),
+                "should reject {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn parses_stickiness_with_max_iterations() {
+        let args =
+            syn::parse_str::<ScenarioArgs>("sim_only, sticky = 0.5, max_iterations = 1000000")
+                .unwrap();
+        let pinned = syn::parse_str::<ScenarioForArgs>(
+            "Fixture, suffix = test, sim_only, sticky = 0.5, max_iterations = 1000000",
+        )
+        .unwrap();
+        for config in [args.config, pinned.config] {
+            assert_eq!(
+                config
+                    .sticky
+                    .as_ref()
+                    .unwrap()
+                    .base10_parse::<f64>()
+                    .unwrap(),
+                0.5
+            );
+            assert_eq!(
+                config
+                    .max_iterations
+                    .as_ref()
+                    .unwrap()
+                    .base10_parse::<usize>()
+                    .unwrap(),
+                1_000_000
+            );
+            let generated = config.test_config().unwrap().to_string();
+            assert!(generated.contains("sticky : :: core :: option :: Option :: Some (0.5)"));
+            assert!(
+                generated
+                    .contains("max_iterations : :: core :: option :: Option :: Some (1000000)")
             );
         }
     }

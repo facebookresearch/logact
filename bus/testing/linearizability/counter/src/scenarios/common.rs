@@ -77,9 +77,14 @@ mod defs {
         check_counter_linearizability(fixture, 4, 5).await
     }
 
-    /// Fault-free: under loss, its hours of virtual time in timeouts would exceed
-    /// the simulator's iteration budget.
-    #[scenario(sim_only)]
+    #[scenario(
+        sim_only,
+        latency_ms = 65000,
+        zipf = 1.2,
+        loss = 0.05,
+        retry,
+        max_iterations = 1000000
+    )]
     pub async fn run_counter_linearizability_3x100<F>(fixture: &F) -> Result<()>
     where
         F: ConformanceFixture<Env = Simulator>,
