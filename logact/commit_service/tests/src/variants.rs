@@ -33,6 +33,11 @@ macro_rules! commit_service_fixtures {
         // generic commit-service scenario against the same fixture used by the
         // replay-latency scenario.
         $cb!([CommitServiceV1LatencyFixture, v1_latency, sim] $(, $ctx)?);
+        // V1 deployed as production deploys it over ZippyDB, with in-memory
+        // stand-ins: requests routed across replicas, each with its own channeled
+        // write-once AgentBus over a caching adapter over one shared
+        // conditional-write space, and shared scoped engine storage.
+        $cb!([$crate::fixtures::CommitServiceV1ProductionShape, v1_production_shape, sim] $(, $ctx)?);
         // Channeled wrapper over the simple in-memory bus.
         $cb!(
             [

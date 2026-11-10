@@ -28,6 +28,7 @@ pub mod fixtures;
 // etc. rather than the full `agentbus_tests::fixtures::simtest::` path.
 pub use fixtures::simtest::BusChained;
 pub use fixtures::simtest::BusChanneled;
+pub use fixtures::simtest::BusProductionShape;
 pub use fixtures::simtest::BusSimpleMemory;
 pub use fixtures::simtest::CommitThenError;
 pub use fixtures::simtest::ErrorThenCommit;

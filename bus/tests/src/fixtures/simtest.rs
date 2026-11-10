@@ -30,12 +30,14 @@ use rand::distr::Uniform;
 use super::SimulatorFixture;
 use super::WriteOnceAgentBusGenericFixture;
 use crate::common::fault_config::FaultConfig;
+use crate::conditional_write_space::fixtures::simtest::InMemoryConditionalWriteSpaceFixture;
 use crate::impls::chained_agentbus::ChainedAgentBus;
 use crate::impls::chained_agentbus::ChainedMode;
 use crate::impls::fault_injecting_agentbus::FaultInjectingAgentBus;
 use crate::impls::latency_wrapper::LatencyWrapper;
 use crate::impls::retrying_agentbus::RetryingAgentBus;
 use crate::simulator::Simulator;
+use crate::write_once_space::fixtures::WriteOnceAdapterFixture;
 use crate::write_once_space::fixtures::simtest::AmbiguousOnceWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::CachingWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::ChanneledWriteOnceSpaceFixture;
@@ -197,6 +199,47 @@ impl SimulatorFixture for ChanneledAgentBusFixture {
         Ok(Self {
             agentbus: backend(agentbus, &env, config),
             env,
+        })
+    }
+}
+
+/// Runs each of another AgentBus fixture's buses behind its own
+/// `ChanneledAgentBus`, as each production server does.
+pub struct ChanneledFixture<F> {
+    inner: Rc<F>,
+}
+
+impl<F> ConformanceFixture for ChanneledFixture<F>
+where
+    F: ConformanceFixture<Env = Simulator, Impl: agentbus_api::AgentBus + 'static> + 'static,
+{
+    type Env = Simulator;
+    type Impl = ChanneledAgentBus;
+
+    fn get_env(&self) -> Rc<Self::Env> {
+        self.inner.get_env()
+    }
+
+    fn create_impl(&self) -> Self::Impl {
+        let inner = self.inner.clone();
+        ChanneledAgentBus::new_on_environment(self.inner.get_env(), move || inner.create_impl())
+    }
+}
+
+impl<F> SimulatorFixture for ChanneledFixture<F>
+where
+    F: SimulatorFixture
+        + ConformanceFixture<Env = Simulator, Impl: agentbus_api::AgentBus + 'static>
+        + 'static,
+{
+    fn new(simulator: Simulator) -> Self {
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: Rc::new(F::try_new_with_config(simulator, config)?),
         })
     }
 }
@@ -500,6 +543,17 @@ pub type SpaceCaching = WriteOnceAgentBusGenericFixture<
 >;
 pub type SpaceChanneled = WriteOnceAgentBusGenericFixture<
     FaultInjectingWriteOnceSpaceFixture<ChanneledWriteOnceSpaceFixture>,
+>;
+/// The AgentBus each production server builds over ZippyDB, with an in-memory
+/// conditional-write space in place of ZippyDB: `ChanneledAgentBus` over
+/// `WriteOnceAgentBus` over `CachingWriteOnceSpace` over `WriteOnceSpaceAdapter`
+/// over that space. Each `create_impl` is a separate server's stack; only the space
+/// is shared. Latency is injected at the space, and `retry` retries above the
+/// adapter. The observability wrappers production adds are left out.
+pub type BusProductionShape = ChanneledFixture<
+    WriteOnceAgentBusGenericFixture<
+        CachingWriteOnceSpaceFixture<WriteOnceAdapterFixture<InMemoryConditionalWriteSpaceFixture>>,
+    >,
 >;
 pub type SpaceAmbiguousWriteEmpty = WriteOnceAgentBusGenericFixture<
     AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, false>,

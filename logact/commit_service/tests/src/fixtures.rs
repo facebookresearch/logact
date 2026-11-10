@@ -54,6 +54,7 @@ pub use conformance::SimulatorFixture;
 pub use grpc::GrpcCommitServiceFixture;
 pub use inmem::InMemCommitServiceFixture;
 pub use observable::ObservableCommitServiceFixture;
+pub use random_routing::CommitServiceV1ProductionShape;
 pub use random_routing::RandomRoutingCommitServiceFixture;
 pub use v1::CommitServiceV1Fixture;
 pub use v1::CommitServiceV1StorageConflictFixture;

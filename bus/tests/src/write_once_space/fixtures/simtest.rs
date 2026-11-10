@@ -81,13 +81,15 @@ impl SimulatorFixture for InMemoryWriteOnceSpaceFixture {
     }
 }
 
-/// Fixture for a bounded cache over another write-once-space fixture.
+/// Fixture for a bounded cache over another write-once-space fixture. Each
+/// `create_impl` is a new cache over a new handle to the inner space, as each
+/// process has its own cache.
 pub struct CachingWriteOnceSpaceFixture<F = InMemoryWriteOnceSpaceFixture>
 where
     F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace>,
 {
-    space: CachingWriteOnceSpace<F::Impl>,
-    env: Rc<Simulator>,
+    inner: F,
+    ttl: Option<Duration>,
 }
 
 impl<F> CachingWriteOnceSpaceFixture<F>
@@ -100,14 +102,7 @@ where
 
     /// Expire cached writes after `ttl`, if set, matching the backing storage.
     fn from_fixture_with_ttl(inner: F, ttl: Option<Duration>) -> Self {
-        let space = CachingWriteOnceSpace::new(inner.create_impl(), 2, 64 * 1024);
-        Self {
-            space: match ttl {
-                Some(ttl) => space.with_write_ttl(inner.get_env(), ttl),
-                None => space,
-            },
-            env: inner.get_env(),
-        }
+        Self { inner, ttl }
     }
 }
 
@@ -120,11 +115,15 @@ where
     type Impl = CachingWriteOnceSpace<F::Impl>;
 
     fn get_env(&self) -> Rc<Self::Env> {
-        self.env.clone()
+        self.inner.get_env()
     }
 
     fn create_impl(&self) -> Self::Impl {
-        self.space.clone()
+        let space = CachingWriteOnceSpace::new(self.inner.create_impl(), 2, 64 * 1024);
+        match self.ttl {
+            Some(ttl) => space.with_write_ttl(self.inner.get_env(), ttl),
+            None => space,
+        }
     }
 }
 

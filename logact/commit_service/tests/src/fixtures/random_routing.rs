@@ -36,6 +36,7 @@ use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::Storage;
 use logact_commit_service_engine_tests::fixtures::EnvStorageFixture;
 use logact_commit_service_engine_tests::fixtures::InMemoryStorageFixture;
+use logact_commit_service_engine_tests::fixtures::ScopedStorageFixture;
 use logact_commit_service_engine_tests::fixtures::StorageTestFixture;
 use logact_commit_service_v1::CommitServiceV1;
 use logact_commit_service_v1::DelegatingVoterFactory;
@@ -157,6 +158,16 @@ fn make_v1<T: AgentBus + Clone + 'static, P: TestPolicyProvider, S: Storage + 's
         environment,
     )
 }
+
+/// The commit service as production deploys it, with in-memory stand-ins for
+/// ZippyDB: requests routed across replicas, each with its own
+/// [`agentbus_tests::BusProductionShape`] stack over the one shared space, and
+/// shared scoped engine storage.
+pub type CommitServiceV1ProductionShape = RandomRoutingCommitServiceFixture<
+    agentbus_tests::BusProductionShape,
+    SynchronousRegisterProvider<InMemoryStorage>,
+    ScopedStorageFixture,
+>;
 
 impl<BF, P, SF> ConformanceFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
 where
