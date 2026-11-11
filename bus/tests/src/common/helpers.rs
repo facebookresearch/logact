@@ -328,8 +328,9 @@ pub fn variant_name_to_payload(variant_name: &str) -> Payload {
         "voterPolicy" => payload::Payload::VoterPolicy(VoterPolicy::default()),
         "control" => payload::Payload::Control(Control {
             control: Some(control::Control::BaseEngineControl(BaseEngineControl {
-                control: Some(base_engine_control::Control::RemoveVoter(RemoveVoter {
-                    voter_id: "dummy".to_string(),
+                control: Some(base_engine_control::Control::PolicyBatch(PolicyBatch {
+                    new_version: 1,
+                    ..Default::default()
                 })),
             })),
         }),
@@ -408,8 +409,9 @@ pub fn selective_poll_type_to_payload(poll_type: i32) -> Option<Payload> {
         SelectivePollType::VoterPolicy => payload::Payload::VoterPolicy(VoterPolicy::default()),
         SelectivePollType::Control => payload::Payload::Control(Control {
             control: Some(control::Control::BaseEngineControl(BaseEngineControl {
-                control: Some(base_engine_control::Control::RemoveVoter(RemoveVoter {
-                    voter_id: "test".to_string(),
+                control: Some(base_engine_control::Control::PolicyBatch(PolicyBatch {
+                    new_version: 1,
+                    ..Default::default()
                 })),
             })),
         }),

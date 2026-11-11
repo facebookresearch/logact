@@ -258,26 +258,6 @@ pub fn parse_entry(entry: &BusEntry) -> ParsedEntry {
                     control,
                 )) => match control.control.as_ref() {
                     Some(
-                        agent_bus_proto_rust::agent_bus::base_engine_control::Control::AddVoter(
-                            add,
-                        ),
-                    ) => serde_json::json!({
-                        "control_type": "base_engine_control",
-                        "base_engine_control_type": "add_voter",
-                        "config_type": voter_config_type(add.config.as_ref()),
-                    })
-                    .to_string(),
-                    Some(
-                        agent_bus_proto_rust::agent_bus::base_engine_control::Control::RemoveVoter(
-                            remove,
-                        ),
-                    ) => serde_json::json!({
-                        "control_type": "base_engine_control",
-                        "base_engine_control_type": "remove_voter",
-                        "voter_id": remove.voter_id,
-                    })
-                    .to_string(),
-                    Some(
                         agent_bus_proto_rust::agent_bus::base_engine_control::Control::PolicyBatch(
                             batch,
                         ),

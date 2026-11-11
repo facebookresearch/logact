@@ -1047,15 +1047,16 @@ where
                     self.apply_policy_batch(&mut state, batch, entry_position)?;
                 }
             }
-            Some(base_engine_control::Control::AddVoter(_)) => {
-                return Err(ApplyError::DeprecatedOperation {
-                    operation: DeprecatedOperationKind::AddVoter,
-                });
-            }
-            Some(base_engine_control::Control::RemoveVoter(_)) => {
-                return Err(ApplyError::DeprecatedOperation {
-                    operation: DeprecatedOperationKind::RemoveVoter,
-                });
+            None if matches!(
+                entry.payload.as_ref().and_then(|p| p.payload.as_ref()),
+                Some(payload::Payload::Control(c))
+                    if matches!(c.control.as_ref(), Some(control::Control::BaseEngineControl(_)))
+            ) =>
+            {
+                return Err(malformed_policy(
+                    MalformedPolicyBatchKind::PolicyBatch,
+                    anyhow::anyhow!("BaseEngineControl policy batch is missing or unrecognized"),
+                ));
             }
             None if matches!(
                 entry.payload.as_ref().and_then(|p| p.payload.as_ref()),

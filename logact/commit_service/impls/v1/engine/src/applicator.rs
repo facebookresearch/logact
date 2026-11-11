@@ -30,10 +30,6 @@ pub enum MalformedPolicyBatchKind {
 /// Legacy singleton policy operation rejected outside a `PolicyBatch`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, strum::AsRefStr)]
 pub enum DeprecatedOperationKind {
-    #[strum(serialize = "AddVoter")]
-    AddVoter,
-    #[strum(serialize = "RemoveVoter")]
-    RemoveVoter,
     #[strum(serialize = "SetDeciderPolicy")]
     SetDeciderPolicy,
 }

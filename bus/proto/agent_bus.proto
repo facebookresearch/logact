@@ -232,17 +232,11 @@ message VoterConfig {
 
 // Base engine control directive.
 message BaseEngineControl {
+  reserved 1, 2;
+  reserved "add_voter", "remove_voter";
   oneof control {
-    AddVoter add_voter = 1;
-    RemoveVoter remove_voter = 2;
     PolicyBatch policy_batch = 3;
   }
-}
-
-// Legacy standalone add directive retained for wire compatibility. The v1
-// commit-service engine rejects it; add voters through PolicyBatch instead.
-message AddVoter {
-  VoterConfig config = 1;
 }
 
 // Adds the voter identified by its `PolicyBatch.voter_ops` map key.
@@ -257,12 +251,6 @@ message VoterOp {
     AddVoterOp add = 1;
     RemoveVoterOp remove = 2;
   }
-}
-
-// Legacy standalone remove directive retained for wire compatibility. The v1
-// commit-service engine rejects it; remove voters through PolicyBatch instead.
-message RemoveVoter {
-  string voter_id = 1;
 }
 
 // Physical Entry in the Bus

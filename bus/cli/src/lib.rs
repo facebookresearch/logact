@@ -442,23 +442,6 @@ fn print_entry(entry: &BusEntry) {
                     match ctrl {
                         control::Control::BaseEngineControl(control) => {
                             match control.control.as_ref() {
-                                Some(base_engine_control::Control::AddVoter(add)) => {
-                                    let config_description = add
-                                        .config
-                                        .as_ref()
-                                        .map(voter_config_description)
-                                        .unwrap_or_else(|| "none".to_string());
-                                    println!(
-                                        "\tBaseEngine: add_voter config={}",
-                                        config_description
-                                    );
-                                }
-                                Some(base_engine_control::Control::RemoveVoter(remove)) => {
-                                    println!(
-                                        "\tBaseEngine: remove_voter voter_id={}",
-                                        remove.voter_id
-                                    );
-                                }
                                 Some(base_engine_control::Control::PolicyBatch(batch)) => {
                                     println!("\tPolicyBatch:");
                                     println!(

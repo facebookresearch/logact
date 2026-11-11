@@ -10,7 +10,6 @@ use std::cell::RefCell;
 use std::rc::Rc;
 use std::time::Duration;
 
-use agent_bus_proto_rust::agent_bus::AddVoter;
 use agent_bus_proto_rust::agent_bus::AddVoterOp;
 use agent_bus_proto_rust::agent_bus::AppendRequest;
 use agent_bus_proto_rust::agent_bus::BaseEngineControl;
@@ -23,7 +22,6 @@ use agent_bus_proto_rust::agent_bus::Intention;
 use agent_bus_proto_rust::agent_bus::Payload;
 use agent_bus_proto_rust::agent_bus::PolicyBatch;
 use agent_bus_proto_rust::agent_bus::PollRequest;
-use agent_bus_proto_rust::agent_bus::RemoveVoter;
 use agent_bus_proto_rust::agent_bus::RemoveVoterOp;
 use agent_bus_proto_rust::agent_bus::VoterConfig;
 use agent_bus_proto_rust::agent_bus::VoterOp;
@@ -52,7 +50,6 @@ use logact_commit_service_engine::BaseEngineConfig;
 use logact_commit_service_engine::ConcurrencyError;
 use logact_commit_service_engine::DeciderFactory;
 use logact_commit_service_engine::DeciderFactoryImpl;
-use logact_commit_service_engine::DeprecatedOperationKind;
 use logact_commit_service_engine::EngineError;
 use logact_commit_service_engine::EngineResult;
 use logact_commit_service_engine::InMemoryStorage;
@@ -516,8 +513,6 @@ fn payload_type_name(p: &payload::Payload) -> &'static str {
         payload::Payload::Control(control) => match control.control.as_ref() {
             Some(control::Control::BaseEngineControl(base_engine_control)) => {
                 match base_engine_control.control.as_ref() {
-                    Some(base_engine_control::Control::AddVoter(_)) => "AddVoter",
-                    Some(base_engine_control::Control::RemoveVoter(_)) => "RemoveVoter",
                     Some(base_engine_control::Control::PolicyBatch(_)) => "PolicyBatch",
                     None => "BaseEngineControl",
                 }
@@ -2509,7 +2504,7 @@ fn duplicate_add_voter_configs_create_independent_voters() {
 }
 
 #[test]
-fn standalone_policy_controls_are_rejected() {
+fn standalone_decider_policy_is_rejected() {
     let seed = generate_seed();
     let simulator = agentbus_simulator::Simulator::new(seed);
     let fixture = SimpleMemoryFixture::new(simulator);
@@ -2540,96 +2535,6 @@ fn standalone_policy_controls_are_rejected() {
             provider,
             fixture.get_env(),
         );
-        let add_agent = "add-agent";
-
-        bus.append(AppendRequest {
-            bus_id: Some(BusId {
-                agent_bus_id: add_agent.to_string(),
-            }),
-            payload: Some(Payload {
-                payload: Some(payload::Payload::Control(Control {
-                    control: Some(control::Control::BaseEngineControl(BaseEngineControl {
-                        control: Some(base_engine_control::Control::AddVoter(AddVoter {
-                            config: None,
-                        })),
-                    })),
-                })),
-            }),
-        })
-        .await?;
-
-        let error = match propose_intention(&engine, add_agent, "reports standalone add").await {
-            Ok(_) => panic!("standalone AddVoter should be reported"),
-            Err(error) => error,
-        };
-        assert!(
-            matches!(
-                &error,
-                EngineError::Playback(ApplyError::DeprecatedOperation {
-                    operation: DeprecatedOperationKind::AddVoter,
-                })
-            ),
-            "a standalone AddVoter should use the deprecated-operation kind"
-        );
-
-        assert!(
-            error
-                .to_string()
-                .contains("standalone AddVoter is disabled; policy must use PolicyBatch"),
-            "unexpected error: {error:#}"
-        );
-
-        let retry_error =
-            match propose_intention(&engine, add_agent, "retries standalone add").await {
-                Ok(_) => panic!("standalone AddVoter should wedge playback"),
-                Err(error) => error,
-            };
-        assert!(
-            retry_error
-                .to_string()
-                .contains("standalone AddVoter is disabled; policy must use PolicyBatch"),
-            "retry should encounter the same standalone AddVoter: {retry_error:#}"
-        );
-
-        let remove_agent = "remove-agent";
-        bus.append(AppendRequest {
-            bus_id: Some(BusId {
-                agent_bus_id: remove_agent.to_string(),
-            }),
-            payload: Some(Payload {
-                payload: Some(payload::Payload::Control(Control {
-                    control: Some(control::Control::BaseEngineControl(BaseEngineControl {
-                        control: Some(base_engine_control::Control::RemoveVoter(RemoveVoter {
-                            voter_id: "unused".to_string(),
-                        })),
-                    })),
-                })),
-            }),
-        })
-        .await?;
-        let error =
-            match propose_intention(&engine, remove_agent, "reports standalone remove").await {
-                Ok(_) => panic!("standalone RemoveVoter should be reported once"),
-                Err(error) => error,
-            };
-        assert!(
-            error
-                .to_string()
-                .contains("standalone RemoveVoter is disabled; policy must use PolicyBatch"),
-            "unexpected error: {error:#}"
-        );
-        let retry_error =
-            match propose_intention(&engine, remove_agent, "retries standalone remove").await {
-                Ok(_) => panic!("standalone RemoveVoter should wedge playback"),
-                Err(error) => error,
-            };
-        assert!(
-            retry_error
-                .to_string()
-                .contains("standalone RemoveVoter is disabled; policy must use PolicyBatch"),
-            "retry should encounter the same standalone RemoveVoter: {retry_error:#}"
-        );
-
         let decider_agent = "decider-agent";
         bus.append(AppendRequest {
             bus_id: Some(BusId {
