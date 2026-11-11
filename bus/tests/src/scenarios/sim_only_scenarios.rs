@@ -105,14 +105,14 @@ mod defs {
         assert_eq!(append_decider_policy(&clone, "a".to_owned(), 2).await, 2);
         assert_eq!(
             metrics.counter("tail.write_once_space.num_calls"),
-            0,
+            3,
             "cache hits must refresh recency and preserve the shared append hint"
         );
 
         assert_eq!(append_decider_policy(&clone, "b".to_owned(), 1).await, 1);
         assert_eq!(
             metrics.counter("tail.write_once_space.num_calls"),
-            1,
+            4,
             "the least recently used bus must lose its cached position"
         );
         assert_eq!(append_decider_policy(&bus, "d".to_owned(), 0).await, 0);
@@ -121,13 +121,13 @@ mod defs {
         assert_eq!(append_decider_policy(&other, "b".to_owned(), 2).await, 2);
         assert_eq!(
             metrics.counter("tail.write_once_space.num_calls"),
-            2,
+            7,
             "a separate writer must discover its own append position"
         );
         assert_eq!(append_decider_policy(&clone, "b".to_owned(), 3).await, 3);
         assert_eq!(
             metrics.counter("tail.write_once_space.num_calls"),
-            3,
+            8,
             "an evicted position must be rediscovered from storage"
         );
         let response = bus

@@ -31,8 +31,7 @@ use tracing::debug;
 use tracing::error;
 
 const MAX_POLL_ENTRIES: usize = 64;
-// WriteOnceAgentBus only appends at the tail, so writes are always contiguous
-// and a window size of 1 is sufficient.
+// A window of 1 appends after the highest surviving entry, including after TTL expiry.
 const TAIL_WINDOW_SIZE: u64 = 1;
 const DEFAULT_BLOCKING_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 const SPACE_PREFIX: &str = "bus/";
@@ -72,8 +71,8 @@ struct WriteOnceAgentBusState<W: WriteOnceSpace, E: Environment> {
 }
 
 impl<W: WriteOnceSpace, E: Environment> WriteOnceAgentBusState<W, E> {
-    fn get_next_position(&mut self, bus_id: &str) -> u64 {
-        *self.next_positions.get_or_insert_ref(bus_id, || 0)
+    fn get_next_position(&mut self, bus_id: &str) -> Option<u64> {
+        self.next_positions.get(bus_id).copied()
     }
 
     fn set_next_position(&mut self, bus_id: &str, position: u64) {
@@ -120,7 +119,7 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment> WriteOnceAgentBus<W, E
     }
 
     /// Construct a bus with a bounded LRU cache of append-position hints.
-    /// Evicted positions are rediscovered through the existing write-conflict retry.
+    /// Missing positions are discovered from storage before appending.
     pub fn new_with_cache_capacity(
         space: W,
         environment: Rc<E>,
@@ -151,10 +150,18 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
         })?;
 
         // Get the space, environment, and current position, releasing the borrow before await
-        let (mut space, environment, mut position) = {
+        let (mut space, environment, position) = {
             let mut state = self.state.borrow_mut();
             let position = state.get_next_position(&bus_id);
             (state.space.clone(), state.environment.clone(), position)
+        };
+
+        let mut position = match position {
+            Some(position) => position,
+            None => space
+                .tail(&prefixed_space_id(&bus_id), TAIL_WINDOW_SIZE)
+                .await
+                .map_err(tail_error_to_bus)?,
         };
 
         let rt_timestamp_ms = environment.with_clock(|c| c.unsafe_wall_time().as_millis() as i64);

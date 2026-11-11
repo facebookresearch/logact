@@ -104,6 +104,73 @@ mod defs {
     }
 
     #[scenario(sim_only, ttl_ms = 1000, sticky = 1.0)]
+    pub async fn run_test_fresh_server_after_checkpointed_expiry<F: CommitServiceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let bus_id = format!("ttl-fresh-{}", env.with_rng(|rng| rng.random::<u64>()));
+        let service = fixture.create_impl();
+        assert!(
+            service
+                .commit_intention(command(&bus_id, "a"))
+                .await?
+                .approved
+        );
+        env.sleep(Duration::from_millis(600)).await;
+        assert!(
+            service
+                .commit_intention(command(&bus_id, "b"))
+                .await?
+                .approved
+        );
+        let tail_before = service
+            .agent_bus()
+            .check_tail(CheckTailRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.clone(),
+                }),
+            })
+            .await?
+            .tail_position;
+        env.sleep(Duration::from_millis(600)).await;
+        let fresh = fixture.create_impl();
+        assert!(matches!(
+            fresh
+                .agent_bus()
+                .read_next(ReadNextRequest {
+                    bus_id: Some(BusId {
+                        agent_bus_id: bus_id.clone(),
+                    }),
+                    start_log_position: 0,
+                    end_log_position: 1,
+                    max_entries: 1,
+                    ..Default::default()
+                })
+                .await,
+            Err(AgentBusError::PositionNotFound(_))
+        ));
+        assert!(
+            fresh
+                .commit_intention(command(&bus_id, "after expiry"))
+                .await?
+                .approved
+        );
+        assert!(
+            fresh
+                .agent_bus()
+                .check_tail(CheckTailRequest {
+                    bus_id: Some(BusId {
+                        agent_bus_id: bus_id,
+                    }),
+                })
+                .await?
+                .tail_position
+                > tail_before
+        );
+        Ok(())
+    }
+
+    #[scenario(sim_only, ttl_ms = 1000, sticky = 1.0)]
     pub async fn run_test_replay_detects_expired_history<F: CommitServiceTestFixture>(
         fixture: &F,
     ) -> Result<()> {

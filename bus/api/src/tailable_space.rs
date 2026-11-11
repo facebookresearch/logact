@@ -35,6 +35,11 @@ pub type TailResult<T> = std::result::Result<T, TailError>;
 /// than the entire address space. `window_size` must be at least 1;
 /// implementations return [`TailError::ZeroWindowSize`] otherwise.
 ///
+/// Expired entries count as unwritten. A window of 1 returns the highest
+/// surviving address plus one, or 0 if none survive; it does not recover an
+/// expired history's high-water mark. Larger windows can return a hole within
+/// the window, including one left by TTL expiry.
+///
 /// This is not strongly consistent / linearizable; it only has to correspond
 /// to an unordered, non-atomic scan of the space that occurs within the
 /// linearization span.

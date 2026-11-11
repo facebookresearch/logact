@@ -185,12 +185,17 @@ mod defs {
             );
         }
         assert_eq!(space.tail(DEFAULT_SPACE, 8).await?, tail);
+        let surviving_tail = expected
+            .iter()
+            .rposition(Option::is_some)
+            .map_or(0, |address| address as u64 + 1);
+        assert_eq!(space.tail(DEFAULT_SPACE, 1).await?, surviving_tail);
         Ok(())
     }
 
     /// Expired writes read as empty and can be rewritten, while live ones still
-    /// conflict. `tail` ignores expired entries, so it can fall back to the first
-    /// expired address.
+    /// conflict. A one-address tail window follows the last surviving entry;
+    /// a larger window can find an expired address before it.
     #[scenario(sim_only, ttl_ms = 100)]
     pub async fn run_test_ttl_expiry<F>(fixture: &F) -> Result<()>
     where

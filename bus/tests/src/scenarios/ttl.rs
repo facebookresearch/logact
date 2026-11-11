@@ -120,6 +120,68 @@ mod defs {
         );
         Ok(())
     }
+
+    #[scenario(sim_only, ttl_ms = 1000)]
+    pub async fn run_test_append_discovers_surviving_tail_after_expiry<F: AgentBusTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let bus = fixture.create_impl();
+        for position in 0..2 {
+            assert_eq!(
+                append_string_intention(&bus, "a".to_owned(), position.to_string()).await,
+                position
+            );
+        }
+        env.sleep(Duration::from_millis(600)).await;
+        assert_eq!(
+            append_string_intention(&bus, "a".to_owned(), "2".to_owned()).await,
+            2
+        );
+        env.sleep(Duration::from_millis(600)).await;
+
+        let fresh = fixture.create_impl();
+        assert_eq!(
+            append_string_intention(&fresh, "a".to_owned(), "3".to_owned()).await,
+            3,
+            "a fresh writer must discover the surviving suffix before writing"
+        );
+        assert_eq!(
+            append_string_intention(&bus, "b".to_owned(), "0".to_owned()).await,
+            0
+        );
+        assert_eq!(
+            append_string_intention(&bus, "a".to_owned(), "4".to_owned()).await,
+            4,
+            "a writer must follow the surviving tail without reclaiming expired positions"
+        );
+        assert!(matches!(
+            bus.read_next(ReadNextRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: "a".to_owned(),
+                }),
+                start_log_position: 0,
+                end_log_position: 1,
+                max_entries: 1,
+                ..Default::default()
+            })
+            .await,
+            Err(AgentBusError::PositionNotFound(_))
+        ));
+        let read = bus
+            .read_next(ReadNextRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: "a".to_owned(),
+                }),
+                start_log_position: 2,
+                end_log_position: 5,
+                max_entries: 3,
+                ..Default::default()
+            })
+            .await?;
+        assert_eq!(positions(&read.entries), [2, 3, 4]);
+        Ok(())
+    }
 }
 
 pub use defs::*;
