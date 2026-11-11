@@ -13,9 +13,9 @@ use std::rc::Rc;
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agent_bus_proto_rust::agent_bus::VoterConfig;
 use anyhow::Result;
+use logact_commit_service_api::Policy;
 use logact_commit_service_api::PolicyProvider;
-use logact_commit_service_api::PolicyState;
-use logact_commit_service_api::VersionedPolicyState;
+use logact_commit_service_api::VersionedPolicy;
 
 /// The single generation of a static config: it never changes after construction,
 /// so one version covers its whole lifetime.
@@ -25,7 +25,7 @@ const STATIC_VERSION: i64 = 0;
 pub struct StaticConfigPolicyProvider {
     decider_policy: DeciderPolicy,
     voters: HashMap<String, VoterConfig>,
-    validate_policy: Rc<dyn Fn(&PolicyState) -> Result<()>>,
+    validate_policy: Rc<dyn Fn(&Policy) -> Result<()>>,
 }
 
 impl Default for StaticConfigPolicyProvider {
@@ -38,7 +38,7 @@ impl StaticConfigPolicyProvider {
     pub fn new(
         decider_policy: DeciderPolicy,
         voter_configs: Vec<VoterConfig>,
-        validate_policy: impl Fn(&PolicyState) -> Result<()> + 'static,
+        validate_policy: impl Fn(&Policy) -> Result<()> + 'static,
     ) -> Self {
         // Derive stable, distinct voter ids from positions in the provider's fixed
         // configuration once, then reuse them on every commit-path read.
@@ -58,15 +58,15 @@ impl StaticConfigPolicyProvider {
 impl PolicyProvider for StaticConfigPolicyProvider {
     type Error = anyhow::Error;
 
-    async fn read(&self, _bus_id: &str) -> Result<VersionedPolicyState, Self::Error> {
-        let state = PolicyState {
-            decider_policy: Some(self.decider_policy as i32),
+    async fn read(&self, _bus_id: &str) -> Result<VersionedPolicy, Self::Error> {
+        let policy = Policy {
+            decider_policy: self.decider_policy,
             voters: self.voters.clone(),
         };
-        (self.validate_policy)(&state)?;
+        (self.validate_policy)(&policy)?;
 
-        Ok(VersionedPolicyState {
-            state,
+        Ok(VersionedPolicy {
+            policy,
             version: STATIC_VERSION,
         })
     }
@@ -106,13 +106,10 @@ mod tests {
             |_| Ok(()),
         );
         let desired = block_on(provider.read("agent-1")).unwrap();
-        let state = desired.state;
+        let policy = desired.policy;
+        assert_eq!(policy.decider_policy, DeciderPolicy::FirstBooleanWins);
         assert_eq!(
-            state.decider_policy,
-            Some(DeciderPolicy::FirstBooleanWins as i32)
-        );
-        assert_eq!(
-            state.voters,
+            policy.voters,
             [("static-voter-0".to_string(), rule_voter_config("echo"))]
                 .into_iter()
                 .collect()
@@ -136,13 +133,10 @@ mod tests {
     #[test]
     fn default_provider_explicitly_configures_on_by_default() {
         let desired = block_on(StaticConfigPolicyProvider::default().read("agent-1")).unwrap();
-        let state = desired.state;
+        let policy = desired.policy;
 
-        assert_eq!(
-            state.decider_policy,
-            Some(DeciderPolicy::OnByDefault as i32)
-        );
-        assert!(state.voters.is_empty());
+        assert_eq!(policy.decider_policy, DeciderPolicy::OnByDefault);
+        assert!(policy.voters.is_empty());
         assert_eq!(desired.version, 0);
     }
 }

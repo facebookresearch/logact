@@ -58,6 +58,7 @@ use logact_commit_service_engine::Observability;
 use logact_commit_service_engine::ObservableApplicator;
 use logact_commit_service_engine::ObservedDeciderFactory;
 use logact_commit_service_engine::PerBusEngineState;
+use logact_commit_service_engine::Policy;
 use logact_commit_service_engine::PolicyProvider;
 use logact_commit_service_engine::PolicyState;
 use logact_commit_service_engine::ProposalOutcome;
@@ -68,8 +69,8 @@ use logact_commit_service_engine::StaticConfigPolicyProvider;
 use logact_commit_service_engine::Storage;
 use logact_commit_service_engine::StorageError;
 use logact_commit_service_engine::StorageResult;
+use logact_commit_service_engine::VersionedDecider;
 use logact_commit_service_engine::VersionedPolicy;
-use logact_commit_service_engine::VersionedPolicyState;
 use logact_commit_service_engine::VoterFactory;
 use logact_commit_service_engine::validate_voter_configs;
 use logact_commit_service_engine_tests::voters::CountingVoter;
@@ -227,16 +228,13 @@ const INITIAL_SEED: u64 = 88172645463325252;
 
 #[derive(Clone)]
 struct ControllablePolicyProvider {
-    desired: Rc<RefCell<VersionedPolicyState>>,
+    desired: Rc<RefCell<VersionedPolicy>>,
 }
 
 impl ControllablePolicyProvider {
-    fn new(desired: PolicyState, version: i64) -> Self {
+    fn new(policy: Policy, version: i64) -> Self {
         Self {
-            desired: Rc::new(RefCell::new(VersionedPolicyState {
-                state: desired,
-                version,
-            })),
+            desired: Rc::new(RefCell::new(VersionedPolicy { policy, version })),
         }
     }
 
@@ -244,15 +242,15 @@ impl ControllablePolicyProvider {
         self.desired.borrow_mut().version = version;
     }
 
-    fn set_desired(&self, state: PolicyState, version: i64) {
-        *self.desired.borrow_mut() = VersionedPolicyState { state, version };
+    fn set_desired(&self, policy: Policy, version: i64) {
+        *self.desired.borrow_mut() = VersionedPolicy { policy, version };
     }
 }
 
 impl PolicyProvider for ControllablePolicyProvider {
     type Error = anyhow::Error;
 
-    async fn read(&self, _bus_id: &str) -> anyhow::Result<VersionedPolicyState> {
+    async fn read(&self, _bus_id: &str) -> anyhow::Result<VersionedPolicy> {
         Ok(self.desired.borrow().clone())
     }
 }
@@ -263,11 +261,11 @@ struct DefaultPolicyProvider;
 impl PolicyProvider for DefaultPolicyProvider {
     type Error = anyhow::Error;
 
-    async fn read(&self, _bus_id: &str) -> anyhow::Result<VersionedPolicyState> {
-        Ok(VersionedPolicyState {
-            state: PolicyState {
-                decider_policy: Some(DeciderPolicy::OnByDefault as i32),
-                ..Default::default()
+    async fn read(&self, _bus_id: &str) -> anyhow::Result<VersionedPolicy> {
+        Ok(VersionedPolicy {
+            policy: Policy {
+                decider_policy: DeciderPolicy::OnByDefault,
+                voters: Default::default(),
             },
             version: -1,
         })
@@ -1147,8 +1145,8 @@ fn policy_provider_rejects_reconfiguring_existing_voter() {
     let handle = env.spawn(async move {
         let bus = fixture.create_impl();
         let provider = ControllablePolicyProvider::new(
-            PolicyState {
-                decider_policy: Some(DeciderPolicy::OnByDefault as i32),
+            Policy {
+                decider_policy: DeciderPolicy::OnByDefault,
                 voters: [("stable-voter".to_string(), placeholder_voter_config())]
                     .into_iter()
                     .collect(),
@@ -1171,8 +1169,8 @@ fn policy_provider_rejects_reconfiguring_existing_voter() {
         let entries_before_reconfiguration = poll_all_types(&bus, agent).await?;
 
         provider.set_desired(
-            PolicyState {
-                decider_policy: Some(DeciderPolicy::OnByDefault as i32),
+            Policy {
+                decider_policy: DeciderPolicy::OnByDefault,
                 voters: [(
                     "stable-voter".to_string(),
                     custom_placeholder_voter_config(),
@@ -1220,8 +1218,8 @@ fn intention_policy_constraints_gate_dispatch_against_applied_version() {
     let handle = env.spawn(async move {
         let bus = fixture.create_impl();
         let provider = ControllablePolicyProvider::new(
-            PolicyState {
-                decider_policy: Some(DeciderPolicy::OnByDefault as i32),
+            Policy {
+                decider_policy: DeciderPolicy::OnByDefault,
                 voters: [("voter".to_string(), placeholder_voter_config())]
                     .into_iter()
                     .collect(),
@@ -1432,7 +1430,7 @@ fn corrupt_persisted_decider_state_rejects_proposal() {
         let agent = "agent-1";
         let storage = Rc::new(InMemoryStorage::new());
         let state = PerBusEngineState {
-            decider: Some(VersionedPolicy { policy: 99, id: 0 }),
+            decider: Some(VersionedDecider { policy: 99, id: 0 }),
             ..Default::default()
         };
         assert!(state.save(storage.as_ref(), agent, None, 0).await?);
@@ -2323,8 +2321,8 @@ fn policy_provider_reconciles_voters_after_existing_policy() {
             fixture.create_impl(),
             storage,
             ControllablePolicyProvider::new(
-                PolicyState {
-                    decider_policy: Some(DeciderPolicy::OnByDefault as i32),
+                Policy {
+                    decider_policy: DeciderPolicy::OnByDefault,
                     voters: [("provider-voter".to_string(), placeholder_voter_config())]
                         .into_iter()
                         .collect(),
@@ -2956,8 +2954,8 @@ fn logged_vote_wins_over_a_different_replayed_evaluation() {
         let bus = fixture.create_impl();
         let config = placeholder_voter_config();
         let provider = ControllablePolicyProvider::new(
-            PolicyState {
-                decider_policy: Some(DeciderPolicy::FirstBooleanWins as i32),
+            Policy {
+                decider_policy: DeciderPolicy::FirstBooleanWins,
                 voters: [("voter".to_string(), config.clone())]
                     .into_iter()
                     .collect(),
@@ -3032,8 +3030,8 @@ fn engine_and_applicator_state_use_separate_storage() {
         let engine_storage = Rc::new(InMemoryStorage::new());
         let applicator_storage = Rc::new(InMemoryStorage::new());
         let provider = ControllablePolicyProvider::new(
-            PolicyState {
-                decider_policy: Some(DeciderPolicy::FirstBooleanWins as i32),
+            Policy {
+                decider_policy: DeciderPolicy::FirstBooleanWins,
                 voters: [("voter".to_string(), placeholder_voter_config())]
                     .into_iter()
                     .collect(),

@@ -33,16 +33,16 @@ pub struct PerBusEngineState {
     pub voters: HashMap<String, VoterConfig>,
     /// Configured policy and state-machine ID, or `None` if unconfigured.
     #[prost(message, optional, tag = "3")]
-    pub decider: Option<VersionedPolicy>,
+    pub decider: Option<VersionedDecider>,
     /// Latest policy generation applied from a `PolicyBatch`, or `None` if no
     /// versioned policy has been applied.
     #[prost(int64, optional, tag = "4")]
     pub applied_policy_version: Option<i64>,
 }
 
-/// A configured policy and its state-machine ID.
+/// The configured decider policy and its state-machine ID.
 #[derive(Clone, PartialEq, prost::Message)]
-pub struct VersionedPolicy {
+pub struct VersionedDecider {
     /// Active `DeciderPolicy` value.
     #[prost(int32, tag = "1")]
     pub policy: i32,

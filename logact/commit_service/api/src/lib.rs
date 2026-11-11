@@ -10,8 +10,11 @@
 pub mod policy;
 pub mod traits;
 
+pub use policy::InvalidPolicyState;
+pub use policy::Policy;
 pub use policy::PolicyProvider;
 pub use policy::PolicyState;
+pub use policy::VersionedPolicy;
 pub use policy::VersionedPolicyState;
 pub use traits::CommitError;
 pub use traits::CommitIntentionCommand;

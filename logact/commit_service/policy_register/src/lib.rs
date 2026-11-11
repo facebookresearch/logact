@@ -15,6 +15,7 @@ use agentbus_api::RetryConfig;
 use agentbus_api::RetryDecision;
 use agentbus_api::RetryFailure;
 use agentbus_api::retry;
+use logact_commit_service_api::InvalidPolicyState;
 use logact_commit_service_api::PolicyState;
 use logact_commit_service_api::VersionedPolicyState;
 use logact_commit_service_engine::StorageError;
@@ -40,6 +41,12 @@ pub enum PolicyRegisterError {
     GenerationOverflow { generation: i64 },
     #[error("policy register '{key}' changed concurrently")]
     ConcurrentUpdate { key: String },
+}
+
+impl From<InvalidPolicyState> for PolicyRegisterError {
+    fn from(error: InvalidPolicyState) -> Self {
+        PolicyRegisterError::MalformedPolicy { message: error.0 }
+    }
 }
 
 /// Result returned by [`PolicyRegister`] operations.

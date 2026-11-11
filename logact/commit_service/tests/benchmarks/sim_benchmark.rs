@@ -71,7 +71,7 @@ use logact_commit_service_api::CommitSvc;
 use logact_commit_service_api::CreateBusCommand;
 use logact_commit_service_api::PolicyProvider;
 use logact_commit_service_api::PolicyState;
-use logact_commit_service_api::VersionedPolicyState;
+use logact_commit_service_api::VersionedPolicy;
 use logact_commit_service_core::BufferingCommitService;
 use logact_commit_service_engine::BaseEngine;
 use logact_commit_service_engine::CachingStorage;
@@ -189,7 +189,7 @@ struct PerBusPolicy<P> {
 impl<P: PolicyProvider> PolicyProvider for PerBusPolicy<P> {
     type Error = P::Error;
 
-    async fn read(&self, bus_id: &str) -> Result<VersionedPolicyState, Self::Error> {
+    async fn read(&self, bus_id: &str) -> Result<VersionedPolicy, Self::Error> {
         self.sources
             .get(bus_id)
             .expect("benchmark should initialize every request bus")

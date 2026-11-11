@@ -9,8 +9,8 @@
 
 use std::rc::Rc;
 
-use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use bytes::Bytes;
+use logact_commit_service_api::Policy;
 use logact_commit_service_api::PolicyState;
 use logact_commit_service_api::VersionedPolicyState;
 use logact_commit_service_engine::Storage;
@@ -103,22 +103,7 @@ fn decode_policy_state(value: &Bytes) -> PolicyRegisterResult<PolicyState> {
 }
 
 fn validate_policy_state(state: &PolicyState) -> PolicyRegisterResult<()> {
-    let raw = state
-        .decider_policy
-        .ok_or_else(|| PolicyRegisterError::MalformedPolicy {
-            message: "missing decider policy".to_string(),
-        })?;
-    DeciderPolicy::try_from(raw).map_err(|_| PolicyRegisterError::MalformedPolicy {
-        message: format!("unrecognized decider policy value {raw}"),
-    })?;
-
-    for (voter_id, config) in &state.voters {
-        if config.config.is_none() {
-            return Err(PolicyRegisterError::MalformedPolicy {
-                message: format!("voter '{voter_id}' has no configuration"),
-            });
-        }
-    }
+    Policy::try_from(state)?;
     Ok(())
 }
 
@@ -127,6 +112,7 @@ mod tests {
     use std::cell::Cell;
     use std::time::Duration;
 
+    use agent_bus_proto_rust::agent_bus::DeciderPolicy;
     use agent_bus_proto_rust::agent_bus::VoterConfig;
     use agentbus_api::RetryConfig;
     use agentbus_simulator::Simulator;

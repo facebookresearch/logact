@@ -13,8 +13,9 @@
 
 use std::rc::Rc;
 
+use logact_commit_service_api::Policy;
 use logact_commit_service_api::PolicyProvider;
-use logact_commit_service_api::PolicyState;
+use logact_commit_service_api::VersionedPolicy;
 use logact_commit_service_api::VersionedPolicyState;
 use logact_commit_service_engine::Storage;
 use thiserror::Error;
@@ -35,7 +36,7 @@ pub enum SynchronousRegisterProviderError {
 /// A synchronous read-consistency mechanism over a policy register.
 pub struct SynchronousRegisterProvider<S> {
     register: StoragePolicyRegister<S>,
-    validate_policy: Rc<dyn Fn(&PolicyState) -> anyhow::Result<()>>,
+    validate_policy: Rc<dyn Fn(&Policy) -> anyhow::Result<()>>,
 }
 
 impl<S> Clone for SynchronousRegisterProvider<S> {
@@ -52,7 +53,7 @@ impl<S: Storage> SynchronousRegisterProvider<S> {
     /// every policy lookup.
     pub fn new(
         register: StoragePolicyRegister<S>,
-        validate_policy: impl Fn(&PolicyState) -> anyhow::Result<()> + 'static,
+        validate_policy: impl Fn(&Policy) -> anyhow::Result<()> + 'static,
     ) -> Self {
         Self {
             register,
@@ -64,9 +65,13 @@ impl<S: Storage> SynchronousRegisterProvider<S> {
 impl<S: Storage> PolicyProvider for SynchronousRegisterProvider<S> {
     type Error = SynchronousRegisterProviderError;
 
-    async fn read(&self, _bus_id: &str) -> Result<VersionedPolicyState, Self::Error> {
-        let desired = self.register.read_validated().await?;
-        (self.validate_policy)(&desired.state).map_err(|error| {
+    async fn read(&self, _bus_id: &str) -> Result<VersionedPolicy, Self::Error> {
+        let VersionedPolicyState { state, version } = self.register.read_validated().await?;
+        let desired = VersionedPolicy {
+            policy: Policy::try_from(&state).map_err(PolicyRegisterError::from)?,
+            version,
+        };
+        (self.validate_policy)(&desired.policy).map_err(|error| {
             SynchronousRegisterProviderError::UnsupportedPolicy {
                 message: format!("{error:#}"),
             }
@@ -81,6 +86,7 @@ mod tests {
 
     use agent_bus_proto_rust::agent_bus::DeciderPolicy;
     use futures::executor::block_on;
+    use logact_commit_service_api::PolicyState;
     use logact_commit_service_engine::InMemoryStorage;
 
     use super::*;
@@ -99,7 +105,7 @@ mod tests {
     fn read_for(
         provider: &SynchronousRegisterProvider<InMemoryStorage>,
         bus_id: &str,
-    ) -> VersionedPolicyState {
+    ) -> VersionedPolicy {
         block_on(provider.read(bus_id)).expect("register read should succeed")
     }
 
@@ -131,10 +137,7 @@ mod tests {
         let first = read_for(&provider, "agent-1");
         let second = read_for(&provider, "agent-2");
         assert_eq!(first, second);
-        assert_eq!(
-            first.state.decider_policy,
-            Some(DeciderPolicy::OffByDefault as i32)
-        );
+        assert_eq!(first.policy.decider_policy, DeciderPolicy::OffByDefault);
         assert_eq!(first.version, 0);
     }
 
@@ -146,8 +149,8 @@ mod tests {
         let mut current = read_for(&provider, "agent-1");
         assert_eq!(current.version, 0);
 
-        current.state.decider_policy = Some(DeciderPolicy::OffByDefault as i32);
-        block_on(register.set_policy(&current.state, Some(current.version)))
+        current.policy.decider_policy = DeciderPolicy::OffByDefault;
+        block_on(register.set_policy(&current.policy.into(), Some(current.version)))
             .expect("second policy update should succeed");
         assert_eq!(read_for(&provider, "agent-1").version, 1);
     }

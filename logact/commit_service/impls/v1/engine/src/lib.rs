@@ -47,12 +47,14 @@ pub use decider_state::DeciderState;
 pub use engine_state::ENGINE_STORAGE_PREFIX;
 pub use engine_state::EngineStateLoadError;
 pub use engine_state::PerBusEngineState;
-pub use engine_state::VersionedPolicy;
+pub use engine_state::VersionedDecider;
 pub use engine_state::engine_state_key;
 // The policy contract lives in the `api` crate (bus-agnostic); re-exported here so
 // existing `logact_commit_service_engine::` paths keep resolving.
+pub use logact_commit_service_api::Policy;
 pub use logact_commit_service_api::PolicyProvider;
 pub use logact_commit_service_api::PolicyState;
+pub use logact_commit_service_api::VersionedPolicy;
 pub use logact_commit_service_api::VersionedPolicyState;
 pub use logact_commit_service_static_config::StaticConfigPolicyProvider;
 pub use observable_applicator::Observability;

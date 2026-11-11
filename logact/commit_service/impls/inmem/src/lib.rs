@@ -10,7 +10,7 @@
 //! Unlike `CommitServiceV1`, this has no engine: it wraps an in-memory AgentBus
 //! and decides inline. Like the engine-backed service, it consults a
 //! [`PolicyProvider`] on the commit path and adopts a returned
-//! [`logact_commit_service_api::PolicyState`] when its version is newer. It runs
+//! [`logact_commit_service_api::Policy`] when its version is newer. It runs
 //! no voters, so it models only the decider-policy slice of the decision.
 //!
 //! It exists as a structurally independent implementation of the `CommitSvc`
@@ -56,15 +56,14 @@ use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_api::CreateBusCommand;
 use logact_commit_service_api::PolicyProvider;
-use logact_commit_service_api::PolicyState;
-use logact_commit_service_api::VersionedPolicyState;
+use logact_commit_service_api::VersionedPolicy;
 use logact_commit_service_static_config::StaticConfigPolicyProvider;
 
 /// In-memory `CommitSvc` backed by a local in-memory AgentBus.
 pub struct InMemCommitService<E: Environment, P = StaticConfigPolicyProvider> {
     bus: InMemoryAgentBus<E>,
     policy_provider: P,
-    policy_state: Rc<RefCell<HashMap<String, VersionedPolicyState>>>,
+    policy_state: Rc<RefCell<HashMap<String, VersionedPolicy>>>,
     replay_state: Rc<RefCell<HashMap<String, ReplayState>>>,
 }
 
@@ -122,7 +121,6 @@ where
             .await
             .map_err(|error| CommitError::Internal(error.into()))?;
         let desired_version = desired.version;
-        get_decider_policy(&desired.state).map_err(CommitError::Internal)?;
         let expected_current_version = self
             .policy_state
             .borrow()
@@ -138,7 +136,7 @@ where
                     payload: Some(policy_batch_payload(PolicyBatch {
                         expected_current_version,
                         new_version: desired.version,
-                        decider_policy: desired.state.decider_policy,
+                        decider_policy: Some(desired.policy.decider_policy as i32),
                         ..Default::default()
                     })),
                 })
@@ -170,13 +168,12 @@ where
             .read(&request.bus_id)
             .await
             .map_err(|error| CommitError::Internal(error.into()))?;
-        get_decider_policy(&initial.state).map_err(CommitError::Internal)?;
         let batch = PolicyBatch {
             expected_current_version: None,
             new_version: initial.version,
-            decider_policy: initial.state.decider_policy,
+            decider_policy: Some(initial.policy.decider_policy as i32),
             voter_ops: initial
-                .state
+                .policy
                 .voters
                 .iter()
                 .map(|(id, config)| {
@@ -501,14 +498,6 @@ fn policy_batch_payload(batch: PolicyBatch) -> Payload {
     }
 }
 
-fn get_decider_policy(state: &PolicyState) -> anyhow::Result<DeciderPolicy> {
-    let raw = state
-        .decider_policy
-        .context("policy provider returned a policy without a decider policy")?;
-    DeciderPolicy::try_from(raw)
-        .map_err(|_| anyhow::anyhow!("policy provider returned unrecognized decider policy {raw}"))
-}
-
 fn intention_to_payload(intention: intention::Intention, policy_version: i64) -> Payload {
     Payload {
         payload: Some(payload::Payload::Intention(Intention {
@@ -526,7 +515,7 @@ mod tests {
     use agentbus_api::environment::RealEnvironment;
     use futures::executor::block_on;
     use logact_commit_service_api::CommitIntentionCommand;
-    use logact_commit_service_api::PolicyState;
+    use logact_commit_service_api::Policy;
 
     use super::*;
 
@@ -618,36 +607,18 @@ mod tests {
         assert!(!resp.approved);
     }
 
-    #[test]
-    fn malformed_provider_policy_returns_an_error() {
-        let missing = get_decider_policy(&PolicyState::default())
-            .expect_err("a missing decider policy should be rejected");
-        assert!(missing.to_string().contains("without a decider policy"));
-
-        let unrecognized = get_decider_policy(&PolicyState {
-            decider_policy: Some(99),
-            ..Default::default()
-        })
-        .expect_err("an unrecognized decider policy should be rejected");
-        assert!(
-            unrecognized
-                .to_string()
-                .contains("unrecognized decider policy 99")
-        );
-    }
-
     #[derive(Clone)]
     struct ControllablePolicyProvider {
-        desired: Rc<RefCell<VersionedPolicyState>>,
+        desired: Rc<RefCell<VersionedPolicy>>,
     }
 
     impl ControllablePolicyProvider {
         fn new(decider_policy: DeciderPolicy, version: i64) -> Self {
             Self {
-                desired: Rc::new(RefCell::new(VersionedPolicyState {
-                    state: PolicyState {
-                        decider_policy: Some(decider_policy as i32),
-                        ..Default::default()
+                desired: Rc::new(RefCell::new(VersionedPolicy {
+                    policy: Policy {
+                        decider_policy,
+                        voters: HashMap::new(),
                     },
                     version,
                 })),
@@ -655,10 +626,10 @@ mod tests {
         }
 
         fn set(&self, decider_policy: DeciderPolicy, version: i64) {
-            *self.desired.borrow_mut() = VersionedPolicyState {
-                state: PolicyState {
-                    decider_policy: Some(decider_policy as i32),
-                    ..Default::default()
+            *self.desired.borrow_mut() = VersionedPolicy {
+                policy: Policy {
+                    decider_policy,
+                    voters: HashMap::new(),
                 },
                 version,
             };
@@ -668,7 +639,7 @@ mod tests {
     impl PolicyProvider for ControllablePolicyProvider {
         type Error = anyhow::Error;
 
-        async fn read(&self, _bus_id: &str) -> anyhow::Result<VersionedPolicyState> {
+        async fn read(&self, _bus_id: &str) -> anyhow::Result<VersionedPolicy> {
             Ok(self.desired.borrow().clone())
         }
     }

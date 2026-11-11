@@ -37,8 +37,8 @@ use agentbus_api::helpers::read_range;
 use agentbus_api::retry;
 use anyhow::Context;
 use anyhow::Result;
+use logact_commit_service_api::Policy;
 use logact_commit_service_api::PolicyProvider;
-use logact_commit_service_api::PolicyState;
 
 use crate::Applicator;
 use crate::ApplyError;
@@ -53,7 +53,7 @@ use crate::PerBusEngineState;
 use crate::StateMachineSpec;
 use crate::Storage;
 use crate::StorageError;
-use crate::VersionedPolicy;
+use crate::VersionedDecider;
 use crate::applicator::StorageWriteResultExt;
 use crate::policy::plan;
 use crate::storage::InMemoryStorage;
@@ -71,10 +71,7 @@ pub trait VoterFactory {
 }
 
 /// Validate every voter config in `policy` against the consumer's voter factory.
-pub fn validate_voter_configs(
-    voter_factory: &impl VoterFactory,
-    policy: &PolicyState,
-) -> Result<()> {
+pub fn validate_voter_configs(voter_factory: &impl VoterFactory, policy: &Policy) -> Result<()> {
     for (voter_id, config) in &policy.voters {
         voter_factory
             .validate_config(Some(config))
@@ -626,7 +623,7 @@ where
             .read(bus_id)
             .await
             .map_err(|error| EngineError::PolicyProvider(error.into()))?;
-        let batch = plan(&PolicyState::default(), None, &desired)
+        let batch = plan(None, None, &desired)
             .map_err(EngineError::Internal)?
             .ok_or_else(|| {
                 EngineError::Internal(anyhow::anyhow!(
@@ -744,24 +741,22 @@ where
             .await
             .map_err(|error| EngineError::PolicyProvider(error.into()))?;
         let version = desired.version;
-        let current = PolicyState {
-            decider_policy: Some(
-                state
-                    .decider
-                    .as_ref()
-                    .map(|decider| DeciderPolicy::try_from(decider.policy))
-                    .transpose()
-                    .context("engine state has an invalid decider policy")
-                    .map_err(EngineError::InvalidEngineState)?
-                    .unwrap_or(DeciderPolicy::OnByDefault) as i32,
-            ),
+        let current = Policy {
+            decider_policy: state
+                .decider
+                .as_ref()
+                .map(|decider| DeciderPolicy::try_from(decider.policy))
+                .transpose()
+                .context("engine state has an invalid decider policy")
+                .map_err(EngineError::InvalidEngineState)?
+                .unwrap_or(DeciderPolicy::OnByDefault),
             voters: state
                 .voters
                 .iter()
                 .map(|(voter_id, config)| (voter_id.clone(), config.clone()))
                 .collect(),
         };
-        let Some(batch) = plan(&current, state.applied_policy_version, &desired)
+        let Some(batch) = plan(Some(&current), state.applied_policy_version, &desired)
             .map_err(EngineError::Internal)?
         else {
             return Ok((version, None));
@@ -1140,7 +1135,7 @@ fn set_decider_policy_in_engine_state(
 ) -> Result<()> {
     if let Some(policy) = policy {
         let policy = DeciderPolicy::try_from(policy).context("invalid decider policy")?;
-        state.decider = Some(VersionedPolicy {
+        state.decider = Some(VersionedDecider {
             policy: policy as i32,
             id: position,
         });
@@ -1406,7 +1401,7 @@ mod tests {
     #[test]
     fn configured_bus_uses_its_policy_id() {
         let state = PerBusEngineState {
-            decider: Some(VersionedPolicy {
+            decider: Some(VersionedDecider {
                 policy: DeciderPolicy::FirstBooleanWins as i32,
                 id: 17,
             }),
@@ -1422,7 +1417,7 @@ mod tests {
     #[test]
     fn repeated_policy_entry_changes_id() {
         let mut state = PerBusEngineState {
-            decider: Some(VersionedPolicy {
+            decider: Some(VersionedDecider {
                 policy: DeciderPolicy::FirstBooleanWins as i32,
                 id: 10,
             }),
@@ -1445,7 +1440,7 @@ mod tests {
     #[test]
     fn unrecognized_persisted_policy_is_an_error() {
         let state = PerBusEngineState {
-            decider: Some(VersionedPolicy { policy: 99, id: 17 }),
+            decider: Some(VersionedDecider { policy: 99, id: 17 }),
             ..Default::default()
         };
 
@@ -1463,7 +1458,7 @@ mod tests {
     #[test]
     fn unrecognized_policy_entry_is_rejected_without_mutation() {
         let mut state = PerBusEngineState {
-            decider: Some(VersionedPolicy {
+            decider: Some(VersionedDecider {
                 policy: DeciderPolicy::FirstBooleanWins as i32,
                 id: 10,
             }),
