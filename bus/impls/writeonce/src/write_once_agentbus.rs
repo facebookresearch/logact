@@ -25,6 +25,7 @@ use agentbus_api::environment::Environment;
 use agentbus_api::payload_matches_filter;
 use agentbus_api::validate_bus_id;
 use bytes::Bytes;
+use futures_intrusive::sync::LocalMutex;
 use lru::LruCache;
 use prost::Message as ProstMessage;
 use tracing::debug;
@@ -67,6 +68,9 @@ struct WriteOnceAgentBusState<W: WriteOnceSpace, E: Environment> {
     space: W,
     environment: Rc<E>,
     next_positions: LruCache<String, u64>,
+    // Appends to a bus take FIFO turns, so concurrent appends never claim the same position.
+    // Evicting a lock that is still in use lets a later append overlap it.
+    append_locks: LruCache<String, Rc<LocalMutex<()>>>,
     blocking_poll_interval: std::time::Duration,
 }
 
@@ -77,6 +81,12 @@ impl<W: WriteOnceSpace, E: Environment> WriteOnceAgentBusState<W, E> {
 
     fn set_next_position(&mut self, bus_id: &str, position: u64) {
         self.next_positions.put(bus_id.to_string(), position);
+    }
+
+    fn append_lock(&mut self, bus_id: &str) -> Rc<LocalMutex<()>> {
+        self.append_locks
+            .get_or_insert(bus_id.to_string(), || Rc::new(LocalMutex::new((), true)))
+            .clone()
     }
 }
 
@@ -131,6 +141,7 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment> WriteOnceAgentBus<W, E
                 space,
                 environment,
                 next_positions: LruCache::new(next_positions_capacity),
+                append_locks: LruCache::new(next_positions_capacity),
                 blocking_poll_interval: blocking_poll_interval
                     .unwrap_or(DEFAULT_BLOCKING_POLL_INTERVAL),
             })),
@@ -148,6 +159,9 @@ impl<W: WriteOnceSpace + Clone, E: Environment + 'static> agentbus_api::AgentBus
         let payload = request.payload.ok_or_else(|| {
             AgentBusError::InvalidArgument(anyhow::anyhow!("Missing or unknown payload in request"))
         })?;
+
+        let lock = self.state.borrow_mut().append_lock(&bus_id);
+        let _turn = lock.lock().await;
 
         // Get the space, environment, and current position, releasing the borrow before await
         let (mut space, environment, position) = {
@@ -475,4 +489,98 @@ fn serialize_entry(payload: &Payload, log_position: i64, rt_timestamp_ms: i64) -
 
 fn deserialize_entry(bytes: &Bytes) -> Option<BusEntry> {
     <BusEntry as ProstMessage>::decode(&bytes[..]).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::task::Context;
+    use std::task::Poll;
+
+    use agentbus_api::AgentBus;
+    use agentbus_api::RealEnvironment;
+    use agentbus_api::TailResult;
+    use agentbus_api::TailableSpace;
+    use agentbus_api::WriteOnceResult;
+
+    use super::*;
+    use crate::InMemoryWriteOnceSpace;
+
+    /// Fails a write with `AmbiguousWrite` while another write to the same
+    /// address is in flight, as ZippyDB reports a transaction conflict.
+    #[derive(Clone, Default)]
+    struct OverlapConflictSpace {
+        inner: InMemoryWriteOnceSpace,
+        in_flight: Rc<RefCell<HashSet<u64>>>,
+    }
+
+    struct YieldOnce(bool);
+
+    impl Future for YieldOnce {
+        type Output = ();
+
+        fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+            if self.0 {
+                return Poll::Ready(());
+            }
+            self.0 = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        }
+    }
+
+    impl TailableSpace for OverlapConflictSpace {
+        async fn tail(&self, space_id: &str, window_size: u64) -> TailResult<u64> {
+            self.inner.tail(space_id, window_size).await
+        }
+    }
+
+    impl WriteOnceSpace for OverlapConflictSpace {
+        async fn write(
+            &mut self,
+            space_id: &str,
+            address: u64,
+            value: Bytes,
+        ) -> WriteOnceResult<()> {
+            if !self.in_flight.borrow_mut().insert(address) {
+                return Err(WriteOnceError::AmbiguousWrite(address));
+            }
+            YieldOnce(false).await;
+            let result = self.inner.write(space_id, address, value).await;
+            self.in_flight.borrow_mut().remove(&address);
+            result
+        }
+
+        async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
+            self.inner.read(space_id, address).await
+        }
+    }
+
+    #[test]
+    fn concurrent_appends_to_one_bus_take_distinct_positions() {
+        futures::executor::block_on(async {
+            let bus = WriteOnceAgentBus::new(
+                OverlapConflictSpace::default(),
+                Rc::new(RealEnvironment::new()),
+                None,
+            );
+            let append = || {
+                bus.append(AppendRequest {
+                    bus_id: Some(BusId {
+                        agent_bus_id: "bus".to_owned(),
+                    }),
+                    payload: Some(Payload::default()),
+                })
+            };
+            let (first, second) = futures::join!(append(), append());
+            let mut positions = [
+                first.expect("first append").log_position,
+                second.expect("second append").log_position,
+            ];
+            positions.sort();
+            assert_eq!(positions, [0, 1]);
+        });
+    }
 }
