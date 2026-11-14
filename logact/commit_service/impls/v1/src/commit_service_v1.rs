@@ -109,23 +109,9 @@ fn commit_error_from_engine(error: EngineError) -> CommitError {
         EngineError::Storage(error) => commit_error_from_storage(error),
         EngineError::InvalidEngineState(source) => CommitError::Internal(source),
         EngineError::Playback(error) => commit_error_from_apply(error),
-        EngineError::Bus(error) => commit_error_from_bus(error),
+        EngineError::Bus(error) => CommitError::from_bus_error(error),
         EngineError::PolicyProvider(source) => CommitError::Internal(source),
         EngineError::Internal(source) => CommitError::Internal(source),
-    }
-}
-
-fn commit_error_from_bus(error: AgentBusError) -> CommitError {
-    match error {
-        error @ AgentBusError::PositionNotFound(_) => CommitError::BusDataLoss(error.into()),
-        error @ AgentBusError::InvalidArgument(_) => {
-            CommitError::InvalidArgument(anyhow::Error::new(error))
-        }
-        error @ AgentBusError::Timeout(_) => CommitError::Timeout(anyhow::Error::new(error)),
-        error @ AgentBusError::Unavailable(_) => {
-            CommitError::Unavailable(anyhow::Error::new(error))
-        }
-        error @ AgentBusError::Internal(_) => CommitError::Internal(anyhow::Error::new(error)),
     }
 }
 

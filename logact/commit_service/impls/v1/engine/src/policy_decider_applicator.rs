@@ -7,13 +7,9 @@
 
 use std::rc::Rc;
 
-use agent_bus_proto_rust::agent_bus::Abort;
 use agent_bus_proto_rust::agent_bus::BusEntry;
-use agent_bus_proto_rust::agent_bus::Commit;
 use agent_bus_proto_rust::agent_bus::Payload;
-use agent_bus_proto_rust::agent_bus::Vote;
 use agent_bus_proto_rust::agent_bus::payload;
-use agent_bus_proto_rust::agent_bus::vote_type;
 use anyhow::Context;
 use anyhow::Result;
 use bytes::Bytes;
@@ -26,6 +22,9 @@ use crate::DeciderState;
 use crate::Storage;
 use crate::StorageResult;
 use crate::applicator::StorageWriteResultExt;
+use crate::decider_transitions::first_boolean_wins;
+use crate::decider_transitions::off_by_default;
+use crate::decider_transitions::on_by_default;
 
 pub struct OnByDefaultApplicator;
 
@@ -134,16 +133,11 @@ impl Applicator for OnByDefaultApplicator {
             .map(|header| header.log_position)
             .ok_or(ApplyError::MissingHeader)?;
         // ON_BY_DEFAULT has no persistent state, so it bypasses persistence.
-        Ok(
-            match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
-                Some(payload::Payload::Intention(_)) => Some(decision_payload(
-                    position,
-                    true,
-                    "ON_BY_DEFAULT policy".into(),
-                )),
-                _ => None,
-            },
-        )
+        Ok(entry
+            .payload
+            .as_ref()
+            .and_then(|p| p.payload.as_ref())
+            .and_then(|p| on_by_default(position, p)))
     }
 }
 
@@ -161,16 +155,11 @@ impl Applicator for OffByDefaultApplicator {
             .map(|header| header.log_position)
             .ok_or(ApplyError::MissingHeader)?;
         // OFF_BY_DEFAULT has no persistent state, so it bypasses persistence.
-        Ok(
-            match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
-                Some(payload::Payload::Intention(_)) => Some(decision_payload(
-                    position,
-                    false,
-                    "OFF_BY_DEFAULT policy".into(),
-                )),
-                _ => None,
-            },
-        )
+        Ok(entry
+            .payload
+            .as_ref()
+            .and_then(|p| p.payload.as_ref())
+            .and_then(|p| off_by_default(position, p)))
     }
 }
 
@@ -211,34 +200,17 @@ impl<S: Storage> Applicator for FirstBooleanWinsApplicator<S> {
         }
 
         let mut policy_state = Self::decode_state(state.policy_state.as_ref())?;
-        let decision = match inner {
-            payload::Payload::Intention(_) => {
-                policy_state.pending = Some(position);
-                None
-            }
-            payload::Payload::Vote(vote) => {
-                if policy_state.pending != Some(vote.intention_id) {
-                    None
-                } else if let Some(approved) = vote_approved(vote) {
-                    policy_state.pending = None;
-                    Some(decision_payload(
-                        vote.intention_id,
-                        approved,
-                        vote.reason.clone(),
-                    ))
-                } else {
-                    None
-                }
-            }
-            _ => {
-                tracing::warn!(
-                    bus_id,
-                    position,
-                    "unexpected payload for FIRST_BOOLEAN_WINS applicator"
-                );
-                None
-            }
-        };
+        if !matches!(
+            inner,
+            payload::Payload::Intention(_) | payload::Payload::Vote(_)
+        ) {
+            tracing::warn!(
+                bus_id,
+                position,
+                "unexpected payload for FIRST_BOOLEAN_WINS applicator"
+            );
+        }
+        let decision = first_boolean_wins(&mut policy_state.pending, position, inner);
         state.policy_state = Some(Self::encode_state(&policy_state));
         state.last_payload = decision.clone();
 
@@ -254,35 +226,6 @@ impl<S: Storage> Applicator for FirstBooleanWinsApplicator<S> {
         .into_decider_apply_result(bus_id, position)?;
 
         Ok(decision)
-    }
-}
-
-fn vote_approved(vote: &Vote) -> Option<bool> {
-    match vote.abstract_vote.as_ref()?.vote_type.as_ref()? {
-        vote_type::VoteType::BooleanVote(approved) => Some(*approved),
-        _ => None,
-    }
-}
-
-fn decision_payload(intention_id: i64, approved: bool, reason: String) -> Payload {
-    let reason = if reason.is_empty() {
-        "decided by policy".to_string()
-    } else {
-        reason
-    };
-    let inner = if approved {
-        payload::Payload::Commit(Commit {
-            intention_id,
-            reason,
-        })
-    } else {
-        payload::Payload::Abort(Abort {
-            intention_id,
-            reason,
-        })
-    };
-    Payload {
-        payload: Some(inner),
     }
 }
 

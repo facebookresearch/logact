@@ -11,21 +11,15 @@ use std::time::Duration;
 
 use agent_bus_proto_rust::agent_bus::Abort;
 use agent_bus_proto_rust::agent_bus::AppendRequest;
-use agent_bus_proto_rust::agent_bus::BaseEngineControl;
 use agent_bus_proto_rust::agent_bus::BusEntry;
 use agent_bus_proto_rust::agent_bus::BusId;
 use agent_bus_proto_rust::agent_bus::CheckTailRequest;
-use agent_bus_proto_rust::agent_bus::Control;
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agent_bus_proto_rust::agent_bus::Payload;
-use agent_bus_proto_rust::agent_bus::PolicyBatch;
 use agent_bus_proto_rust::agent_bus::SelectivePollType;
 use agent_bus_proto_rust::agent_bus::VoterConfig;
-use agent_bus_proto_rust::agent_bus::base_engine_control;
-use agent_bus_proto_rust::agent_bus::control;
 use agent_bus_proto_rust::agent_bus::intention;
 use agent_bus_proto_rust::agent_bus::payload;
-use agent_bus_proto_rust::agent_bus::voter_op;
 use agentbus_api::AgentBus;
 use agentbus_api::AgentBusError;
 use agentbus_api::Environment;
@@ -43,19 +37,21 @@ use logact_commit_service_api::PolicyProvider;
 use crate::Applicator;
 use crate::ApplyError;
 use crate::ConcurrencyError;
-use crate::DeprecatedOperationKind;
 use crate::EngineStateLoadError;
 use crate::FirstBooleanWinsApplicator;
-use crate::MalformedPolicyBatchKind;
 use crate::OffByDefaultApplicator;
 use crate::OnByDefaultApplicator;
 use crate::PerBusEngineState;
 use crate::StateMachineSpec;
 use crate::Storage;
 use crate::StorageError;
-use crate::VersionedDecider;
 use crate::applicator::StorageWriteResultExt;
+use crate::policy::apply_policy_batch;
+use crate::policy::apply_policy_entry;
+use crate::policy::installed_policy;
 use crate::policy::plan;
+use crate::policy::policy_batch_payload;
+use crate::policy::policy_constraint_failure;
 use crate::storage::InMemoryStorage;
 use crate::storage_concurrency_retry::ConcurrencyRetryPolicy;
 
@@ -213,7 +209,7 @@ impl From<EngineStateLoadError> for EngineError {
 /// Extract the outcome for `proposed_position` from a payload, if it is the
 /// matching `Commit`/`Abort`. The reported position is the intention's own append
 /// slot (`proposed_position`), not the deciding entry's.
-fn outcome_for(payload: &Payload, proposed_position: i64) -> Option<ProposalOutcome> {
+pub fn outcome_for(payload: &Payload, proposed_position: i64) -> Option<ProposalOutcome> {
     match &payload.payload {
         Some(payload::Payload::Commit(c)) if c.intention_id == proposed_position => {
             Some(ProposalOutcome {
@@ -243,39 +239,17 @@ fn outcome_for(payload: &Payload, proposed_position: i64) -> Option<ProposalOutc
 /// If a real decision instead raced in just ahead of the abort, it takes the
 /// earlier position and wins, so the abort never overrides an earlier decision.
 /// (No assumption about inline vs. async voters is needed.)
-fn forced_abort(intention_id: i64) -> Payload {
-    abort(intention_id, "no decision before the log was drained")
+pub fn forced_abort(intention_id: i64) -> Payload {
+    abort_payload(intention_id, "no decision before the log was drained")
 }
 
-fn abort(intention_id: i64, reason: &str) -> Payload {
+/// An `Abort` for `intention_id` with `reason`.
+pub fn abort_payload(intention_id: i64, reason: &str) -> Payload {
     Payload {
         payload: Some(payload::Payload::Abort(Abort {
             intention_id,
             reason: reason.to_string(),
         })),
-    }
-}
-
-fn policy_constraint_failure(payload: &Payload, applied_version: Option<i64>) -> Option<String> {
-    let payload::Payload::Intention(intention) = payload.payload.as_ref()? else {
-        return None;
-    };
-    match intention.policy_version_constraint.as_ref()? {
-        intention::PolicyVersionConstraint::RequiredPolicyVersion(required)
-            if applied_version != Some(*required) =>
-        {
-            Some(format!(
-                "required policy version {required}, but applied version is {applied_version:?}"
-            ))
-        }
-        intention::PolicyVersionConstraint::MinimumPolicyVersion(minimum)
-            if applied_version.is_none_or(|applied| applied < *minimum) =>
-        {
-            Some(format!(
-                "minimum policy version {minimum}, but applied version is {applied_version:?}"
-            ))
-        }
-        _ => None,
     }
 }
 
@@ -434,13 +408,6 @@ async fn apply_tolerating_stale<E: Environment>(
     .map_err(RetryFailure::into_last_error)
 }
 
-fn malformed_policy(kind: MalformedPolicyBatchKind, error: anyhow::Error) -> ApplyError {
-    ApplyError::MalformedPolicy {
-        kind,
-        message: format!("{error:#}"),
-    }
-}
-
 impl<T, F, S, D, E> EngineRuntime<T, F, S, D, E>
 where
     T: AgentBus,
@@ -475,71 +442,6 @@ where
                 ))
             })
             .collect()
-    }
-
-    fn apply_policy_batch(
-        &self,
-        state: &mut PerBusEngineState,
-        batch: &PolicyBatch,
-        entry_position: i64,
-    ) -> std::result::Result<(), ApplyError> {
-        let voter_ops = batch
-            .voter_ops
-            .iter()
-            .map(|(voter_id, op)| {
-                let op = match op.op.as_ref() {
-                    Some(voter_op::Op::Add(add)) => {
-                        let config = self
-                            .voter_factory
-                            .validate_config(add.config.as_ref())
-                            .with_context(|| {
-                                format!("PolicyBatch voter '{voter_id}' has invalid config")
-                            })
-                            .map_err(|error| {
-                                malformed_policy(MalformedPolicyBatchKind::AddVoter, error)
-                            })?;
-                        ValidatedVoterOp::Add(config)
-                    }
-                    Some(voter_op::Op::Remove(_)) => {
-                        if !state.voters.contains_key(voter_id) {
-                            return Err(malformed_policy(
-                                MalformedPolicyBatchKind::RemoveVoter,
-                                anyhow::anyhow!(
-                                    "PolicyBatch cannot remove unknown voter '{voter_id}'"
-                                ),
-                            ));
-                        }
-                        ValidatedVoterOp::Remove
-                    }
-                    None => {
-                        return Err(malformed_policy(
-                            MalformedPolicyBatchKind::PolicyBatch,
-                            anyhow::anyhow!("PolicyBatch voter '{voter_id}' has no operation"),
-                        ));
-                    }
-                };
-                Ok((voter_id, op))
-            })
-            .collect::<std::result::Result<Vec<_>, ApplyError>>()?;
-
-        set_decider_policy_in_engine_state(state, batch.decider_policy, entry_position)
-            .with_context(|| {
-                format!(
-                    "PolicyBatch decider policy {:?} is invalid",
-                    batch.decider_policy
-                )
-            })
-            .map_err(|error| malformed_policy(MalformedPolicyBatchKind::PolicyBatch, error))?;
-        state.applied_policy_version = Some(batch.new_version);
-        for (voter_id, op) in voter_ops {
-            match op {
-                ValidatedVoterOp::Add(config) => {
-                    upsert_voter_config(state, voter_id.clone(), config);
-                }
-                ValidatedVoterOp::Remove => remove_voter_config(state, voter_id),
-            }
-        }
-        Ok(())
     }
 }
 
@@ -644,9 +546,10 @@ where
             .log_position;
         if position == 0 {
             let mut state = PerBusEngineState::default();
-            self.runtime
-                .apply_policy_batch(&mut state, &batch, position)
-                .map_err(EngineError::Playback)?;
+            apply_policy_batch(&mut state, &batch, position, &|config| {
+                self.runtime.voter_factory.validate_config(config)
+            })
+            .map_err(EngineError::Playback)?;
             match state
                 .save(&self.runtime.engine_storage, bus_id, None, 0)
                 .await
@@ -741,21 +644,7 @@ where
             .await
             .map_err(|error| EngineError::PolicyProvider(error.into()))?;
         let version = desired.version;
-        let current = Policy {
-            decider_policy: state
-                .decider
-                .as_ref()
-                .map(|decider| DeciderPolicy::try_from(decider.policy))
-                .transpose()
-                .context("engine state has an invalid decider policy")
-                .map_err(EngineError::InvalidEngineState)?
-                .unwrap_or(DeciderPolicy::OnByDefault),
-            voters: state
-                .voters
-                .iter()
-                .map(|(voter_id, config)| (voter_id.clone(), config.clone()))
-                .collect(),
-        };
+        let current = installed_policy(state).map_err(EngineError::InvalidEngineState)?;
         let Some(batch) = plan(Some(&current), state.applied_policy_version, &desired)
             .map_err(EngineError::Internal)?
         else {
@@ -979,7 +868,7 @@ where
         if let Some(payload) = entry.payload.as_ref()
             && let Some(reason) = policy_constraint_failure(payload, state.applied_policy_version)
         {
-            produced.push(abort(entry_position, &reason));
+            produced.push(abort_payload(entry_position, &reason));
         } else if let Some(payload) = entry.payload.as_ref() {
             let decider = self.build_decider(&state)?;
             if decider.matches(payload) {
@@ -1036,33 +925,10 @@ where
         // The fallible conversions below deliberately return before the CAS. A
         // malformed policy or control entry therefore leaves the cursor unchanged,
         // making every subsequent drive stop and retry the same entry.
-        match base_engine_control_of(entry) {
-            Some(base_engine_control::Control::PolicyBatch(batch)) => {
-                if should_apply_policy_batch(&state, batch) {
-                    self.apply_policy_batch(&mut state, batch, entry_position)?;
-                }
-            }
-            None if matches!(
-                entry.payload.as_ref().and_then(|p| p.payload.as_ref()),
-                Some(payload::Payload::Control(c))
-                    if matches!(c.control.as_ref(), Some(control::Control::BaseEngineControl(_)))
-            ) =>
-            {
-                return Err(malformed_policy(
-                    MalformedPolicyBatchKind::PolicyBatch,
-                    anyhow::anyhow!("BaseEngineControl policy batch is missing or unrecognized"),
-                ));
-            }
-            None if matches!(
-                entry.payload.as_ref().and_then(|p| p.payload.as_ref()),
-                Some(payload::Payload::DeciderPolicy(_))
-            ) =>
-            {
-                return Err(ApplyError::DeprecatedOperation {
-                    operation: DeprecatedOperationKind::SetDeciderPolicy,
-                });
-            }
-            None => {}
+        if let Some(payload) = entry.payload.as_ref() {
+            apply_policy_entry(&mut state, payload, entry_position, &|config| {
+                self.voter_factory.validate_config(config)
+            })?;
         }
         // This final CAS commits policy changes and the cursor together. A crash
         // before the CAS causes the entry to be re-driven; applicators replay their
@@ -1078,15 +944,8 @@ where
     }
 }
 
-fn should_apply_policy_batch(state: &PerBusEngineState, batch: &PolicyBatch) -> bool {
-    state.applied_policy_version == batch.expected_current_version
-        && batch
-            .expected_current_version
-            .is_none_or(|current| batch.new_version > current)
-}
-
 /// Resolve the decider configuration and identity.
-fn load_decider_spec_from_state(
+pub fn load_decider_spec_from_state(
     state: &PerBusEngineState,
 ) -> std::result::Result<StateMachineSpec<Option<i64>, DeciderPolicy>, ApplyError> {
     match &state.decider {
@@ -1102,7 +961,8 @@ fn load_decider_spec_from_state(
     }
 }
 
-fn state_voter_configs(state: &PerBusEngineState) -> Vec<(String, VoterConfig)> {
+/// Installed voter configs in dispatch order.
+pub fn state_voter_configs(state: &PerBusEngineState) -> Vec<(String, VoterConfig)> {
     let mut configs: Vec<_> = state
         .voters
         .iter()
@@ -1114,78 +974,19 @@ fn state_voter_configs(state: &PerBusEngineState) -> Vec<(String, VoterConfig)> 
     configs
 }
 
-fn upsert_voter_config(state: &mut PerBusEngineState, voter_id: String, config: VoterConfig) {
-    state.voters.insert(voter_id, config);
-}
-
-fn remove_voter_config(state: &mut PerBusEngineState, voter_id: &str) {
-    state.voters.remove(voter_id);
-}
-
-enum ValidatedVoterOp {
-    Add(VoterConfig),
-    Remove,
-}
-
-/// Record `policy` with this entry's log position as its ID.
-fn set_decider_policy_in_engine_state(
-    state: &mut PerBusEngineState,
-    policy: Option<i32>,
-    position: i64,
-) -> Result<()> {
-    if let Some(policy) = policy {
-        let policy = DeciderPolicy::try_from(policy).context("invalid decider policy")?;
-        state.decider = Some(VersionedDecider {
-            policy: policy as i32,
-            id: position,
-        });
-    }
-    Ok(())
-}
-
-/// The `BaseEngineControl` directive carried by `entry`, or `None` for other
-/// payloads such as a standalone `DeciderPolicy`.
-fn base_engine_control_of(entry: &BusEntry) -> Option<&base_engine_control::Control> {
-    match entry.payload.as_ref()?.payload.as_ref()? {
-        payload::Payload::Control(control) => {
-            let control::Control::BaseEngineControl(base) = control.control.as_ref()?;
-            base.control.as_ref()
-        }
-        _ => None,
-    }
-}
-
-/// Wrap a `PolicyBatch` in the `Control` payload the engine appends to provision
-/// policy as a single atomic log entry.
-fn policy_batch_payload(batch: PolicyBatch) -> Payload {
-    Payload {
-        payload: Some(payload::Payload::Control(Control {
-            control: Some(control::Control::BaseEngineControl(BaseEngineControl {
-                control: Some(base_engine_control::Control::PolicyBatch(batch)),
-            })),
-        })),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
     use std::cell::RefCell;
-    use std::collections::HashMap;
     use std::collections::VecDeque;
     use std::rc::Rc;
 
-    use agent_bus_proto_rust::agent_bus::AddVoterOp;
-    use agent_bus_proto_rust::agent_bus::BaseEngineControl;
-    use agent_bus_proto_rust::agent_bus::Control;
-    use agent_bus_proto_rust::agent_bus::Intention;
-    use agent_bus_proto_rust::agent_bus::PolicyBatch;
-    use agent_bus_proto_rust::agent_bus::VoterOp;
     use agentbus_simulator::Simulator;
     use futures::executor::block_on;
 
     use super::*;
     use crate::StorageError;
+    use crate::VersionedDecider;
 
     struct ScriptedApplicator {
         calls: Cell<usize>,
@@ -1415,29 +1216,6 @@ mod tests {
     }
 
     #[test]
-    fn repeated_policy_entry_changes_id() {
-        let mut state = PerBusEngineState {
-            decider: Some(VersionedDecider {
-                policy: DeciderPolicy::FirstBooleanWins as i32,
-                id: 10,
-            }),
-            ..Default::default()
-        };
-
-        set_decider_policy_in_engine_state(
-            &mut state,
-            Some(DeciderPolicy::FirstBooleanWins as i32),
-            20,
-        )
-        .expect("recognized policy should be stored");
-
-        assert_eq!(
-            state.decider.expect("policy should remain configured").id,
-            20
-        );
-    }
-
-    #[test]
     fn unrecognized_persisted_policy_is_an_error() {
         let state = PerBusEngineState {
             decider: Some(VersionedDecider { policy: 99, id: 17 }),
@@ -1453,90 +1231,5 @@ mod tests {
             ApplyError::InvalidEngineState { ref message }
                 if message.contains("unrecognized decider policy 99")
         ));
-    }
-
-    #[test]
-    fn unrecognized_policy_entry_is_rejected_without_mutation() {
-        let mut state = PerBusEngineState {
-            decider: Some(VersionedDecider {
-                policy: DeciderPolicy::FirstBooleanWins as i32,
-                id: 10,
-            }),
-            ..Default::default()
-        };
-        let original_decider = state.decider.clone();
-
-        let error = set_decider_policy_in_engine_state(&mut state, Some(99), 17)
-            .expect_err("unknown policy should be rejected");
-
-        assert!(error.to_string().contains("invalid decider policy"));
-        assert_eq!(state.decider, original_decider);
-    }
-
-    #[test]
-    fn base_engine_control_of_reads_a_batch() {
-        let mut voter_ops = HashMap::new();
-        voter_ops.insert(
-            "v".to_string(),
-            VoterOp {
-                op: Some(voter_op::Op::Add(AddVoterOp {
-                    config: Some(VoterConfig::default()),
-                })),
-            },
-        );
-        let entry = BusEntry {
-            header: None,
-            payload: Some(Payload {
-                payload: Some(payload::Payload::Control(Control {
-                    control: Some(control::Control::BaseEngineControl(BaseEngineControl {
-                        control: Some(base_engine_control::Control::PolicyBatch(PolicyBatch {
-                            decider_policy: None,
-                            voter_ops,
-                            ..Default::default()
-                        })),
-                    })),
-                })),
-            }),
-        };
-        assert!(matches!(
-            base_engine_control_of(&entry),
-            Some(base_engine_control::Control::PolicyBatch(batch)) if batch.voter_ops.len() == 1
-        ));
-    }
-
-    #[test]
-    fn base_engine_control_of_ignores_non_control() {
-        let entry = BusEntry {
-            header: None,
-            payload: Some(Payload {
-                payload: Some(payload::Payload::DeciderPolicy(0)),
-            }),
-        };
-        assert!(base_engine_control_of(&entry).is_none());
-    }
-
-    fn constrained_intention(constraint: intention::PolicyVersionConstraint) -> Payload {
-        Payload {
-            payload: Some(payload::Payload::Intention(Intention {
-                intention: Some(intention::Intention::StringIntention("test".to_string())),
-                policy_version_constraint: Some(constraint),
-            })),
-        }
-    }
-
-    #[test]
-    fn intention_policy_version_constraints_are_enforced() {
-        let exact =
-            constrained_intention(intention::PolicyVersionConstraint::RequiredPolicyVersion(5));
-        assert!(policy_constraint_failure(&exact, Some(5)).is_none());
-        assert!(policy_constraint_failure(&exact, Some(6)).is_some());
-        assert!(policy_constraint_failure(&exact, None).is_some());
-
-        let minimum =
-            constrained_intention(intention::PolicyVersionConstraint::MinimumPolicyVersion(5));
-        assert!(policy_constraint_failure(&minimum, Some(5)).is_none());
-        assert!(policy_constraint_failure(&minimum, Some(6)).is_none());
-        assert!(policy_constraint_failure(&minimum, Some(4)).is_some());
-        assert!(policy_constraint_failure(&minimum, None).is_some());
     }
 }

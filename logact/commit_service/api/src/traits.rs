@@ -7,6 +7,7 @@
 
 use agent_bus_proto_rust::agent_bus::intention;
 use agentbus_api::AgentBus;
+use agentbus_api::AgentBusError;
 use agentbus_api::BusId;
 
 /// Request to create a bus using the service's configured initial policy.
@@ -65,6 +66,21 @@ pub enum CommitError {
     /// An uncategorized failure inside the service implementation.
     #[error(transparent)]
     Internal(anyhow::Error),
+}
+
+impl CommitError {
+    /// Classify an AgentBus failure. A missing position means history was lost.
+    pub fn from_bus_error(error: AgentBusError) -> Self {
+        match error {
+            error @ AgentBusError::PositionNotFound(_) => Self::BusDataLoss(error.into()),
+            error @ AgentBusError::InvalidArgument(_) => {
+                Self::InvalidArgument(anyhow::Error::new(error))
+            }
+            error @ AgentBusError::Timeout(_) => Self::Timeout(anyhow::Error::new(error)),
+            error @ AgentBusError::Unavailable(_) => Self::Unavailable(anyhow::Error::new(error)),
+            error @ AgentBusError::Internal(_) => Self::Internal(anyhow::Error::new(error)),
+        }
+    }
 }
 
 /// Result returned by commit-service operations.
