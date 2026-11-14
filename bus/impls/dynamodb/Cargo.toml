@@ -15,5 +15,5 @@ aws-sdk-dynamodb = "1.137.0"
 bytes = { version = "1.12.1", features = ["serde"] }
 
 [dev-dependencies]
-aws-smithy-mocks = "0.2.6"
+aws-smithy-mocks = "0.3.0"
 tokio = { version = "1.54.1", features = ["full", "test-util", "tracing"] }
