@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::cell::Cell;
 use std::cell::RefCell;
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -22,6 +23,7 @@ use agentbus_api::environment::Clock;
 use agentbus_api::environment::Environment;
 use agentbus_api::environment::MonotonicInstant;
 use agentbus_api::environment::UnsafeWallTime;
+use agentbus_api::feature_flags::FeatureFlags;
 use futures::channel::oneshot;
 use rand::RngExt as _;
 use rand::SeedableRng as _;
@@ -86,6 +88,7 @@ pub struct Simulator {
     pub clock: LogicalClock,
     latency_injector: LatencyInjector,
     max_iterations: usize,
+    feature_flags: Cell<FeatureFlags>,
 }
 
 impl Simulator {
@@ -99,6 +102,7 @@ impl Simulator {
             clock,
             latency_injector: LatencyInjector::new(None),
             max_iterations: DEFAULT_MAX_ITERATIONS,
+            feature_flags: Cell::default(),
         }
     }
 
@@ -112,6 +116,7 @@ impl Simulator {
             clock,
             latency_injector: LatencyInjector::new(None),
             max_iterations: DEFAULT_MAX_ITERATIONS,
+            feature_flags: Cell::default(),
         }
     }
 
@@ -144,6 +149,11 @@ impl Simulator {
     pub fn with_max_iterations(mut self, max_iterations: Option<usize>) -> Self {
         self.max_iterations = max_iterations.unwrap_or(DEFAULT_MAX_ITERATIONS);
         self
+    }
+
+    /// Set the feature flags every component on this simulator observes.
+    pub fn set_feature_flags(&self, flags: FeatureFlags) {
+        self.feature_flags.set(flags);
     }
 
     /// Run all spawned tasks to completion in deterministic order
@@ -190,6 +200,10 @@ impl Environment for Simulator {
 
     fn spawn_local(&self, fut: impl Future<Output = ()> + 'static) {
         self.executor.spawn(fut);
+    }
+
+    fn feature_flags(&self) -> FeatureFlags {
+        self.feature_flags.get()
     }
 }
 

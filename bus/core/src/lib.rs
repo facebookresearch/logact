@@ -26,6 +26,7 @@ pub use agentbus_api::AgentBusMetrics;
 pub use agentbus_api::AgentbusLogger;
 pub use agentbus_api::BusResult;
 pub use agentbus_api::Environment;
+pub use agentbus_api::FeatureFlags;
 pub use agentbus_api::NoopLogger;
 pub use agentbus_api::NoopMetrics;
 pub use agentbus_api::RealEnvironment;

@@ -13,7 +13,7 @@ use agentbus_conditional_write_space::WriteOnceSpaceAdapter;
 use agentbus_core::AgentBusMetrics;
 use agentbus_core::AgentbusLogger;
 use agentbus_core::ChanneledAgentBus;
-use agentbus_core::RealEnvironment;
+use agentbus_core::FeatureFlags;
 use agentbus_core::client::AgentBusClient;
 use agentbus_core::server_lib::ParsedBackend;
 use agentbus_sqlite::SqliteConditionalWriteSpace;
@@ -43,9 +43,15 @@ pub struct CoreAgentBusFactory {
     blocking_poll_interval: Option<Duration>,
     make_metrics: MakeMetrics,
     logger_factory: MakeLogger,
+    feature_flags: FeatureFlags,
 }
 
 impl CoreAgentBusFactory {
+    pub fn with_feature_flags(mut self, feature_flags: FeatureFlags) -> Self {
+        self.feature_flags = feature_flags;
+        self
+    }
+
     pub fn new(
         blocking_poll_interval: Option<Duration>,
         make_metrics: MakeMetrics,
@@ -55,6 +61,7 @@ impl CoreAgentBusFactory {
             blocking_poll_interval,
             make_metrics,
             logger_factory,
+            feature_flags: FeatureFlags::default(),
         }
     }
 }
@@ -65,42 +72,50 @@ impl ChanneledAgentBusFactory for CoreAgentBusFactory {
             blocking_poll_interval,
             make_metrics,
             logger_factory,
+            feature_flags,
         } = self;
         match backend {
-            ParsedBackend::Memory => Ok(ChanneledAgentBus::new_in_process(move || {
-                let bus_env = Rc::new(RealEnvironment::new());
-                let metrics = make_metrics()
-                    .expect("write-once metrics factory should initialize in AgentBus worker");
-                let logger = logger_factory()
-                    .expect("write-once logger factory should initialize in AgentBus worker");
-                let space = ObservableWriteOnceSpace::new(
-                    InMemoryWriteOnceSpace::new(),
-                    metrics,
-                    logger,
-                    bus_env.clone(),
-                );
-                WriteOnceAgentBus::new(space, bus_env, blocking_poll_interval)
-            })),
-            ParsedBackend::Http(grpc_url) => {
-                let endpoint = tonic::transport::Channel::from_shared(grpc_url)?;
-                Ok(ChanneledAgentBus::new_in_process(move || {
-                    AgentBusClient::new(endpoint.connect_lazy())
-                }))
-            }
-            ParsedBackend::Sqlite(path) => {
-                let db = SqliteDb::open(Path::new(&path))?;
-                let cws = SqliteConditionalWriteSpace::new(&db)?;
-                Ok(ChanneledAgentBus::new_in_process(move || {
-                    let bus_env = Rc::new(RealEnvironment::new());
-                    let space = WriteOnceSpaceAdapter::new(cws);
+            ParsedBackend::Memory => Ok(ChanneledAgentBus::new_in_process_with_feature_flags(
+                feature_flags,
+                move |bus_env| {
                     let metrics = make_metrics()
                         .expect("write-once metrics factory should initialize in AgentBus worker");
                     let logger = logger_factory()
                         .expect("write-once logger factory should initialize in AgentBus worker");
-                    let space =
-                        ObservableWriteOnceSpace::new(space, metrics, logger, bus_env.clone());
+                    let space = ObservableWriteOnceSpace::new(
+                        InMemoryWriteOnceSpace::new(),
+                        metrics,
+                        logger,
+                        bus_env.clone(),
+                    );
                     WriteOnceAgentBus::new(space, bus_env, blocking_poll_interval)
-                }))
+                },
+            )),
+            ParsedBackend::Http(grpc_url) => {
+                let endpoint = tonic::transport::Channel::from_shared(grpc_url)?;
+                Ok(ChanneledAgentBus::new_in_process_with_feature_flags(
+                    feature_flags,
+                    move |_| AgentBusClient::new(endpoint.connect_lazy()),
+                ))
+            }
+            ParsedBackend::Sqlite(path) => {
+                let db = SqliteDb::open(Path::new(&path))?;
+                let cws = SqliteConditionalWriteSpace::new(&db)?;
+                Ok(ChanneledAgentBus::new_in_process_with_feature_flags(
+                    feature_flags,
+                    move |bus_env| {
+                        let space = WriteOnceSpaceAdapter::new(cws);
+                        let metrics = make_metrics().expect(
+                            "write-once metrics factory should initialize in AgentBus worker",
+                        );
+                        let logger = logger_factory().expect(
+                            "write-once logger factory should initialize in AgentBus worker",
+                        );
+                        let space =
+                            ObservableWriteOnceSpace::new(space, metrics, logger, bus_env.clone());
+                        WriteOnceAgentBus::new(space, bus_env, blocking_poll_interval)
+                    },
+                ))
             }
             ParsedBackend::Other(url) => {
                 anyhow::bail!(

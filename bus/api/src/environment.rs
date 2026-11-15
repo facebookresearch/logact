@@ -14,6 +14,8 @@ use rand::SeedableRng as _;
 use rand::rngs::StdRng;
 use rand::rngs::SysRng;
 
+use crate::FeatureFlags;
+
 /// A wall-clock timestamp that may jump backward or forward.
 ///
 /// Never use this value for deadlines, elapsed-time measurement, ordering,
@@ -125,19 +127,27 @@ pub trait Environment {
     ) -> impl std::future::Future<Output = ()> + 'static;
 
     fn spawn_local(&self, fut: impl std::future::Future<Output = ()> + 'static);
+
+    fn feature_flags(&self) -> FeatureFlags;
 }
 
 /// Production environment using real clock and entropy-seeded RNG
 pub struct RealEnvironment {
     rng: std::cell::RefCell<StdRng>,
     clock: RealClock,
+    feature_flags: FeatureFlags,
 }
 
 impl RealEnvironment {
     pub fn new() -> Self {
+        Self::with_feature_flags(FeatureFlags::default())
+    }
+
+    pub fn with_feature_flags(feature_flags: FeatureFlags) -> Self {
         Self {
             rng: std::cell::RefCell::new(StdRng::try_from_rng(&mut SysRng).unwrap()),
             clock: RealClock::new(),
+            feature_flags,
         }
     }
 }
@@ -168,5 +178,9 @@ impl Environment for RealEnvironment {
 
     fn spawn_local(&self, fut: impl std::future::Future<Output = ()> + 'static) {
         tokio::task::spawn_local(fut);
+    }
+
+    fn feature_flags(&self) -> FeatureFlags {
+        self.feature_flags
     }
 }

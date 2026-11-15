@@ -23,6 +23,7 @@ use crate::BusResult;
 use crate::CheckTailRequest;
 use crate::CheckTailResponse;
 use crate::Environment;
+use crate::FeatureFlags;
 use crate::PollRequest;
 use crate::PollResponse;
 use crate::ReadNextRequest;
@@ -68,6 +69,16 @@ impl ChanneledAgentBus {
         F: FnOnce() -> T + Send + 'static,
         T: AgentBus + 'static,
     {
+        Self::new_in_process_with_feature_flags(FeatureFlags::default(), move |_| factory())
+    }
+
+    /// Construct the bus on its worker thread using the worker's environment
+    /// and the supplied feature flags.
+    pub fn new_in_process_with_feature_flags<F, T>(feature_flags: FeatureFlags, factory: F) -> Self
+    where
+        F: FnOnce(Rc<RealEnvironment>) -> T + Send + 'static,
+        T: AgentBus + 'static,
+    {
         Self::new_with_worker(
             move |append_rx, poll_rx, read_next_rx, tail_rx, blocking_poll_rx| {
                 // Use a dedicated thread rather than `tokio::spawn` so the underlying
@@ -80,8 +91,8 @@ impl ChanneledAgentBus {
 
                     let local = tokio::task::LocalSet::new();
                     local.block_on(&rt, async move {
-                        let agent_bus_impl = factory();
-                        let env = Rc::new(RealEnvironment::new());
+                        let env = Rc::new(RealEnvironment::with_feature_flags(feature_flags));
+                        let agent_bus_impl = factory(env.clone());
                         Self::run_worker(
                             agent_bus_impl,
                             env,
@@ -295,6 +306,32 @@ mod tests {
     const LATENCY_MS: u64 = 5;
     const NUM_APPENDS: usize = 10;
     const NUM_POLLS: usize = 10;
+
+    #[test]
+    #[allow(clippy::field_reassign_with_default)]
+    fn worker_factory_receives_configured_feature_flags() {
+        let mut flags = FeatureFlags::default();
+        flags.enable_commit_buffering = false;
+        let (flags_tx, flags_rx) = oneshot::channel();
+        let bus = ChanneledAgentBus::new_in_process_with_feature_flags(flags, move |env| {
+            flags_tx.send(env.feature_flags()).unwrap();
+            InMemoryAgentBus::new(env)
+        });
+
+        futures::executor::block_on(async {
+            assert_eq!(flags_rx.await.unwrap(), flags);
+            let response = bus
+                .check_tail(CheckTailRequest {
+                    bus_id: Some(BusId {
+                        agent_bus_id: "configured-worker".to_owned(),
+                    }),
+                    ..Default::default()
+                })
+                .await
+                .unwrap();
+            assert_eq!(response.tail_position, 0);
+        });
+    }
 
     /// Verify that `run_worker` dispatches poll operations concurrently.
     ///
