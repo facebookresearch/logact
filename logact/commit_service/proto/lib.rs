@@ -5,6 +5,13 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+pub mod logact_commit_service_engine_state {
+    include!(concat!(
+        env!("OUT_DIR"),
+        "/logact_commit_service_engine_state.rs"
+    ));
+}
+
 pub mod logact_commit_service_policy {
     include!(concat!(env!("OUT_DIR"), "/logact_commit_service_policy.rs"));
 }

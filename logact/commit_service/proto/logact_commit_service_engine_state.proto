@@ -1,0 +1,54 @@
+/*
+ * Copyright (c) Meta Platforms, Inc. and affiliates.
+ *
+ * This source code is licensed under the MIT license found in the
+ * LICENSE file in the root directory of this source tree.
+ */
+
+syntax = "proto3";
+
+package logact_commit_service_engine_state;
+
+import "agentbus_proto/agent_bus.proto";
+import "google/protobuf/any.proto";
+
+// The V1 engine's persisted per-bus state.
+message PerBusEngineState {
+  // Legacy voter policies installed for this bus, in installation order. This
+  // field remains readable for existing stored state, but new engine handling
+  // ignores it.
+  repeated google.protobuf.Any voter_configs = 1;
+  // Active voter configs keyed by stable voter ID. Legacy state may use the
+  // original `AddVoter` entry position as the ID.
+  map<string, agent_bus.VoterConfig> voters = 2;
+  // Configured policy and state-machine ID, or unset if unconfigured.
+  VersionedDecider decider = 3;
+  // Latest policy generation applied from a `PolicyBatch`, or unset if no
+  // versioned policy has been applied.
+  optional int64 applied_policy_version = 4;
+}
+
+// The configured decider policy and its state-machine ID.
+message VersionedDecider {
+  // Active `DeciderPolicy` value.
+  int32 policy = 1;
+  // Log position of the policy entry that created this state machine.
+  int64 id = 2;
+}
+
+// Persisted per-bus runtime state for the V1 decider.
+message DeciderState {
+  // Formerly the policy.
+  reserved 1;
+  // Last result, retained for idempotent replay. The storage slot carries its
+  // position.
+  agent_bus.Payload last_payload = 2;
+  // Policy-specific state; unset for stateless policies.
+  google.protobuf.Any policy_state = 3;
+}
+
+// `FIRST_BOOLEAN_WINS` state, packed into `DeciderState.policy_state`.
+message FirstBooleanWinsState {
+  // The intention awaiting a decision, if any.
+  optional int64 pending = 1;
+}

@@ -72,6 +72,8 @@ use logact_commit_service_engine::StorageResult;
 use logact_commit_service_engine::VersionedDecider;
 use logact_commit_service_engine::VersionedPolicy;
 use logact_commit_service_engine::VoterFactory;
+use logact_commit_service_engine::load_engine_state;
+use logact_commit_service_engine::save_engine_state;
 use logact_commit_service_engine::validate_voter_configs;
 use logact_commit_service_engine_tests::voters::CountingVoter;
 use logact_commit_service_engine_tests::voters::CountingVoterConfig;
@@ -1433,7 +1435,7 @@ fn corrupt_persisted_decider_state_rejects_proposal() {
             decider: Some(VersionedDecider { policy: 99, id: 0 }),
             ..Default::default()
         };
-        assert!(state.save(storage.as_ref(), agent, None, 0).await?);
+        assert!(save_engine_state(&state, storage.as_ref(), agent, None, 0).await?);
         let engine = make_engine_with_policy_provider(
             fixture.create_impl(),
             storage.clone(),
@@ -1451,7 +1453,7 @@ fn corrupt_persisted_decider_state_rejects_proposal() {
                 if source.to_string().contains("engine state has an invalid decider policy")
         ));
 
-        let (_, stored_position) = PerBusEngineState::load(storage.as_ref(), agent).await?;
+        let (_, stored_position) = load_engine_state(storage.as_ref(), agent).await?;
         assert_eq!(
             stored_position,
             Some(0),
@@ -1954,7 +1956,7 @@ fn invalid_batch_decider_policy_is_rejected_without_mutating_state() {
             "unexpected error: {error:#}"
         );
 
-        let (state, _) = PerBusEngineState::load(storage.as_ref(), agent).await?;
+        let (state, _) = load_engine_state(storage.as_ref(), agent).await?;
         assert!(
             state.decider.is_none(),
             "the invalid policy must not configure a decider"
@@ -2018,7 +2020,7 @@ fn policy_batch_rejects_an_unexpected_current_version() {
             outcome.approved,
             "sync should continue using the applied policy"
         );
-        let (state, _) = PerBusEngineState::load(storage.as_ref(), agent).await?;
+        let (state, _) = load_engine_state(storage.as_ref(), agent).await?;
         assert_eq!(
             state.applied_policy_version,
             Some(1),
@@ -2080,7 +2082,7 @@ fn policy_batch_applies_chained_version_transitions() {
 
         propose_intention(&engine, agent, "process valid version transitions").await?;
 
-        let (state, _) = PerBusEngineState::load(storage.as_ref(), agent).await?;
+        let (state, _) = load_engine_state(storage.as_ref(), agent).await?;
         assert_eq!(
             state.applied_policy_version,
             Some(2),
@@ -2146,7 +2148,7 @@ fn policy_batch_rejects_version_regression() {
             outcome.approved,
             "sync should continue using the applied policy"
         );
-        let (state, _) = PerBusEngineState::load(storage.as_ref(), agent).await?;
+        let (state, _) = load_engine_state(storage.as_ref(), agent).await?;
         assert_eq!(
             state.applied_policy_version,
             Some(2),
@@ -2212,7 +2214,7 @@ fn policy_batch_rejects_unchanged_version() {
             outcome.approved,
             "sync should continue using the applied policy"
         );
-        let (state, _) = PerBusEngineState::load(storage.as_ref(), agent).await?;
+        let (state, _) = load_engine_state(storage.as_ref(), agent).await?;
         assert_eq!(
             state.applied_policy_version,
             Some(2),
@@ -2567,7 +2569,7 @@ fn standalone_decider_policy_is_rejected() {
                 .contains("standalone SetDeciderPolicy is disabled; policy must use PolicyBatch"),
             "retry should encounter the same standalone DeciderPolicy: {retry_error:#}"
         );
-        let (state, _) = PerBusEngineState::load(storage.as_ref(), decider_agent).await?;
+        let (state, _) = load_engine_state(storage.as_ref(), decider_agent).await?;
         assert!(
             state.decider.is_none(),
             "the standalone policy must not configure a decider"

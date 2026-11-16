@@ -55,6 +55,8 @@ pub use engine_state::EngineStateLoadError;
 pub use engine_state::PerBusEngineState;
 pub use engine_state::VersionedDecider;
 pub use engine_state::engine_state_key;
+pub use engine_state::load_engine_state;
+pub use engine_state::save_engine_state;
 // The policy contract lives in the `api` crate (bus-agnostic); re-exported here so
 // existing `logact_commit_service_engine::` paths keep resolving.
 pub use logact_commit_service_api::Policy;

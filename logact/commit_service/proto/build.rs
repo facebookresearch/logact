@@ -14,9 +14,11 @@ fn main() -> std::io::Result<()> {
         std::env::var("OUT_DIR").expect("Cargo should set OUT_DIR for build scripts"),
     );
     let policy_proto = manifest_dir.join("logact_commit_service_policy.proto");
+    let engine_state_proto = manifest_dir.join("logact_commit_service_engine_state.proto");
     let agent_bus_proto = manifest_dir.join("../../../bus/proto/agent_bus.proto");
 
     println!("cargo:rerun-if-changed={}", policy_proto.display());
+    println!("cargo:rerun-if-changed={}", engine_state_proto.display());
 
     setup_protoc_env();
 
@@ -43,7 +45,10 @@ fn main() -> std::io::Result<()> {
     let mut config = prost_build::Config::new();
     config.enable_type_names();
     config.extern_path(".agent_bus", "::agent_bus_proto_rust::agent_bus");
-    config.compile_protos(&[policy_proto], &[manifest_dir, out_dir])?;
+    config.compile_protos(
+        &[engine_state_proto, policy_proto],
+        &[manifest_dir, out_dir],
+    )?;
     Ok(())
 }
 

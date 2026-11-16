@@ -46,12 +46,14 @@ use crate::StateMachineSpec;
 use crate::Storage;
 use crate::StorageError;
 use crate::applicator::StorageWriteResultExt;
+use crate::load_engine_state;
 use crate::policy::apply_policy_batch;
 use crate::policy::apply_policy_entry;
 use crate::policy::installed_policy;
 use crate::policy::plan;
 use crate::policy::policy_batch_payload;
 use crate::policy::policy_constraint_failure;
+use crate::save_engine_state;
 use crate::storage::InMemoryStorage;
 use crate::storage_concurrency_retry::ConcurrencyRetryPolicy;
 
@@ -284,7 +286,7 @@ impl EngineSnapshot {
         storage: &impl Storage,
         bus_id: &str,
     ) -> std::result::Result<Self, EngineStateLoadError> {
-        let (state, position) = PerBusEngineState::load(storage, bus_id).await?;
+        let (state, position) = load_engine_state(storage, bus_id).await?;
         Ok(Self { state, position })
     }
 
@@ -550,10 +552,7 @@ where
                 self.runtime.voter_factory.validate_config(config)
             })
             .map_err(EngineError::Playback)?;
-            match state
-                .save(&self.runtime.engine_storage, bus_id, None, 0)
-                .await
-            {
+            match save_engine_state(&state, &self.runtime.engine_storage, bus_id, None, 0).await {
                 Ok(true) => {}
                 Ok(false) => tracing::info!(
                     bus_id,
@@ -933,10 +932,15 @@ where
         // This final CAS commits policy changes and the cursor together. A crash
         // before the CAS causes the entry to be re-driven; applicators replay their
         // stored result, and policy-state changes are reapplied idempotently.
-        state
-            .save(&self.engine_storage, bus_id, state_position, entry_position)
-            .await
-            .into_engine_apply_result(bus_id, entry_position)?;
+        save_engine_state(
+            &state,
+            &self.engine_storage,
+            bus_id,
+            state_position,
+            entry_position,
+        )
+        .await
+        .into_engine_apply_result(bus_id, entry_position)?;
         Ok(EngineSnapshot {
             state,
             position: Some(entry_position),

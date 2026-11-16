@@ -13,6 +13,7 @@ use agent_bus_proto_rust::agent_bus::payload;
 use anyhow::Context;
 use anyhow::Result;
 use bytes::Bytes;
+use logact_commit_service_policy_proto_rust::logact_commit_service_engine_state::FirstBooleanWinsState;
 use prost::Message;
 use prost_types::Any;
 
@@ -36,12 +37,6 @@ pub struct FirstBooleanWinsApplicator<S> {
 }
 
 const FIRST_BOOLEAN_WINS_STATE_TYPE_URL: &str = "logact.decider.FirstBooleanWinsState";
-
-#[derive(Clone, PartialEq, prost::Message)]
-struct FirstBooleanWinsState {
-    #[prost(int64, optional, tag = "1")]
-    pending: Option<i64>,
-}
 
 impl OnByDefaultApplicator {
     pub fn new() -> Self {
