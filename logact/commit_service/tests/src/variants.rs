@@ -100,6 +100,10 @@ macro_rules! commit_service_fixtures {
             $crate::cs_replay_bus_bridge,
             ($crate::fixtures::replay::IndependentStorage, independent_storage, $cb $(, $ctx)?)
         );
+        agentbus_tests::agentbus_fixtures!(
+            $crate::cs_replay_bus_bridge,
+            ($crate::fixtures::replay::SharedStorage, shared, $cb $(, $ctx)?)
+        );
     };
 }
 

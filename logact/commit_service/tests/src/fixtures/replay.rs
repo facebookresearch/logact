@@ -106,6 +106,23 @@ impl<B> TestCheckpoints<B> for IndependentStorage {
     }
 }
 
+/// Every server shares one in-memory storage.
+pub struct SharedStorage(Rc<InMemoryStorage>);
+
+impl<B> TestCheckpoints<B> for SharedStorage {
+    type Store = StorageCheckpoints<InMemoryStorage>;
+
+    const DURABLE: bool = true;
+
+    fn new() -> Self {
+        SharedStorage(Rc::new(InMemoryStorage::new()))
+    }
+
+    fn for_server(&self, _bus: &B, _voter_factory: &VoterFactory) -> Self::Store {
+        StorageCheckpoints::new(self.0.clone())
+    }
+}
+
 /// Every server shares the bus and the policy register, plus whatever `C`
 /// shares.
 pub struct ReplayCommitServiceFixture<BF, C> {
