@@ -15,6 +15,7 @@
 //! `sim_tests.rs` and `integration_tests.rs`, the Buck test entry points.
 
 pub mod fixtures;
+pub mod stores;
 pub mod variants;
 
 pub use agentbus_simulator as simulator;

@@ -13,6 +13,7 @@
 //! the random-routing fixtures, and the observability decorator over a single V1
 //! service and over a router. The standalone `InMemCommitService` runs as a single
 //! fixture. The local gRPC and SQLite stack runs in the integration suite.
+//! `ReplayCommitService` runs over the AgentBus sim matrix once per checkpoint store.
 //! `define_driver!` calls `commit_service_fixtures!` with a per-fixture callback;
 //! `cs_bus_bridge` adapts each AgentBus fixture into the V1 commit-service fixture.
 
@@ -85,6 +86,12 @@ macro_rules! commit_service_fixtures {
         );
         // Standalone in-memory implementation with its own local bus.
         $cb!([InMemCommitServiceFixture, inmem, sim] $(, $ctx)?);
+        // Replay-based implementations over every AgentBus backend, one per
+        // checkpoint store. Without storage, every load replays from 0.
+        agentbus_tests::agentbus_fixtures!(
+            $crate::cs_replay_bus_bridge,
+            ($crate::fixtures::replay::NoStore, nostorage, $cb $(, $ctx)?)
+        );
     };
 }
 
@@ -98,4 +105,16 @@ macro_rules! cs_bus_bridge {
         $cb!([CommitServiceV1Fixture<$bus>, $sfx, sim] $(, $ctx)?);
     };
     ([$bus:ty, $sfx:ident, integration], ($cb:path $(, $ctx:tt)?)) => {};
+}
+
+/// Bridge: like `cs_bus_bridge`, but emits a `ReplayCommitServiceFixture` with
+/// checkpoint store `$store`, prefixing its suffix with `$prefix`.
+#[macro_export]
+macro_rules! cs_replay_bus_bridge {
+    ([$bus:ty, $sfx:ident, sim], ($store:ty, $prefix:ident, $cb:path $(, $ctx:tt)?)) => {
+        paste::paste! {
+            $cb!([$crate::fixtures::ReplayCommitServiceFixture<$bus, $store>, [<$prefix _ $sfx>], sim] $(, $ctx)?);
+        }
+    };
+    ([$bus:ty, $sfx:ident, integration], ($store:ty, $prefix:ident, $cb:path $(, $ctx:tt)?)) => {};
 }

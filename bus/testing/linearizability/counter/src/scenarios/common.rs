@@ -83,7 +83,7 @@ mod defs {
         zipf = 1.2,
         loss = 0.05,
         retry,
-        max_iterations = 1000000
+        max_iterations = 2000000
     )]
     pub async fn run_counter_linearizability_3x100<F>(fixture: &F) -> Result<()>
     where
