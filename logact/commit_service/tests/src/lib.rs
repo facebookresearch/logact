@@ -16,6 +16,8 @@
 
 pub mod fixtures;
 pub mod stores;
+#[cfg(test)]
+mod v1_handover;
 pub mod variants;
 
 pub use agentbus_simulator as simulator;

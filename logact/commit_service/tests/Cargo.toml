@@ -48,3 +48,4 @@ tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
 [dev-dependencies]
 agentbus_simple = { version = "0.1.0", path = "../../../bus/impls/simple" }
 fbinit-tokio = { version = "0.1.2", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "main" }
+prost = { version = "0.14.4", default-features = false }

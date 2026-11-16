@@ -116,4 +116,8 @@ where
     fn policy_controller(&self) -> Self::Controller {
         self._inner.policy_controller()
     }
+
+    fn supports_first_boolean_wins(&self) -> bool {
+        self._inner.supports_first_boolean_wins()
+    }
 }

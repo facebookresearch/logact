@@ -115,7 +115,11 @@ mod defs {
             DeciderPolicy::OnByDefault,
             DeciderPolicy::OffByDefault,
             DeciderPolicy::FirstBooleanWins,
-        ] {
+        ]
+        .into_iter()
+        .filter(|policy| {
+            *policy != DeciderPolicy::FirstBooleanWins || fixture.supports_first_boolean_wins()
+        }) {
             fixture.set_decider_policy(policy).await?;
             let servers: Vec<_> = (0..3).map(|_| fixture.create_impl()).collect();
             let bus_id = format!(

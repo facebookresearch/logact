@@ -125,6 +125,9 @@ mod defs {
     pub async fn run_test_superseded_intention_is_not_aborted_on_drain<F: DeciderPolicyFixture>(
         fixture: &F,
     ) -> Result<()> {
+        if !fixture.supports_first_boolean_wins() {
+            return Ok(());
+        }
         fixture
             .set_decider_policy(DeciderPolicy::FirstBooleanWins)
             .await?;
@@ -179,6 +182,9 @@ mod defs {
     >(
         fixture: &F,
     ) -> Result<()> {
+        if !fixture.supports_first_boolean_wins() {
+            return Ok(());
+        }
         fixture
             .set_decider_policy(DeciderPolicy::FirstBooleanWins)
             .await?;
@@ -228,6 +234,9 @@ mod defs {
     >(
         fixture: &F,
     ) -> Result<()> {
+        if !fixture.supports_first_boolean_wins() {
+            return Ok(());
+        }
         fixture
             .set_decider_policy(DeciderPolicy::FirstBooleanWins)
             .await?;
@@ -277,6 +286,9 @@ mod defs {
     pub async fn run_test_undecided_intention_aborts_on_drain<F: DeciderPolicyFixture>(
         fixture: &F,
     ) -> Result<()> {
+        if !fixture.supports_first_boolean_wins() {
+            return Ok(());
+        }
         fixture
             .set_decider_policy(DeciderPolicy::FirstBooleanWins)
             .await?;

@@ -39,6 +39,7 @@ pub mod buffering;
 pub mod buggy_stale_position;
 pub mod channeled;
 pub mod grpc;
+pub mod hybrid;
 pub mod inmem;
 pub mod observable;
 pub mod random_routing;
@@ -53,6 +54,7 @@ pub use channeled::ChanneledCommitServiceFixture;
 pub use conformance::ConformanceFixture;
 pub use conformance::SimulatorFixture;
 pub use grpc::GrpcCommitServiceFixture;
+pub use hybrid::HybridCommitServiceFixture;
 pub use inmem::InMemCommitServiceFixture;
 pub use observable::ObservableCommitServiceFixture;
 pub use random_routing::CommitServiceV1ProductionShape;
@@ -125,6 +127,13 @@ pub trait DeciderPolicyFixture: CommitServiceTestFixture {
             self.policy_controller().set_decider_policy(policy).await?;
             Ok(())
         }
+    }
+
+    /// Whether its servers can share a bus under `FIRST_BOOLEAN_WINS`. A fleet
+    /// mixing V1 with replay servers on V1's engine-state record can't: each
+    /// keeps the pending intention where the other doesn't read it.
+    fn supports_first_boolean_wins(&self) -> bool {
+        true
     }
 }
 

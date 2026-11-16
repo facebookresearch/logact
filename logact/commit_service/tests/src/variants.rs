@@ -104,6 +104,8 @@ macro_rules! commit_service_fixtures {
             $crate::cs_replay_bus_bridge,
             ($crate::fixtures::replay::SharedStorage, shared, $cb $(, $ctx)?)
         );
+        // A random mix of V1 and replay servers over every AgentBus backend.
+        agentbus_tests::agentbus_fixtures!($crate::cs_hybrid_bus_bridge, ($cb $(, $ctx)?));
     };
 }
 
@@ -129,4 +131,15 @@ macro_rules! cs_replay_bus_bridge {
         }
     };
     ([$bus:ty, $sfx:ident, integration], ($store:ty, $prefix:ident, $cb:path $(, $ctx:tt)?)) => {};
+}
+
+/// Bridge: like `cs_bus_bridge`, but emits a `HybridCommitServiceFixture`.
+#[macro_export]
+macro_rules! cs_hybrid_bus_bridge {
+    ([$bus:ty, $sfx:ident, sim], ($cb:path $(, $ctx:tt)?)) => {
+        paste::paste! {
+            $cb!([$crate::fixtures::HybridCommitServiceFixture<$bus>, [<hybrid_ $sfx>], sim] $(, $ctx)?);
+        }
+    };
+    ([$bus:ty, $sfx:ident, integration], ($cb:path $(, $ctx:tt)?)) => {};
 }
