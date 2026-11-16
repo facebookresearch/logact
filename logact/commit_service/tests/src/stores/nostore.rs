@@ -12,12 +12,10 @@ use agent_bus_proto_rust::agent_bus::VoterConfig;
 use agent_bus_proto_rust::agent_bus::payload;
 use agentbus_api::AgentBus;
 use logact_commit_service_api::CommitResult;
-use logact_commit_service_replay::ApplicatorLite;
 use logact_commit_service_replay::Checkpoint;
 use logact_commit_service_replay::CheckpointStore;
 use logact_commit_service_replay::ReplayState;
 use logact_commit_service_replay::store_support::LogPlayer;
-use logact_commit_service_replay::store_support::Materializer;
 use logact_commit_service_replay::store_support::apply_error;
 use logact_commit_service_replay::store_support::decided_intention;
 use logact_commit_service_replay::store_support::entry_position;
@@ -74,12 +72,9 @@ impl<T: AgentBus> CheckpointStore for NoStoreCheckpoints<T> {
                 {
                     break;
                 }
-                Materializer {
-                    state: &mut state,
-                    validate_config: &*self.validate_config,
-                }
-                .apply(entry)
-                .map_err(apply_error)?;
+                state
+                    .materialize(entry, &*self.validate_config)
+                    .map_err(apply_error)?;
             }
             position = Some(entry_position);
         }

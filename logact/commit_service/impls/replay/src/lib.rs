@@ -13,7 +13,6 @@
 //! its intention, then materializes forward until the intention is decided.
 //! [`store_support`] exposes the pieces other checkpoint stores build on.
 
-mod applicator_lite;
 mod checkpoint;
 mod decider;
 mod drive;
@@ -21,7 +20,6 @@ mod player;
 mod service;
 mod state;
 
-pub use applicator_lite::ApplicatorLite;
 pub use checkpoint::Checkpoint;
 pub use checkpoint::CheckpointStore;
 pub use service::ReplayCommitService;
@@ -33,6 +31,5 @@ pub mod store_support {
     pub use crate::drive::apply_error;
     pub use crate::player::LogPlayer;
     pub use crate::player::entry_position;
-    pub use crate::state::Materializer;
     pub use crate::state::Step;
 }

@@ -5,16 +5,12 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use agent_bus_proto_rust::agent_bus::BusEntry;
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agent_bus_proto_rust::agent_bus::Payload;
 use agent_bus_proto_rust::agent_bus::payload;
-use logact_commit_service_engine::ApplyError;
 use logact_commit_service_engine::decider_transitions::first_boolean_wins;
 use logact_commit_service_engine::decider_transitions::off_by_default;
 use logact_commit_service_engine::decider_transitions::on_by_default;
-
-use crate::ApplicatorLite;
 
 /// One decider policy with its in-memory state, using V1's transitions.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -51,23 +47,6 @@ impl DeciderMachine {
                 first_boolean_wins(pending, position, payload)
             }
         }
-    }
-}
-
-impl ApplicatorLite for DeciderMachine {
-    type Output = Option<Payload>;
-
-    fn apply(&mut self, entry: &BusEntry) -> Result<Option<Payload>, ApplyError> {
-        let position = entry
-            .header
-            .as_ref()
-            .ok_or(ApplyError::MissingHeader)?
-            .log_position;
-        Ok(entry
-            .payload
-            .as_ref()
-            .and_then(|payload| payload.payload.as_ref())
-            .and_then(|payload| self.step(position, payload)))
     }
 }
 

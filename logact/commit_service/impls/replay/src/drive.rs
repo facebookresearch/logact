@@ -17,12 +17,10 @@ use logact_commit_service_engine::VoterFactory;
 use logact_commit_service_engine::forced_abort;
 use logact_commit_service_engine::outcome_for;
 
-use crate::ApplicatorLite;
 use crate::ReplayState;
 use crate::player::LogPlayer;
 use crate::player::append;
 use crate::player::entry_position;
-use crate::state::Materializer;
 
 /// One drive: materializes the log forward from a checkpoint until an intention
 /// is decided, appending each entry's decision and votes as it goes.
@@ -87,12 +85,10 @@ impl<'a, T: AgentBus, F: VoterFactory> Drive<'a, T, F> {
     async fn materialize(&mut self, entry: &BusEntry) -> CommitResult<i64> {
         let position = entry_position(entry)?;
         if entry.payload.is_some() {
-            let step = Materializer {
-                state: &mut self.state,
-                validate_config: &|config| self.voter_factory.validate_config(config),
-            }
-            .apply(entry)
-            .map_err(apply_error)?;
+            let step = self
+                .state
+                .materialize(entry, &|config| self.voter_factory.validate_config(config))
+                .map_err(apply_error)?;
             if let Some(decision) = step.decision {
                 append(self.bus, self.bus_id, decision).await?;
             }

@@ -25,14 +25,12 @@ use logact_commit_service_engine::installed_policy;
 use logact_commit_service_engine::plan_policy_batch;
 use logact_commit_service_engine::policy_batch_payload;
 
-use crate::ApplicatorLite;
 use crate::Checkpoint;
 use crate::CheckpointStore;
 use crate::ReplayState;
 use crate::drive::Drive;
 use crate::drive::apply_error;
 use crate::player::append;
-use crate::state::Materializer;
 
 /// A commit service that materializes the log through V1's voters and decider,
 /// resuming from whatever checkpoint `C` holds.
@@ -118,12 +116,9 @@ where
                 }),
                 payload: Some(payload),
             };
-            Materializer {
-                state: &mut state,
-                validate_config: &|config| self.voter_factory.validate_config(config),
-            }
-            .apply(&entry)
-            .map_err(apply_error)?;
+            state
+                .materialize(&entry, &|config| self.voter_factory.validate_config(config))
+                .map_err(apply_error)?;
             self.save_checkpoint(&request.bus_id, Checkpoint { state, position }, None)
                 .await;
         }
