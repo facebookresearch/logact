@@ -12,6 +12,7 @@ use conformance::TestConfig;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_core::BufferingCommitService;
 
+use crate::fixtures::CheckpointFixture;
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::DeciderPolicyFixture;
 use crate::fixtures::SimulatorFixture;
@@ -68,6 +69,21 @@ where
     fn from_inner(inner: CF) -> Self {
         let service = BufferingCommitService::new(inner.create_impl());
         Self { inner, service }
+    }
+}
+
+impl<CF> CheckpointFixture for BufferingCommitServiceFixture<CF>
+where
+    CF: CheckpointFixture,
+{
+    async fn checkpoint_position(&self, _service: &Self::Impl, bus_id: &str) -> Result<i64> {
+        self.inner
+            .checkpoint_position(&self.inner.create_impl(), bus_id)
+            .await
+    }
+
+    fn is_checkpoint_durable(&self) -> bool {
+        self.inner.is_checkpoint_durable()
     }
 }
 

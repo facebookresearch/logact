@@ -106,6 +106,12 @@ impl<E: Environment, P> InMemCommitService<E, P> {
             ..self
         }
     }
+
+    /// The last position this service has materialized for `bus_id`, if any.
+    pub fn checkpoint_position(&self, bus_id: &str) -> Option<i64> {
+        let next_position = self.replay_state.borrow().get(bus_id)?.next_position;
+        (next_position > 0).then(|| next_position - 1)
+    }
 }
 
 impl<E, P> InMemCommitService<E, P>

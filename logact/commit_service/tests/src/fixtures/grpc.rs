@@ -27,6 +27,7 @@ use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 use tonic::transport::Endpoint;
 
+use crate::fixtures::CheckpointFixture;
 use crate::fixtures::DeciderPolicyFixture;
 
 pub struct GrpcCommitServiceFixture {
@@ -119,6 +120,16 @@ async fn connect(socket: &Path) -> Result<Channel> {
                 return Err(error).context("timed out connecting to the local LogAct server");
             }
         }
+    }
+}
+
+impl CheckpointFixture for GrpcCommitServiceFixture {
+    async fn checkpoint_position(&self, _service: &Self::Impl, _bus_id: &str) -> Result<i64> {
+        anyhow::bail!("the gRPC fixture can't observe checkpoints")
+    }
+
+    fn is_checkpoint_durable(&self) -> bool {
+        true
     }
 }
 

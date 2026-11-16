@@ -12,6 +12,7 @@
 
 use std::rc::Rc;
 
+use anyhow::Context as _;
 use anyhow::Result;
 use conformance::TestConfig;
 use logact_commit_service_engine::InMemoryStorage;
@@ -19,6 +20,7 @@ use logact_commit_service_inmem::InMemCommitService;
 use logact_commit_service_policy_register::StoragePolicyRegister;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 
+use crate::fixtures::CheckpointFixture;
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::DeciderPolicyFixture;
 use crate::fixtures::SimulatorFixture;
@@ -66,6 +68,18 @@ impl SimulatorFixture for InMemCommitServiceFixture {
             policy_controller,
             env,
         })
+    }
+}
+
+impl CheckpointFixture for InMemCommitServiceFixture {
+    async fn checkpoint_position(&self, service: &Self::Impl, bus_id: &str) -> Result<i64> {
+        service
+            .checkpoint_position(bus_id)
+            .context("no replay state")
+    }
+
+    fn is_checkpoint_durable(&self) -> bool {
+        true
     }
 }
 

@@ -38,6 +38,7 @@ use agentbus_api::ReadNextResponse;
 use agentbus_api::validation::validate_bus_id;
 use agentbus_tests::fixtures::AgentBusTestFixture;
 use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
+use anyhow::Context as _;
 use anyhow::Result;
 use conformance::TestConfig;
 use logact_commit_service_api::CommitIntentionCommand;
@@ -49,6 +50,7 @@ use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::Storage;
+use logact_commit_service_engine::load_engine_state;
 use logact_commit_service_engine_tests::fixtures::EnvStorageFixture;
 use logact_commit_service_engine_tests::fixtures::InMemoryStorageFixture;
 use logact_commit_service_engine_tests::fixtures::ScopedStorageFixture;
@@ -58,6 +60,7 @@ use logact_commit_service_v1::DelegatingVoterFactory;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 use rand::RngExt as _;
 
+use crate::fixtures::CheckpointFixture;
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::DeciderPolicyFixture;
 use crate::fixtures::SettableDeciderPolicy;
@@ -240,6 +243,7 @@ pub struct RandomRoutingCommitServiceFixture<
 {
     bus_fixture: BF,
     policy_controller: P::Controller,
+    storage: Rc<SF::Impl>,
     router: RandomRoutingCommitService<RoutedV1<BF::Impl, P, SF::Impl>, Simulator>,
 }
 
@@ -324,9 +328,31 @@ where
         Ok(Self {
             bus_fixture,
             policy_controller,
+            storage,
             router: RandomRoutingCommitService::new(services, env)
                 .with_switch_probability(1.0 - config.stickiness()),
         })
+    }
+}
+
+impl<BF, P, SF> CheckpointFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
+where
+    BF: AgentBusTestFixture<Env = Simulator>,
+    BF::Impl: Clone,
+    P: TestPolicyProvider,
+    P::Controller: SettableDeciderPolicy,
+    SF: StorageTestFixture<Impl: 'static>,
+{
+    /// The shared engine-state cursor.
+    async fn checkpoint_position(&self, _service: &Self::Impl, bus_id: &str) -> Result<i64> {
+        load_engine_state(&*self.storage, bus_id)
+            .await?
+            .1
+            .context("no engine state")
+    }
+
+    fn is_checkpoint_durable(&self) -> bool {
+        true
     }
 }
 

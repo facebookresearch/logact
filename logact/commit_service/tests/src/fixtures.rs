@@ -125,6 +125,20 @@ pub trait DeciderPolicyFixture: CommitServiceTestFixture {
     }
 }
 
+/// A fixture that can observe where its services' checkpoints end.
+pub trait CheckpointFixture: CommitServiceTestFixture {
+    /// The last position covered by `service`'s checkpoint for `bus_id`.
+    fn checkpoint_position(
+        &self,
+        service: &Self::Impl,
+        bus_id: &str,
+    ) -> impl std::future::Future<Output = anyhow::Result<i64>>;
+
+    /// Whether checkpoints are kept independently of the log, so the entries
+    /// they cover can expire.
+    fn is_checkpoint_durable(&self) -> bool;
+}
+
 /// A `PolicyProvider` and its test-only controller, constructed together.
 pub trait TestPolicyProvider: PolicyProvider<Error: Into<anyhow::Error>> + Clone + 'static {
     type Controller: Clone + 'static;

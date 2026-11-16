@@ -28,7 +28,7 @@ mod defs {
     use logact_commit_service_api::CreateBusCommand;
     use rand::RngExt as _;
 
-    use crate::fixtures::CommitServiceTestFixture;
+    use crate::fixtures::CheckpointFixture;
     use crate::fixtures::DeciderPolicyFixture;
     use crate::simulator::Simulator;
 
@@ -41,7 +41,7 @@ mod defs {
         }
     }
 
-    async fn check_checkpointed_history_can_expire<F: CommitServiceTestFixture>(
+    async fn check_checkpointed_history_can_expire<F: CheckpointFixture>(
         fixture: &F,
         allow_data_loss: bool,
     ) -> Result<()> {
@@ -81,30 +81,29 @@ mod defs {
         ));
         match service.commit_intention(command(&bus_id, "d")).await {
             Ok(outcome) => assert!(outcome.approved),
-            Err(CommitError::BusDataLoss(_)) if allow_data_loss => {}
+            Err(CommitError::BusDataLoss(_))
+                if allow_data_loss || !fixture.is_checkpoint_durable() => {}
             Err(error) => return Err(error.into()),
         }
         Ok(())
     }
 
     #[scenario(sim_only, ttl_ms = 2592000000, sticky = 1.0)]
-    pub async fn run_test_checkpointed_history_can_expire<F: CommitServiceTestFixture>(
+    pub async fn run_test_checkpointed_history_can_expire<F: CheckpointFixture>(
         fixture: &F,
     ) -> Result<()> {
         check_checkpointed_history_can_expire(fixture, false).await
     }
 
     #[scenario(sim_only, ttl_ms = 2592000000, sticky = 0.0)]
-    pub async fn run_test_checkpointed_history_can_expire_with_misrouting<
-        F: CommitServiceTestFixture,
-    >(
+    pub async fn run_test_checkpointed_history_can_expire_with_misrouting<F: CheckpointFixture>(
         fixture: &F,
     ) -> Result<()> {
         check_checkpointed_history_can_expire(fixture, true).await
     }
 
     #[scenario(sim_only, ttl_ms = 1000, sticky = 1.0)]
-    pub async fn run_test_fresh_server_after_checkpointed_expiry<F: CommitServiceTestFixture>(
+    pub async fn run_test_fresh_server_after_checkpointed_expiry<F: CheckpointFixture>(
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
@@ -149,12 +148,14 @@ mod defs {
                 .await,
             Err(AgentBusError::PositionNotFound(_))
         ));
-        assert!(
-            fresh
-                .commit_intention(command(&bus_id, "after expiry"))
-                .await?
-                .approved
-        );
+        match fresh
+            .commit_intention(command(&bus_id, "after expiry"))
+            .await
+        {
+            Ok(outcome) => assert!(outcome.approved),
+            Err(CommitError::BusDataLoss(_)) if !fixture.is_checkpoint_durable() => return Ok(()),
+            Err(error) => return Err(error.into()),
+        }
         assert!(
             fresh
                 .agent_bus()
@@ -171,7 +172,7 @@ mod defs {
     }
 
     #[scenario(sim_only, ttl_ms = 1000, sticky = 1.0)]
-    pub async fn run_test_replay_detects_expired_history<F: CommitServiceTestFixture>(
+    pub async fn run_test_replay_detects_expired_history<F: CheckpointFixture>(
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
@@ -219,7 +220,13 @@ mod defs {
                 })
                 .await?
                 .tail_position,
-            4,
+            // Without a durable checkpoint, loading detects the loss before
+            // the intention is appended.
+            if fixture.is_checkpoint_durable() {
+                4
+            } else {
+                3
+            },
             "data loss must not append a fallback abort"
         );
         Ok(())
@@ -234,7 +241,7 @@ mod defs {
     #[scenario(sim_only, ttl_ms = 1000, sticky = 1.0)]
     pub async fn run_test_detects_lost_bus_tail<F>(fixture: &F) -> Result<()>
     where
-        F: DeciderPolicyFixture<Env = Simulator>,
+        F: CheckpointFixture + DeciderPolicyFixture<Env = Simulator>,
     {
         let env = fixture.get_env();
         let bus_id = format!("ttl-policy-{}", env.with_rng(|rng| rng.random::<u64>()));
@@ -281,12 +288,9 @@ mod defs {
             })
             .await?
             .tail_position;
-        assert!(matches!(
-            fresh
-                .commit_intention(command(&bus_id, "after expiry"))
-                .await,
-            Err(CommitError::BusDataLoss(_))
-        ));
+        let result = fresh
+            .commit_intention(command(&bus_id, "after expiry"))
+            .await;
         let tail_after = fresh
             .agent_bus()
             .check_tail(CheckTailRequest {
@@ -296,10 +300,21 @@ mod defs {
             })
             .await?
             .tail_position;
-        assert!(
-            tail_after == tail + 2 || tail_after == tail_before_expiry + 2,
-            "data loss must leave only the new policy and intention appended"
-        );
+        let durable = fixture.is_checkpoint_durable();
+        match result {
+            Err(CommitError::BusDataLoss(_)) if durable => assert!(
+                tail_after == tail + 2 || tail_after == tail_before_expiry + 2,
+                "data loss must leave only the new policy and intention appended"
+            ),
+            Err(CommitError::BusDataLoss(_)) => assert_eq!(
+                tail_after, tail,
+                "without a durable checkpoint, loading detects the loss before appending"
+            ),
+            // Without a durable checkpoint, a bus whose entries have all
+            // expired and been reclaimed looks new.
+            Ok(_) if !durable && tail == 0 => {}
+            other => anyhow::bail!("expected BusDataLoss, got {other:?}"),
+        }
         Ok(())
     }
 }

@@ -14,6 +14,7 @@ use conformance::TestConfig;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_core::ChanneledCommitService;
 
+use crate::fixtures::CheckpointFixture;
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::DeciderPolicyFixture;
 use crate::fixtures::SimulatorFixture;
@@ -86,6 +87,22 @@ where
             env,
             _inner: inner,
         }
+    }
+}
+
+impl<CF> CheckpointFixture for ChanneledCommitServiceFixture<CF>
+where
+    CF: CheckpointFixture<Env = Simulator>,
+    <CF::Impl as CommitSvc>::Bus: Clone,
+{
+    async fn checkpoint_position(&self, _service: &Self::Impl, bus_id: &str) -> Result<i64> {
+        self._inner
+            .checkpoint_position(&self._inner.create_impl(), bus_id)
+            .await
+    }
+
+    fn is_checkpoint_durable(&self) -> bool {
+        self._inner.is_checkpoint_durable()
     }
 }
 
