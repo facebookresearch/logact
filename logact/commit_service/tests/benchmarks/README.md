@@ -133,6 +133,15 @@ benchmark's logger therefore reads the call's end time from the simulator clock
 and takes its duration from the latency sample just recorded, giving exact
 `start_us` and `end_us` in simulator monotonic microseconds.
 
+After the observable metrics, the benchmark reports backing I/O done by
+`commit_intention` calls alone, per commit. A backing call (engine storage,
+policy register, or write-once space) counts as synchronous commit I/O if it
+starts inside a commit on the same bus. An engine-storage call outside commits
+counts as asynchronous commit I/O: it is a background checkpoint save, since
+nothing else uses engine storage. Everything else is excluded: the GatedCounter
+adapter's replay after each commit, gate writes, the final verification, and
+write-once cache hits.
+
 `--rows PATH` writes every structured row as JSON, in call-completion order,
 with the run name, scope, `api_call_name`, `start_us`, `end_us`, `latency_ms`,
 error fields, and the decorator's additional fields.

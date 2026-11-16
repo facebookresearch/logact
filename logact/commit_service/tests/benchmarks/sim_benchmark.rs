@@ -5,7 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! `sim_benchmark [seed] [--workload KIND] [--rows PATH] [--trace PATH] [--sticky] [--no-cache] [--buffered]` runs synchronous workloads.
+//! `sim_benchmark [seed] [--workload KIND] [--service v1|shared] [--rows PATH] [--trace PATH] [--sticky] [--no-cache] [--buffered]` runs synchronous workloads.
+//! `--service shared` runs `ReplayCommitService` with shared checkpoints in the shared engine storage instead of V1.
 //! Latencies include commit-service processing and the GatedCounter adapter's
 //! replay, but exclude the linearizability check and its final snapshot read.
 //! Each service instance has its own AgentBus client, bounded write-once cache,
@@ -18,6 +19,7 @@
 
 use std::cell::Cell;
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::env;
@@ -86,6 +88,8 @@ use logact_commit_service_engine_tests::fixtures::fault_injecting::StorageFaultC
 use logact_commit_service_observable::ObservableCommitSvc;
 use logact_commit_service_policy_register::PolicyRegister;
 use logact_commit_service_policy_register::StoragePolicyRegister;
+use logact_commit_service_replay::ReplayCommitService;
+use logact_commit_service_replay::StorageCheckpoints;
 use logact_commit_service_tests::fixtures::SettableDeciderPolicy;
 use logact_commit_service_tests::fixtures::random_routing::RandomRoutingCommitService;
 use logact_commit_service_v1::CommitServiceV1;
@@ -181,6 +185,25 @@ impl WorkloadKind {
     }
 }
 
+/// The commit-service implementation each replica runs.
+#[derive(Clone, Copy, Default)]
+enum ServiceKind {
+    #[default]
+    V1,
+    /// `ReplayCommitService` with one checkpoint record per bus in the shared
+    /// engine storage.
+    Shared,
+}
+
+impl ServiceKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::V1 => "v1",
+            Self::Shared => "shared",
+        }
+    }
+}
+
 #[derive(Clone)]
 struct PerBusPolicy<P> {
     sources: HashMap<String, P>,
@@ -201,6 +224,7 @@ impl<P: PolicyProvider> PolicyProvider for PerBusPolicy<P> {
 struct BenchmarkOptions {
     args: Vec<String>,
     kind: WorkloadKind,
+    service: ServiceKind,
     rows_path: Option<PathBuf>,
     trace_path: Option<PathBuf>,
     sticky: bool,
@@ -211,6 +235,7 @@ struct BenchmarkOptions {
 fn parse_options(args: &[String]) -> Result<BenchmarkOptions> {
     let mut positional = Vec::new();
     let mut kind = WorkloadKind::default();
+    let mut service = ServiceKind::default();
     let mut rows = None;
     let mut trace = None;
     let mut sticky = false;
@@ -234,6 +259,13 @@ fn parse_options(args: &[String]) -> Result<BenchmarkOptions> {
                     ),
                 };
             }
+            "--service" => {
+                service = match args.next().map(String::as_str) {
+                    Some("v1") => ServiceKind::V1,
+                    Some("shared") => ServiceKind::Shared,
+                    _ => anyhow::bail!("--service requires v1 or shared"),
+                };
+            }
             "--rows" => {
                 rows =
                     Some(PathBuf::from(args.next().ok_or_else(|| {
@@ -255,6 +287,7 @@ fn parse_options(args: &[String]) -> Result<BenchmarkOptions> {
     Ok(BenchmarkOptions {
         args: positional,
         kind,
+        service,
         rows_path: rows,
         trace_path: trace,
         sticky,
@@ -264,18 +297,22 @@ fn parse_options(args: &[String]) -> Result<BenchmarkOptions> {
 }
 
 #[derive(Clone)]
-enum BenchmarkService<S> {
+enum BenchmarkService<S, R> {
     Direct(S),
     Buffered(BufferingCommitService<S>),
+    Replay(R),
+    BufferedReplay(BufferingCommitService<R>),
 }
 
-impl<S: CommitSvc> CommitSvc for BenchmarkService<S> {
+impl<S: CommitSvc, R: CommitSvc<Bus = S::Bus>> CommitSvc for BenchmarkService<S, R> {
     type Bus = S::Bus;
 
     fn agent_bus(&self) -> &Self::Bus {
         match self {
             Self::Direct(service) => service.agent_bus(),
             Self::Buffered(service) => service.agent_bus(),
+            Self::Replay(service) => service.agent_bus(),
+            Self::BufferedReplay(service) => service.agent_bus(),
         }
     }
 
@@ -283,6 +320,8 @@ impl<S: CommitSvc> CommitSvc for BenchmarkService<S> {
         match self {
             Self::Direct(service) => service.create_bus(request).await,
             Self::Buffered(service) => service.create_bus(request).await,
+            Self::Replay(service) => service.create_bus(request).await,
+            Self::BufferedReplay(service) => service.create_bus(request).await,
         }
     }
 
@@ -293,6 +332,8 @@ impl<S: CommitSvc> CommitSvc for BenchmarkService<S> {
         match self {
             Self::Direct(service) => service.commit_intention(request).await,
             Self::Buffered(service) => service.commit_intention(request).await,
+            Self::Replay(service) => service.commit_intention(request).await,
+            Self::BufferedReplay(service) => service.commit_intention(request).await,
         }
     }
 }
@@ -364,6 +405,44 @@ impl AgentbusLogger for ScopedLogger {
 fn now_us(environment: &Simulator) -> u64 {
     let now = environment.with_clock(|clock| clock.monotonic_time());
     (now - MonotonicInstant::from_duration_since_clock_origin(Duration::ZERO)).as_micros() as u64
+}
+
+fn string_field<'a>(timed: &'a TimedRow, name: &str) -> Option<&'a str> {
+    timed
+        .row
+        .additional_fields
+        .iter()
+        .find_map(|(field, value)| match value {
+            LogFieldValue::String(value) if field == name => Some(value.as_str()),
+            _ => None,
+        })
+}
+
+fn i64_field(timed: &TimedRow, name: &str) -> Option<i64> {
+    timed
+        .row
+        .additional_fields
+        .iter()
+        .find_map(|(field, value)| match value {
+            LogFieldValue::I64(value) if field == name => Some(*value),
+            _ => None,
+        })
+}
+
+/// The benchmark bus a resource belongs to: a bus ID, its write-once space, a
+/// checkpoint key (V1 engine state), or its policy-register key.
+fn bus_key(resource_id: &str) -> Option<String> {
+    let resource_id = resource_id
+        .strip_prefix("bus/")
+        .or_else(|| resource_id.strip_prefix("engine:state:"))
+        .unwrap_or(resource_id);
+    if let Some(suffix) = resource_id.strip_prefix("gated-counter-benchmark") {
+        Some(suffix.to_string())
+    } else {
+        resource_id
+            .strip_prefix("benchmark-policy")
+            .map(str::to_string)
+    }
 }
 
 fn row_json(run: &str, timed: &TimedRow) -> Value {
@@ -458,6 +537,68 @@ impl Sinks {
                     );
                 }
             }
+        }
+    }
+
+    /// Backing I/O done by `commit_intention` calls alone, per commit. A call is
+    /// synchronous commit I/O if it starts inside a commit on the same bus. An
+    /// engine-storage call outside commits is the commit service's background
+    /// checkpoint save, since nothing else uses engine storage. The adapter's
+    /// replay, gate writes, final verification, and cache hits are excluded.
+    fn report_commit_io(&self, run: &str) {
+        let rows = self.timeline.rows.borrow();
+        let mut commits: HashMap<String, Vec<(u64, u64)>> = HashMap::new();
+        for timed in rows.iter() {
+            if timed.scope.starts_with("service_")
+                && timed.row.api_call_name == "commit_intention"
+                && let Some(bus) = string_field(timed, "resource_id").and_then(bus_key)
+            {
+                commits
+                    .entry(bus)
+                    .or_default()
+                    .push((timed.start_us, timed.end_us));
+            }
+        }
+        let commit_count: usize = commits.values().map(Vec::len).sum();
+        if commit_count == 0 {
+            return;
+        }
+        let mut counts: BTreeMap<(String, String), (usize, usize)> = BTreeMap::new();
+        for timed in rows.iter() {
+            let scope = &*timed.scope;
+            if !matches!(scope, "write_once" | "engine_storage" | "policy_register") {
+                continue;
+            }
+            if i64_field(timed, "hit") == Some(1) {
+                continue;
+            }
+            let Some(bus) = string_field(timed, "resource_id").and_then(bus_key) else {
+                continue;
+            };
+            let inside = commits.get(&bus).is_some_and(|spans| {
+                spans
+                    .iter()
+                    .any(|(start, end)| (*start..*end).contains(&timed.start_us))
+            });
+            let count = counts
+                .entry((scope.to_string(), timed.row.api_call_name.clone()))
+                .or_default();
+            if inside {
+                count.0 += 1;
+            } else if scope == "engine_storage" {
+                count.1 += 1;
+            }
+        }
+        for ((scope, operation), (sync, background)) in counts {
+            if sync + background == 0 {
+                continue;
+            }
+            let per_commit = |calls: usize| calls as f64 / commit_count as f64;
+            println!(
+                "{run:<12} {scope:<16} {operation:<16} {sync:>6} {:>8.2} {background:>6} {:>8.2}",
+                per_commit(sync),
+                per_commit(background),
+            );
         }
     }
 
@@ -696,6 +837,7 @@ struct BenchmarkRun {
     space_fixture: Rc<ObservableSpaceFixture>,
     workload: Vec<Client<GatedCounterOperation>>,
     kind: WorkloadKind,
+    service: ServiceKind,
     sticky: bool,
     buffered: bool,
     measurements: Rc<RefCell<Measurements>>,
@@ -721,6 +863,7 @@ impl BenchmarkRun {
         let service_environment = environment.clone();
         let service_sinks = self.sinks.clone();
         let buffered = self.buffered;
+        let service_kind = self.service;
         let cache_enabled = self.space_fixture.cache_enabled;
         let make_service = move |instance| {
             let bus = WriteOnceAgentBusGenericFixture::new(service_space.clone()).create_impl();
@@ -733,20 +876,38 @@ impl BenchmarkRun {
                     max_value_bytes: CACHE_MAX_VALUE_BYTES,
                 },
             ));
-            let service = CommitServiceV1::new(service_sinks.bus("service_bus", bus), |bus| {
-                BaseEngine::new(
-                    bus,
-                    cached_engine_storage,
-                    DelegatingVoterFactory::default(),
-                    provider(),
-                    DeciderFactoryImpl::new(engine_storage.clone()),
-                    service_environment.clone(),
-                )
-            });
-            let service = if buffered {
-                BenchmarkService::Buffered(BufferingCommitService::new(service))
-            } else {
-                BenchmarkService::Direct(service)
+            let bus = service_sinks.bus("service_bus", bus);
+            let service = match service_kind {
+                ServiceKind::V1 => {
+                    let service = CommitServiceV1::new(bus, |bus| {
+                        BaseEngine::new(
+                            bus,
+                            cached_engine_storage,
+                            DelegatingVoterFactory::default(),
+                            provider(),
+                            DeciderFactoryImpl::new(engine_storage.clone()),
+                            service_environment.clone(),
+                        )
+                    });
+                    if buffered {
+                        BenchmarkService::Buffered(BufferingCommitService::new(service))
+                    } else {
+                        BenchmarkService::Direct(service)
+                    }
+                }
+                ServiceKind::Shared => {
+                    let service = ReplayCommitService::new(
+                        bus,
+                        DelegatingVoterFactory::default(),
+                        provider(),
+                        StorageCheckpoints::new(cached_engine_storage),
+                    );
+                    if buffered {
+                        BenchmarkService::BufferedReplay(BufferingCommitService::new(service))
+                    } else {
+                        BenchmarkService::Replay(service)
+                    }
+                }
             };
             let Observability {
                 metrics,
@@ -848,6 +1009,7 @@ impl BenchmarkRun {
 struct RunConfig {
     seed: u64,
     kind: WorkloadKind,
+    service: ServiceKind,
     sticky: bool,
     cache_enabled: bool,
     buffered: bool,
@@ -860,6 +1022,7 @@ fn run_one(
     let RunConfig {
         seed,
         kind,
+        service,
         sticky,
         cache_enabled,
         buffered,
@@ -914,6 +1077,7 @@ fn run_one(
             ));
         }
         let run = BenchmarkRun {
+            service,
             space_fixture,
             workload,
             kind,
@@ -985,6 +1149,7 @@ fn run(args: &[String]) -> Result<()> {
     let BenchmarkOptions {
         args,
         kind,
+        service,
         rows_path,
         trace_path,
         sticky,
@@ -993,7 +1158,7 @@ fn run(args: &[String]) -> Result<()> {
     } = parse_options(args)?;
     anyhow::ensure!(
         args.len() <= 1,
-        "usage: sim_benchmark [seed] [--workload shared-bus|independent-buses|independent-buses-concurrent] [--rows PATH] [--trace PATH] [--sticky] [--no-cache] [--buffered]"
+        "usage: sim_benchmark [seed] [--workload shared-bus|independent-buses|independent-buses-concurrent] [--service v1|shared] [--rows PATH] [--trace PATH] [--sticky] [--no-cache] [--buffered]"
     );
     let seed = args
         .first()
@@ -1037,6 +1202,10 @@ fn run(args: &[String]) -> Result<()> {
     );
     println!(
         "Engine checkpoint cache enabled={cache_enabled}; private per service instance; TTL={ENGINE_CACHE_TTL_SECONDS} s; limits={CACHE_MAX_ENTRIES} entries / {CACHE_MAX_VALUE_BYTES} value bytes; acknowledged writes populate the cache."
+    );
+    println!(
+        "Service={}; every service instance runs it.",
+        service.name()
     );
     println!(
         "Buffered={buffered}; commit queues are private per service instance and keyed by bus. Service commit latencies include queue waits."
@@ -1096,6 +1265,7 @@ fn run(args: &[String]) -> Result<()> {
             RunConfig {
                 seed,
                 kind,
+                service,
                 sticky,
                 cache_enabled,
                 buffered,
@@ -1126,6 +1296,18 @@ fn run(args: &[String]) -> Result<()> {
         sinks.report(name);
     }
 
+    println!();
+    println!(
+        "Backing I/O by commit_intention calls only (excludes the adapter's replay, gate writes, final verification, and cache hits):"
+    );
+    println!(
+        "{:<12} {:<16} {:<16} {:>6} {:>8} {:>6} {:>8}",
+        "Workload", "Scope", "Operation", "Sync", "/commit", "Async", "/commit"
+    );
+    for (name, sinks) in &observed {
+        sinks.report_commit_io(name);
+    }
+
     let metadata = json!({
         "seed": seed, "workload": kind.name(), "service_instances": SERVICE_INSTANCES, "bus_ids": kind.bus_ids(),
         "operation_latency_ms": OPERATION_LATENCY_MS, "counter_clients": counter_clients,
@@ -1139,6 +1321,7 @@ fn run(args: &[String]) -> Result<()> {
         "engine_storage_cache": {"enabled": cache_enabled, "scope": "private per service instance; shared only by that service's clones", "eviction": "LRU", "ttl_seconds": ENGINE_CACHE_TTL_SECONDS, "max_entries": CACHE_MAX_ENTRIES, "max_value_bytes": CACHE_MAX_VALUE_BYTES, "population": "acknowledged writes only", "backing_get_delay": "cache misses only"},
         "routing": kind.routing(sticky),
         "buffered": buffered,
+        "service": service.name(),
         "timing": "end = simulator clock when the observable wrapper logs its row; start = end - its latency_us sample",
     });
     if let Some(path) = rows_path {
