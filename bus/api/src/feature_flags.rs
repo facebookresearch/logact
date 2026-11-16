@@ -12,12 +12,17 @@
 pub struct FeatureFlags {
     /// Serialize commit intentions per bus.
     pub enable_commit_buffering: bool,
+    /// Disable direct appends to CommitSvc's AgentBus except agent input,
+    /// action output, agent output, and mail. Intentions, votes, decisions,
+    /// and policy updates are not allowed.
+    pub disable_direct_agentbus_appends: bool,
 }
 
 impl Default for FeatureFlags {
     fn default() -> Self {
         Self {
             enable_commit_buffering: true,
+            disable_direct_agentbus_appends: false,
         }
     }
 }
