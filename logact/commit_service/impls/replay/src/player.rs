@@ -22,7 +22,8 @@ pub struct LogPlayer<'a, T> {
     bus: &'a T,
     bus_id: &'a str,
     next: i64,
-    /// The tail last observed with `check_tail`.
+    /// One past the last position known to exist: the tail last observed with
+    /// `check_tail`, or a later append the caller reported.
     tail: i64,
 }
 
@@ -36,12 +37,17 @@ impl<'a, T: AgentBus> LogPlayer<'a, T> {
         }
     }
 
+    /// Record that `position` exists, so reads up to it skip `check_tail`.
+    pub(crate) fn saw_append(&mut self, position: i64) {
+        self.tail = self.tail.max(position + 1);
+    }
+
     /// The next batch of entries, or an empty batch once the player is at the
     /// tail.
     pub async fn next_batch(&mut self) -> CommitResult<Vec<BusEntry>> {
         loop {
             if self.next >= self.tail {
-                self.tail = self
+                let tail = self
                     .bus
                     .check_tail(CheckTailRequest {
                         bus_id: Some(BusId {
@@ -51,6 +57,7 @@ impl<'a, T: AgentBus> LogPlayer<'a, T> {
                     .await
                     .map_err(CommitError::from_bus_error)?
                     .tail_position;
+                self.tail = self.tail.max(tail);
                 if self.next >= self.tail {
                     return Ok(Vec::new());
                 }

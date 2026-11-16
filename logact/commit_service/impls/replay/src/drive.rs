@@ -6,6 +6,7 @@
  */
 
 use agent_bus_proto_rust::agent_bus::BusEntry;
+use agent_bus_proto_rust::agent_bus::Payload;
 use agentbus_api::AgentBus;
 use anyhow::Context;
 use logact_commit_service_api::CommitError;
@@ -57,10 +58,11 @@ impl<'a, T: AgentBus, F: VoterFactory> Drive<'a, T, F> {
         &mut self,
         proposed_position: i64,
     ) -> CommitResult<(CommitIntentionOutcome, i64)> {
+        self.player.saw_append(proposed_position);
         loop {
             let batch = self.player.next_batch().await?;
             if batch.is_empty() {
-                append(self.bus, self.bus_id, forced_abort(proposed_position)).await?;
+                self.append(forced_abort(proposed_position)).await?;
                 continue;
             }
             for entry in &batch {
@@ -90,7 +92,7 @@ impl<'a, T: AgentBus, F: VoterFactory> Drive<'a, T, F> {
                 .materialize(entry, &|config| self.voter_factory.validate_config(config))
                 .map_err(apply_error)?;
             if let Some(decision) = step.decision {
-                append(self.bus, self.bus_id, decision).await?;
+                self.append(decision).await?;
             }
             for (voter_id, config) in step.voters {
                 let voter = self
@@ -103,11 +105,17 @@ impl<'a, T: AgentBus, F: VoterFactory> Drive<'a, T, F> {
                     .await
                     .map_err(apply_error)?
                 {
-                    append(self.bus, self.bus_id, vote).await?;
+                    self.append(vote).await?;
                 }
             }
         }
         Ok(position)
+    }
+
+    async fn append(&mut self, payload: Payload) -> CommitResult<()> {
+        let position = append(self.bus, self.bus_id, payload).await?;
+        self.player.saw_append(position);
+        Ok(())
     }
 }
 
