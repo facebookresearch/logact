@@ -122,7 +122,9 @@ mod defs {
                 "checkpoints-{}",
                 environment.with_rng(|rng| rng.random::<u64>())
             );
-            servers[0].commit_intention(intention(&bus_id)).await?;
+            for server in &servers {
+                server.commit_intention(intention(&bus_id)).await?;
+            }
             for _ in 0..20 {
                 let (server, step, cutoff) = environment.with_rng(|rng| {
                     (

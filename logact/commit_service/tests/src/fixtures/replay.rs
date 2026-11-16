@@ -32,6 +32,7 @@ use crate::fixtures::DeciderPolicyFixture;
 use crate::fixtures::SimulatorFixture;
 use crate::fixtures::TestPolicyProvider;
 use crate::simulator::Simulator;
+pub use crate::stores::LocalCheckpoints;
 use crate::stores::NoStoreCheckpoints;
 
 type PolicyProvider = SynchronousRegisterProvider<InMemoryStorage>;
@@ -69,6 +70,21 @@ impl<B: AgentBus + Clone + 'static> TestCheckpoints<B> for NoStore {
             bus.clone(),
             Rc::new(move |config| voter_factory.validate_config(config)),
         )
+    }
+}
+
+/// Each server gets its own empty store.
+impl<B> TestCheckpoints<B> for LocalCheckpoints {
+    type Store = LocalCheckpoints;
+
+    const DURABLE: bool = false;
+
+    fn new() -> Self {
+        LocalCheckpoints::default()
+    }
+
+    fn for_server(&self, _bus: &B, _voter_factory: &VoterFactory) -> LocalCheckpoints {
+        LocalCheckpoints::default()
     }
 }
 

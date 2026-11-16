@@ -8,7 +8,9 @@
 //! Replay checkpoint stores that only tests use. Production uses the replay
 //! crate's `StorageCheckpoints`.
 
+mod local;
 mod nostore;
 
+pub use local::LocalCheckpoints;
 pub use nostore::NoStoreCheckpoints;
 pub use nostore::VoterConfigValidator;

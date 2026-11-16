@@ -210,23 +210,19 @@ mod defs {
                 .await,
             Err(CommitError::BusDataLoss(_))
         ));
-        assert_eq!(
-            service
-                .agent_bus()
-                .check_tail(CheckTailRequest {
-                    bus_id: Some(BusId {
-                        agent_bus_id: bus_id
-                    }),
-                })
-                .await?
-                .tail_position,
-            // Without a durable checkpoint, loading detects the loss before
-            // the intention is appended.
-            if fixture.is_checkpoint_durable() {
-                4
-            } else {
-                3
-            },
+        let tail = service
+            .agent_bus()
+            .check_tail(CheckTailRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id,
+                }),
+            })
+            .await?
+            .tail_position;
+        // Without a durable checkpoint, the loss may be detected before the
+        // intention is appended.
+        assert!(
+            tail == 4 || (!fixture.is_checkpoint_durable() && tail == 3),
             "data loss must not append a fallback abort"
         );
         Ok(())
@@ -302,13 +298,13 @@ mod defs {
             .tail_position;
         let durable = fixture.is_checkpoint_durable();
         match result {
-            Err(CommitError::BusDataLoss(_)) if durable => assert!(
-                tail_after == tail + 2 || tail_after == tail_before_expiry + 2,
-                "data loss must leave only the new policy and intention appended"
-            ),
-            Err(CommitError::BusDataLoss(_)) => assert_eq!(
-                tail_after, tail,
-                "without a durable checkpoint, loading detects the loss before appending"
+            // Without a durable checkpoint, the loss may be detected before
+            // anything is appended.
+            Err(CommitError::BusDataLoss(_)) => assert!(
+                tail_after == tail + 2
+                    || tail_after == tail_before_expiry + 2
+                    || (!durable && tail_after == tail),
+                "data loss must leave at most the new policy and intention appended"
             ),
             // Without a durable checkpoint, a bus whose entries have all
             // expired and been reclaimed looks new.

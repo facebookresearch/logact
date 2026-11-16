@@ -92,6 +92,10 @@ macro_rules! commit_service_fixtures {
             $crate::cs_replay_bus_bridge,
             ($crate::fixtures::replay::NoStore, nostorage, $cb $(, $ctx)?)
         );
+        agentbus_tests::agentbus_fixtures!(
+            $crate::cs_replay_bus_bridge,
+            ($crate::fixtures::replay::LocalCheckpoints, independent, $cb $(, $ctx)?)
+        );
     };
 }
 
