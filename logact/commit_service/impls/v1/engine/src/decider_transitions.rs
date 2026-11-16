@@ -27,18 +27,24 @@ pub fn off_by_default(position: i64, payload: &payload::Payload) -> Option<Paylo
         .then(|| decision_payload(position, false, "OFF_BY_DEFAULT policy".into()))
 }
 
-/// `FIRST_BOOLEAN_WINS`: the latest intention becomes `pending`, superseding any
-/// undecided one, and the first boolean vote for it decides it.
+/// `FIRST_BOOLEAN_WINS`: the latest intention becomes `pending`, and the first
+/// boolean vote for it decides it. An undecided intention it supersedes is
+/// aborted.
 pub fn first_boolean_wins(
     pending: &mut Option<i64>,
     position: i64,
     payload: &payload::Payload,
 ) -> Option<Payload> {
     match payload {
-        payload::Payload::Intention(_) => {
-            *pending = Some(position);
-            None
-        }
+        // Moving on from an undecided intention decides it, so every intention
+        // gets a decision: the superseded intention is aborted.
+        payload::Payload::Intention(_) => pending.replace(position).map(|superseded| {
+            decision_payload(
+                superseded,
+                false,
+                format!("superseded by intention at {position}"),
+            )
+        }),
         payload::Payload::Vote(vote) if *pending == Some(vote.intention_id) => {
             let approved = vote_approved(vote)?;
             *pending = None;

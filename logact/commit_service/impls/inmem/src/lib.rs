@@ -301,10 +301,16 @@ impl ReplayState {
                             "denied: OFF_BY_DEFAULT policy; in-memory service does not run voters"
                                 .to_string(),
                         )),
+                        // Moving on from an undecided intention aborts it, so
+                        // every intention gets a decision.
                         DeciderPolicy::FirstBooleanWins => {
-                            // If supersession adopts explicit aborts, emit one for the previous intention here.
-                            self.pending = Some(position);
-                            None
+                            self.pending.replace(position).map(|superseded| {
+                                decision_payload(
+                                    superseded,
+                                    false,
+                                    format!("superseded by intention at {position}"),
+                                )
+                            })
                         }
                     }
                 }

@@ -153,16 +153,22 @@ mod defs {
             Some(1),
         )
         .await;
-        // If supersession adopts explicit aborts, require a durable Abort here instead.
-        anyhow::ensure!(
-            entries.iter().all(|entry| {
-                match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
-                    Some(payload::Payload::Commit(commit)) => commit.intention_id != earlier,
-                    Some(payload::Payload::Abort(abort)) => abort.intention_id != earlier,
-                    _ => true,
+        // Superseding an undecided intention aborts it, so a late approving vote
+        // can't commit it.
+        let first_decision = entries.iter().find_map(|entry| {
+            match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
+                Some(payload::Payload::Commit(commit)) if commit.intention_id == earlier => {
+                    Some(true)
                 }
-            }),
-            "a superseded unvoted intention must stay undecided, even after a late approving vote"
+                Some(payload::Payload::Abort(abort)) if abort.intention_id == earlier => {
+                    Some(false)
+                }
+                _ => None,
+            }
+        });
+        anyhow::ensure!(
+            first_decision == Some(false),
+            "a superseded unvoted intention must be aborted, even after a late approving vote"
         );
         Ok(())
     }

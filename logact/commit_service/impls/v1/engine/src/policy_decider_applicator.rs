@@ -476,18 +476,30 @@ mod tests {
 
     #[test]
     fn newer_intention_supersedes_an_undecided_one() {
-        // Weak contract + single-slot optimization: only the most recent
-        // undecided FIRST_BOOLEAN_WINS intention is tracked. A second intention
-        // abandons the first (simply never decided, which the contract permits);
+        // Only the most recent undecided FIRST_BOOLEAN_WINS intention is
+        // tracked. A second intention supersedes the first, which is aborted;
         // the second still decides normally on its first vote.
         let (_, d) = decider(DeciderPolicy::FirstBooleanWins);
-        block_on(d.apply("bus", &entry(0, intention_payload("first")), &mut ())).unwrap();
-        block_on(d.apply("bus", &entry(1, intention_payload("second")), &mut ())).unwrap();
+        let first =
+            block_on(d.apply("bus", &entry(0, intention_payload("first")), &mut ())).unwrap();
+        assert!(first.is_none(), "the first intention waits for a vote");
+        let superseded =
+            block_on(d.apply("bus", &entry(1, intention_payload("second")), &mut ())).unwrap();
+        assert!(
+            matches!(
+                superseded.as_ref().and_then(|payload| payload.payload.as_ref()),
+                Some(payload::Payload::Abort(abort)) if abort.intention_id == 0
+            ),
+            "the superseded intention is aborted"
+        );
+        let replayed =
+            block_on(d.apply("bus", &entry(1, intention_payload("second")), &mut ())).unwrap();
+        assert_eq!(replayed, superseded, "re-delivery replays the same abort");
         let first_vote =
             block_on(d.apply("bus", &entry(2, vote_payload(0, true)), &mut ())).unwrap();
         assert!(
             first_vote.is_none(),
-            "a superseded intention is abandoned, not decided"
+            "a vote for a superseded intention decides nothing more"
         );
         let second_vote =
             block_on(d.apply("bus", &entry(3, vote_payload(1, true)), &mut ())).unwrap();
