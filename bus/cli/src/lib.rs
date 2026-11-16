@@ -107,6 +107,10 @@ where
         ParsedBackend::Other(_) => {}
     }
 
+    #[expect(
+        deprecated,
+        reason = "legacy worker-thread path; this caller moves to `build_on` separately"
+    )]
     let bus = factory.build(backend)?;
     run(&bus, agent_bus_id, command).await
 }

@@ -195,6 +195,10 @@ fn run_with_bus(
                 Box::new(|| Ok(Rc::new(NoopMetrics) as Rc<dyn AgentBusMetrics>)),
                 Box::new(|| Ok(Rc::new(NoopLogger) as Rc<dyn AgentbusLogger>)),
             );
+            #[expect(
+                deprecated,
+                reason = "legacy worker-thread path; this caller moves to `build_on` separately"
+            )]
             let bus = factory
                 .build(backend)
                 .expect("Failed to initialize AgentBus backend");

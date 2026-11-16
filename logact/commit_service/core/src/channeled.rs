@@ -59,6 +59,7 @@ impl<B> ChanneledCommitService<B> {
     /// service runs on a dedicated current-thread runtime so `Rc`-based
     /// implementations can be shared with `Send` callers such as a tonic
     /// server.
+    #[deprecated(note = "Use `new_on_environment`, which takes the caller's environment.")]
     pub fn try_new_in_process<S, Factory>(bus: B, factory: Factory) -> io::Result<Self>
     where
         S: CommitSvc + 'static,

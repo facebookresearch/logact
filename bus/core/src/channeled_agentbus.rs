@@ -64,6 +64,11 @@ impl ChanneledAgentBus {
     /// implementation. The underlying bus runs on a dedicated single-threaded
     /// runtime so `Rc`-based implementations can be used directly without
     /// requiring `Send`.
+    #[deprecated(note = "Use `new_on_environment`, which takes the caller's environment.")]
+    #[expect(
+        deprecated,
+        reason = "legacy entrypoint delegates to the feature-flag-aware worker"
+    )]
     pub fn new_in_process<F, T>(factory: F) -> Self
     where
         F: FnOnce() -> T + Send + 'static,
@@ -74,6 +79,7 @@ impl ChanneledAgentBus {
 
     /// Construct the bus on its worker thread using the worker's environment
     /// and the supplied feature flags.
+    #[deprecated(note = "Use `new_on_environment`, which takes the caller's environment.")]
     pub fn new_in_process_with_feature_flags<F, T>(feature_flags: FeatureFlags, factory: F) -> Self
     where
         F: FnOnce(Rc<RealEnvironment>) -> T + Send + 'static,
@@ -313,6 +319,10 @@ mod tests {
         let mut flags = FeatureFlags::default();
         flags.enable_commit_buffering = false;
         let (flags_tx, flags_rx) = oneshot::channel();
+        #[expect(
+            deprecated,
+            reason = "exercises the legacy worker's feature-flag propagation"
+        )]
         let bus = ChanneledAgentBus::new_in_process_with_feature_flags(flags, move |env| {
             flags_tx.send(env.feature_flags()).unwrap();
             InMemoryAgentBus::new(env)

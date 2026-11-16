@@ -88,6 +88,10 @@ async fn create_test_grpc_server() -> Result<(tokio::task::JoinHandle<()>, Socke
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
     let env = RealEnvironment::new();
+    #[expect(
+        deprecated,
+        reason = "legacy worker-thread path; this caller moves to `new_on_environment` separately"
+    )]
     let bus = ChanneledAgentBus::new_in_process(move || {
         use std::rc::Rc;
 

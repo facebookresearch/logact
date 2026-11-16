@@ -31,6 +31,10 @@ struct Args {
 }
 
 #[fbinit::main]
+#[expect(
+    deprecated,
+    reason = "legacy worker-thread path; this caller moves to `build_on` separately"
+)]
 fn main(_fb: FacebookInit) -> Result<()> {
     agentbus_core::server_lib::init_logging();
 

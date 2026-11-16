@@ -79,6 +79,10 @@ fn initialize_policy_register(path: &Path) -> Result<()> {
     Ok(())
 }
 
+#[expect(
+    deprecated,
+    reason = "legacy worker-thread path; this caller moves to `build_on` separately"
+)]
 fn create_sqlite_backed_commit_service_blocking(
     path: PathBuf,
 ) -> Result<ChanneledCommitService<ChanneledAgentBus>> {
