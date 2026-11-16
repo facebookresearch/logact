@@ -9,6 +9,8 @@ use agent_bus_proto_rust::agent_bus::BusEntry;
 use agent_bus_proto_rust::agent_bus::Payload;
 use agent_bus_proto_rust::agent_bus::VoterConfig;
 use agent_bus_proto_rust::agent_bus::payload;
+use logact_commit_service_api::CommitError;
+use logact_commit_service_api::CommitResult;
 use logact_commit_service_engine::ApplyError;
 use logact_commit_service_engine::PerBusEngineState;
 use logact_commit_service_engine::abort_payload;
@@ -71,5 +73,55 @@ impl ReplayState {
             self.decider = DeciderMachine::new(load_decider_spec_from_state(&self.policy)?.config);
         }
         Ok(step)
+    }
+}
+
+impl ReplayState {
+    /// This state as V1's engine state, with the decider's state in
+    /// `replay_decider_state`.
+    pub(crate) fn to_engine_state(&self) -> PerBusEngineState {
+        PerBusEngineState {
+            replay_decider_state: self.decider.to_stored(),
+            ..self.policy.clone()
+        }
+    }
+
+    /// The state an engine-state record holds, written by V1 or by this crate.
+    pub(crate) fn from_engine_state(mut policy: PerBusEngineState) -> CommitResult<Self> {
+        let stored = policy.replay_decider_state.take();
+        let spec = load_decider_spec_from_state(&policy)
+            .map_err(|error| CommitError::Internal(anyhow::Error::new(error)))?;
+        let decider =
+            DeciderMachine::from_stored(spec.config, stored).map_err(CommitError::Internal)?;
+        Ok(Self { policy, decider })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use agent_bus_proto_rust::agent_bus::DeciderPolicy;
+    use prost::Message;
+
+    use super::*;
+
+    #[test]
+    fn decider_state_round_trips_through_v1_engine_state() {
+        let state = ReplayState {
+            policy: PerBusEngineState {
+                decider: Some(logact_commit_service_engine::VersionedDecider {
+                    policy: DeciderPolicy::FirstBooleanWins as i32,
+                    id: 2,
+                }),
+                applied_policy_version: Some(3),
+                ..Default::default()
+            },
+            decider: DeciderMachine::FirstBooleanWins { pending: Some(4) },
+        };
+
+        let record = state.to_engine_state().encode_to_vec();
+        let v1 = PerBusEngineState::decode(record.as_slice()).expect("V1 should decode the record");
+        assert_eq!(v1.applied_policy_version, Some(3));
+        let decoded = ReplayState::from_engine_state(v1).expect("the record should decode");
+        assert_eq!(decoded.decider, state.decider);
     }
 }

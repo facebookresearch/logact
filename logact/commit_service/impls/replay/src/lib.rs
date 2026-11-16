@@ -19,11 +19,13 @@ mod drive;
 mod player;
 mod service;
 mod state;
+mod storage;
 
 pub use checkpoint::Checkpoint;
 pub use checkpoint::CheckpointStore;
 pub use service::ReplayCommitService;
 pub use state::ReplayState;
+pub use storage::StorageCheckpoints;
 
 /// Building blocks for checkpoint stores defined outside this crate.
 pub mod store_support {

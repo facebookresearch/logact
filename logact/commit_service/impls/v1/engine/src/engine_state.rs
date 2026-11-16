@@ -198,6 +198,7 @@ mod tests {
                     voters: [("voter".to_owned(), voter.clone())].into(),
                     decider: decider.map(|(policy, id)| VersionedDecider { policy, id }),
                     applied_policy_version: version,
+                    replay_decider_state: None,
                 },
                 &legacy::PerBusEngineState {
                     voter_configs: vec![any.clone()],

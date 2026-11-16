@@ -11,6 +11,9 @@ use agent_bus_proto_rust::agent_bus::payload;
 use logact_commit_service_engine::decider_transitions::first_boolean_wins;
 use logact_commit_service_engine::decider_transitions::off_by_default;
 use logact_commit_service_engine::decider_transitions::on_by_default;
+use logact_commit_service_policy_proto_rust::logact_commit_service_engine_state::FirstBooleanWinsState;
+use logact_commit_service_policy_proto_rust::logact_commit_service_engine_state::ReplayDeciderState;
+use logact_commit_service_policy_proto_rust::logact_commit_service_engine_state::replay_decider_state;
 
 /// One decider policy with its in-memory state, using V1's transitions.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -30,6 +33,39 @@ impl DeciderMachine {
             DeciderPolicy::OffByDefault => Self::OffByDefault,
             DeciderPolicy::FirstBooleanWins => Self::FirstBooleanWins { pending: None },
         }
+    }
+
+    /// The decider's state as stored, or `None` for a decider without state.
+    pub fn to_stored(&self) -> Option<ReplayDeciderState> {
+        match self {
+            Self::OnByDefault | Self::OffByDefault => None,
+            Self::FirstBooleanWins { pending } => Some(ReplayDeciderState {
+                state: Some(replay_decider_state::State::FirstBooleanWins(
+                    FirstBooleanWinsState { pending: *pending },
+                )),
+            }),
+        }
+    }
+
+    /// The decider `policy` names, with the state `stored` holds, if any.
+    pub fn from_stored(
+        policy: DeciderPolicy,
+        stored: Option<ReplayDeciderState>,
+    ) -> anyhow::Result<Self> {
+        let mut decider = Self::new(policy);
+        match (&mut decider, stored.and_then(|stored| stored.state)) {
+            (_, None) => {}
+            (
+                Self::FirstBooleanWins { pending },
+                Some(replay_decider_state::State::FirstBooleanWins(state)),
+            ) => *pending = state.pending,
+            (decider, Some(state)) => {
+                anyhow::bail!(
+                    "stored decider state {state:?} doesn't match the {decider:?} decider"
+                )
+            }
+        }
+        Ok(decider)
     }
 
     /// Apply the payload at `position`, returning any decision.

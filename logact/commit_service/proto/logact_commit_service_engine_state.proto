@@ -26,6 +26,18 @@ message PerBusEngineState {
   // Latest policy generation applied from a `PolicyBatch`, or unset if no
   // versioned policy has been applied.
   optional int64 applied_policy_version = 4;
+  // Decider state the replay commit service maintains. V1 neither reads nor
+  // updates it, so V1 must not take over a FIRST_BOOLEAN_WINS bus from the
+  // replay commit service.
+  ReplayDeciderState replay_decider_state = 5;
+}
+
+// A stateful decider's state, as the replay commit service stores it, here or
+// in a record of its own.
+message ReplayDeciderState {
+  oneof state {
+    FirstBooleanWinsState first_boolean_wins = 1;
+  }
 }
 
 // The configured decider policy and its state-machine ID.

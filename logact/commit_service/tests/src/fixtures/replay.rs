@@ -23,6 +23,7 @@ use logact_commit_service_engine::VoterFactory as _;
 use logact_commit_service_policy_register::StoragePolicyRegister;
 use logact_commit_service_replay::CheckpointStore;
 use logact_commit_service_replay::ReplayCommitService;
+use logact_commit_service_replay::StorageCheckpoints;
 use logact_commit_service_v1::DelegatingVoterFactory;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 
@@ -85,6 +86,23 @@ impl<B> TestCheckpoints<B> for LocalCheckpoints {
 
     fn for_server(&self, _bus: &B, _voter_factory: &VoterFactory) -> LocalCheckpoints {
         LocalCheckpoints::default()
+    }
+}
+
+/// Each server gets its own in-memory storage.
+pub struct IndependentStorage;
+
+impl<B> TestCheckpoints<B> for IndependentStorage {
+    type Store = StorageCheckpoints<InMemoryStorage>;
+
+    const DURABLE: bool = false;
+
+    fn new() -> Self {
+        IndependentStorage
+    }
+
+    fn for_server(&self, _bus: &B, _voter_factory: &VoterFactory) -> Self::Store {
+        StorageCheckpoints::new(Rc::new(InMemoryStorage::new()))
     }
 }
 
