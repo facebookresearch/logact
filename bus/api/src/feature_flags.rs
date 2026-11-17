@@ -16,6 +16,9 @@ pub struct FeatureFlags {
     /// Run the replay commit service with shared storage checkpoints instead of
     /// V1.
     pub enable_replay_commit_service: bool,
+    /// Save the shared replay service's checkpoints in the background with
+    /// `put_if_newer`, so a commit doesn't wait for its checkpoint save.
+    pub enable_background_replay_checkpoints: bool,
     /// Serialize commit intentions per bus.
     pub enable_commit_buffering: bool,
     /// Disable direct appends to CommitSvc's AgentBus except agent input,
@@ -29,6 +32,7 @@ impl Default for FeatureFlags {
         Self {
             enable_single_env: false,
             enable_replay_commit_service: false,
+            enable_background_replay_checkpoints: false,
             enable_commit_buffering: true,
             disable_direct_agentbus_appends: false,
         }

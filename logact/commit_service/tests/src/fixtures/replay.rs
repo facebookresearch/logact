@@ -21,6 +21,7 @@ use conformance::TestConfig;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::VoterFactory as _;
 use logact_commit_service_policy_register::StoragePolicyRegister;
+use logact_commit_service_replay::BackgroundCheckpoints;
 use logact_commit_service_replay::CheckpointStore;
 use logact_commit_service_replay::ReplayCommitService;
 use logact_commit_service_replay::StorageCheckpoints;
@@ -47,7 +48,8 @@ pub trait TestCheckpoints<B>: 'static {
     /// Whether checkpoints are kept independently of the bus.
     const DURABLE: bool;
 
-    fn new() -> Self;
+    /// For a fixture whose servers run on `environment`.
+    fn new(environment: Rc<Simulator>) -> Self;
 
     /// The store for one more server, with that server's bus and voters.
     fn for_server(&self, bus: &B, voter_factory: &VoterFactory) -> Self::Store;
@@ -61,7 +63,7 @@ impl<B: AgentBus + Clone + 'static> TestCheckpoints<B> for NoStore {
 
     const DURABLE: bool = false;
 
-    fn new() -> Self {
+    fn new(_environment: Rc<Simulator>) -> Self {
         NoStore
     }
 
@@ -80,7 +82,7 @@ impl<B> TestCheckpoints<B> for LocalCheckpoints {
 
     const DURABLE: bool = false;
 
-    fn new() -> Self {
+    fn new(_environment: Rc<Simulator>) -> Self {
         LocalCheckpoints::default()
     }
 
@@ -97,7 +99,7 @@ impl<B> TestCheckpoints<B> for IndependentStorage {
 
     const DURABLE: bool = false;
 
-    fn new() -> Self {
+    fn new(_environment: Rc<Simulator>) -> Self {
         IndependentStorage
     }
 
@@ -114,12 +116,38 @@ impl<B> TestCheckpoints<B> for SharedStorage {
 
     const DURABLE: bool = true;
 
-    fn new() -> Self {
+    fn new(_environment: Rc<Simulator>) -> Self {
         SharedStorage(Rc::new(InMemoryStorage::new()))
     }
 
     fn for_server(&self, _bus: &B, _voter_factory: &VoterFactory) -> Self::Store {
         StorageCheckpoints::new(self.0.clone())
+    }
+}
+
+/// Every server shares one in-memory storage and saves to it in the background.
+pub struct BackgroundSharedStorage {
+    storage: Rc<InMemoryStorage>,
+    environment: Rc<Simulator>,
+}
+
+impl<B> TestCheckpoints<B> for BackgroundSharedStorage {
+    type Store = BackgroundCheckpoints<StorageCheckpoints<InMemoryStorage>, Simulator>;
+
+    const DURABLE: bool = true;
+
+    fn new(environment: Rc<Simulator>) -> Self {
+        Self {
+            storage: Rc::new(InMemoryStorage::new()),
+            environment,
+        }
+    }
+
+    fn for_server(&self, _bus: &B, _voter_factory: &VoterFactory) -> Self::Store {
+        BackgroundCheckpoints::new(
+            StorageCheckpoints::new(self.storage.clone()),
+            self.environment.clone(),
+        )
     }
 }
 
@@ -164,11 +192,13 @@ where
 
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let (policy, policy_controller) = PolicyProvider::for_test();
+        let bus_fixture = BF::try_new_with_config(simulator, config)?;
+        let checkpoints = C::new(bus_fixture.get_env());
         Ok(Self {
-            bus_fixture: BF::try_new_with_config(simulator, config)?,
+            bus_fixture,
             policy,
             policy_controller,
-            checkpoints: C::new(),
+            checkpoints,
         })
     }
 }

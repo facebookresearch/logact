@@ -104,6 +104,10 @@ macro_rules! commit_service_fixtures {
             $crate::cs_replay_bus_bridge,
             ($crate::fixtures::replay::SharedStorage, shared, $cb $(, $ctx)?)
         );
+        agentbus_tests::agentbus_fixtures!(
+            $crate::cs_replay_bus_bridge,
+            ($crate::fixtures::replay::BackgroundSharedStorage, shared_background, $cb $(, $ctx)?)
+        );
         // A random mix of V1 and replay servers over every AgentBus backend.
         agentbus_tests::agentbus_fixtures!($crate::cs_hybrid_bus_bridge, ($cb $(, $ctx)?));
     };

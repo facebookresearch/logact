@@ -13,6 +13,7 @@
 //! its intention, then materializes forward until the intention is decided.
 //! [`store_support`] exposes the pieces other checkpoint stores build on.
 
+mod background;
 mod checkpoint;
 mod decider;
 mod drive;
@@ -21,6 +22,7 @@ mod service;
 mod state;
 mod storage;
 
+pub use background::BackgroundCheckpoints;
 pub use checkpoint::Checkpoint;
 pub use checkpoint::CheckpointStore;
 pub use service::ReplayCommitService;
