@@ -13,6 +13,9 @@ pub struct FeatureFlags {
     /// Build AgentBus on the main environment instead of a dedicated worker.
     pub enable_single_env: bool,
 
+    /// Run the replay commit service with shared storage checkpoints instead of
+    /// V1.
+    pub enable_replay_commit_service: bool,
     /// Serialize commit intentions per bus.
     pub enable_commit_buffering: bool,
     /// Disable direct appends to CommitSvc's AgentBus except agent input,
@@ -25,6 +28,7 @@ impl Default for FeatureFlags {
     fn default() -> Self {
         Self {
             enable_single_env: false,
+            enable_replay_commit_service: false,
             enable_commit_buffering: true,
             disable_direct_agentbus_appends: false,
         }
