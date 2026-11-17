@@ -7,7 +7,10 @@
 
 //! AgentBus CLI - Command-line tool for interacting with AgentBus backends
 
+use std::rc::Rc;
+
 use agentbus_cli_lib::CommonArgs;
+use agentbus_core::RealEnvironment;
 use anyhow::Result;
 use clap::Parser;
 use fbinit::FacebookInit;
@@ -26,5 +29,10 @@ async fn main(_fb: FacebookInit) -> Result<()> {
 
     let args = Args::parse();
 
-    agentbus_cli_lib::run_common(args.common).await
+    tokio::task::LocalSet::new()
+        .run_until(agentbus_cli_lib::run_common(
+            args.common,
+            Rc::new(RealEnvironment::new()),
+        ))
+        .await
 }

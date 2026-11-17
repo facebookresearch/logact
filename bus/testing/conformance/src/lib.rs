@@ -195,6 +195,13 @@ macro_rules! sim_test {
     };
 }
 
+/// Run an integration test on a local executor, so fixtures can build
+/// `Rc`-based backends on their environment.
+#[doc(hidden)]
+pub async fn run_on_local_executor<F: std::future::Future>(test: F) -> F::Output {
+    tokio::task::LocalSet::new().run_until(test).await
+}
+
 /// Emit one integration `#[fbinit::test]` against a real backend.
 #[macro_export]
 macro_rules! integration_test {
@@ -203,8 +210,11 @@ macro_rules! integration_test {
             #[fbinit::test]
             async fn [<$test_name _ $suffix>](fb: fbinit::FacebookInit) -> anyhow::Result<()> {
                 use $crate::IntegrationFixture as _;
-                let fixture = <$fix as $crate::IntegrationFixture>::new_async(fb).await?;
-                $test_fn(&fixture).await
+                $crate::run_on_local_executor(async {
+                    let fixture = <$fix as $crate::IntegrationFixture>::new_async(fb).await?;
+                    $test_fn(&fixture).await
+                })
+                .await
             }
         }
     };

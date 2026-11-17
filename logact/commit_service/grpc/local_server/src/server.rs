@@ -7,10 +7,12 @@
 
 use std::future::Future;
 use std::path::PathBuf;
+use std::rc::Rc;
 
 use agentbus_core::AgentBusHandler;
 use agentbus_core::AgentBusServiceServer;
 use agentbus_core::ChanneledAgentBus;
+use agentbus_core::RealEnvironment;
 use anyhow::Context as _;
 use anyhow::Result;
 use logact_commit_service_api::CommitSvc as _;
@@ -46,8 +48,9 @@ where
         .context("local LogAct gRPC server failed")
 }
 
-/// Run a foreground server until `shutdown` resolves.
+/// Run a foreground server on `environment` until `shutdown` resolves.
 pub async fn run_server<Shutdown>(
+    environment: Rc<RealEnvironment>,
     socket: PathBuf,
     sqlite_path: PathBuf,
     shutdown: Shutdown,
@@ -55,7 +58,7 @@ pub async fn run_server<Shutdown>(
 where
     Shutdown: Future<Output = ()> + Send + 'static,
 {
-    let service = create_sqlite_backed_commit_service(sqlite_path).await?;
+    let service = create_sqlite_backed_commit_service(sqlite_path, environment).await?;
     let (listener, _socket_lock) = bind_socket(&socket).await?;
     let server_result = serve_with_shutdown(listener, service, shutdown).await;
     let cleanup_result = match tokio::fs::remove_file(&socket).await {

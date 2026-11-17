@@ -60,9 +60,12 @@ impl IntegrationFixture for GrpcCommitServiceFixture {
         let server_socket = socket.clone();
         let server_sqlite_path = sqlite_path.clone();
         let server_temp = temp.clone();
-        let mut server = tokio::spawn(async move {
+        let environment = Rc::new(RealEnvironment::new());
+        let server_environment = environment.clone();
+        let mut server = tokio::task::spawn_local(async move {
             let _temp = server_temp;
             logact_local_server_lib::run_server(
+                server_environment,
                 server_socket,
                 server_sqlite_path,
                 std::future::pending(),
@@ -92,7 +95,7 @@ impl IntegrationFixture for GrpcCommitServiceFixture {
                 Rc::new(SqliteStorage::open(sqlite_path)?),
                 "policy",
             ),
-            environment: Rc::new(RealEnvironment::new()),
+            environment,
             server,
             _temp: temp,
         })

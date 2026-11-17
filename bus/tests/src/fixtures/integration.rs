@@ -13,6 +13,7 @@ use agentbus_core::AgentBusHandler;
 use agentbus_core::AgentBusServiceServer;
 use agentbus_core::ChanneledAgentBus;
 use agentbus_core::client::AgentBusClient;
+use agentbus_simple::InMemoryAgentBus;
 use anyhow::Result;
 use conformance::ConformanceFixture;
 use fbinit::FacebookInit;
@@ -55,9 +56,8 @@ impl ConformanceFixture for IntegrationTestFixture {
 
 impl IntegrationTestFixture {
     pub async fn new_async(fb: FacebookInit) -> Result<Self> {
-        let (server_handle, addr) = create_test_grpc_server().await?;
-
         let env = Rc::new(RealEnvironment::new());
+        let (server_handle, addr) = create_test_grpc_server(env.clone()).await?;
 
         // Create the client once
         let client = crate::common::integration_utils::make_client(fb, addr).await?;
@@ -84,21 +84,13 @@ impl IntegrationFixture for IntegrationTestFixture {
     }
 }
 
-async fn create_test_grpc_server() -> Result<(tokio::task::JoinHandle<()>, SocketAddr)> {
+async fn create_test_grpc_server(
+    env: Rc<RealEnvironment>,
+) -> Result<(tokio::task::JoinHandle<()>, SocketAddr)> {
     let listener = TcpListener::bind("127.0.0.1:0").await?;
     let addr = listener.local_addr()?;
-    let env = RealEnvironment::new();
-    #[expect(
-        deprecated,
-        reason = "legacy worker-thread path; this caller moves to `new_on_environment` separately"
-    )]
-    let bus = ChanneledAgentBus::new_in_process(move || {
-        use std::rc::Rc;
-
-        use agentbus_simple::InMemoryAgentBus;
-
-        InMemoryAgentBus::new(Rc::new(env))
-    });
+    let bus = InMemoryAgentBus::new(env.clone());
+    let bus = ChanneledAgentBus::new_on_environment(env, move || bus);
     let handler = AgentBusHandler::new(bus);
 
     let service = AgentBusServiceServer::new(handler);

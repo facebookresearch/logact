@@ -12,6 +12,7 @@
 use std::io::IsTerminal;
 use std::io::stderr;
 use std::net::SocketAddr;
+use std::rc::Rc;
 
 use anyhow::Result;
 use futures::StreamExt;
@@ -29,6 +30,7 @@ use crate::AgentBusHandler;
 use crate::AgentBusMetrics;
 use crate::AgentBusServiceServer;
 use crate::ChanneledAgentBus;
+use crate::RealEnvironment;
 
 /// Parsed backend URL scheme.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -164,20 +166,22 @@ async fn run_grpc_service(handler: AgentBusHandler, host: &str, port: u16) -> Re
 /// Run the AgentBus server with the given channel-backed bus factory.
 ///
 /// This is the main entry point for AgentBus server frontends.
-/// The `make_bus` closure creates the storage backend behind a channel-backed
-/// handle.
+/// The `make_bus` closure creates the storage backend on the server's
+/// environment and local executor.
 pub fn run_server<F, M>(args: &CommonServerArgs, _metrics: M, make_bus: F) -> Result<()>
 where
-    F: FnOnce() -> ChanneledAgentBus + Send + 'static,
+    F: FnOnce(Rc<RealEnvironment>) -> Result<ChanneledAgentBus>,
     M: AgentBusMetrics + Send,
 {
     let port = args.port;
     let host = args.host.clone();
 
-    let handler = AgentBusHandler::new(make_bus());
-
     info!(port = port, host = %host, "Starting AgentBusService gRPC service");
 
     let runtime = tokio::runtime::Runtime::new()?;
-    runtime.block_on(run_grpc_service(handler, &host, port))
+    let local = tokio::task::LocalSet::new();
+    local.block_on(&runtime, async move {
+        let handler = AgentBusHandler::new(make_bus(Rc::new(RealEnvironment::new()))?);
+        run_grpc_service(handler, &host, port).await
+    })
 }

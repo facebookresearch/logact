@@ -8,7 +8,6 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
@@ -42,49 +41,38 @@ use logact_private_fs::ensure_private_parent_directory;
 
 pub(crate) const POLICY_REGISTER_KEY: &str = "policy";
 
-/// Create an in-process AgentBus and CommitService over one SQLite database.
+/// Create AgentBus and CommitService over one SQLite database on `environment`.
 pub(crate) async fn create_sqlite_backed_commit_service(
     path: impl AsRef<Path>,
+    environment: Rc<RealEnvironment>,
 ) -> Result<ChanneledCommitService<ChanneledAgentBus>> {
-    let path = path.as_ref().to_path_buf();
-    ensure_private_parent_directory(&path).await?;
-    tokio::task::spawn_blocking(move || {
-        initialize_policy_register(&path)?;
-        create_sqlite_backed_commit_service_blocking(path)
-    })
-    .await
-    .context("failed to join LogAct database initialization")?
+    let path = path.as_ref();
+    ensure_private_parent_directory(path).await?;
+    initialize_policy_register(path, &environment).await?;
+    build_sqlite_backed_commit_service(path, environment)
 }
 
-fn initialize_policy_register(path: &Path) -> Result<()> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("failed to create policy initialization runtime")?;
+async fn initialize_policy_register(path: &Path, environment: &RealEnvironment) -> Result<()> {
     let storage =
         Rc::new(SqliteStorage::open(path).context("failed to initialize policy storage")?);
-    let environment = RealEnvironment::new();
     let register = StoragePolicyRegister::new(storage, POLICY_REGISTER_KEY);
-    runtime
-        .block_on(bootstrap_policy_register_if_absent(
-            &register,
-            &PolicyState {
-                decider_policy: Some(DeciderPolicy::OnByDefault as i32),
-                ..Default::default()
-            },
-            &environment,
-            default_policy_register_bootstrap_retry_config(),
-        ))
-        .context("failed to initialize policy register")?;
+    bootstrap_policy_register_if_absent(
+        &register,
+        &PolicyState {
+            decider_policy: Some(DeciderPolicy::OnByDefault as i32),
+            ..Default::default()
+        },
+        environment,
+        default_policy_register_bootstrap_retry_config(),
+    )
+    .await
+    .context("failed to initialize policy register")?;
     Ok(())
 }
 
-#[expect(
-    deprecated,
-    reason = "legacy worker-thread path; this caller moves to `build_on` separately"
-)]
-fn create_sqlite_backed_commit_service_blocking(
-    path: PathBuf,
+fn build_sqlite_backed_commit_service(
+    path: &Path,
+    environment: Rc<RealEnvironment>,
 ) -> Result<ChanneledCommitService<ChanneledAgentBus>> {
     let path_string = path
         .to_str()
@@ -94,47 +82,49 @@ fn create_sqlite_backed_commit_service_blocking(
     // The verified 0700 parent protects the database and every SQLite
     // journal/WAL sidecar from the moment each file is created.
     let storage =
-        SqliteStorage::open(&path).context("failed to initialize CommitService storage")?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+        SqliteStorage::open(path).context("failed to initialize CommitService storage")?;
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))
         .context("failed to restrict LogAct database permissions")?;
     let bus = CoreAgentBusFactory::new(
         None,
         Box::new(|| Ok(Rc::new(NoopMetrics) as Rc<dyn AgentBusMetrics>)),
         Box::new(|| Ok(Rc::new(NoopLogger) as Rc<dyn AgentbusLogger>)),
     )
-    .build(ParsedBackend::Sqlite(path_string))
+    .build_on(environment.clone(), ParsedBackend::Sqlite(path_string))
     .context("failed to initialize AgentBus storage")?;
 
-    ChanneledCommitService::try_new_in_process(bus, move |bus| {
-        let environment = Rc::new(RealEnvironment::new());
-        let storage = Rc::new(storage);
-        let observability = Observability {
-            metrics: Rc::new(NoopMetrics),
-            logger: Rc::new(NoopLogger),
-            environment: environment.clone(),
-        };
-        let voter_factory = DelegatingVoterFactory::new(
-            LlmVoterFactory::default(),
-            RuleBasedVoterFactory,
-            observability,
-        );
-        let decider_factory = DeciderFactoryImpl::new(storage.clone());
-        let policy_validator = voter_factory.clone();
-        let policy_provider = SynchronousRegisterProvider::new(
-            StoragePolicyRegister::new(storage.clone(), POLICY_REGISTER_KEY),
-            move |policy| validate_voter_configs(&policy_validator, policy),
-        );
+    Ok(ChanneledCommitService::new_on_environment(
+        environment.clone(),
+        bus,
+        move |bus| {
+            let storage = Rc::new(storage);
+            let observability = Observability {
+                metrics: Rc::new(NoopMetrics),
+                logger: Rc::new(NoopLogger),
+                environment: environment.clone(),
+            };
+            let voter_factory = DelegatingVoterFactory::new(
+                LlmVoterFactory::default(),
+                RuleBasedVoterFactory,
+                observability,
+            );
+            let decider_factory = DeciderFactoryImpl::new(storage.clone());
+            let policy_validator = voter_factory.clone();
+            let policy_provider = SynchronousRegisterProvider::new(
+                StoragePolicyRegister::new(storage.clone(), POLICY_REGISTER_KEY),
+                move |policy| validate_voter_configs(&policy_validator, policy),
+            );
 
-        CommitServiceV1::new(bus, move |engine_bus| {
-            BaseEngine::new(
-                engine_bus,
-                storage,
-                voter_factory,
-                policy_provider,
-                decider_factory,
-                environment,
-            )
-        })
-    })
-    .context("failed to start CommitService worker")
+            CommitServiceV1::new(bus, move |engine_bus| {
+                BaseEngine::new(
+                    engine_bus,
+                    storage,
+                    voter_factory,
+                    policy_provider,
+                    decider_factory,
+                    environment,
+                )
+            })
+        },
+    ))
 }

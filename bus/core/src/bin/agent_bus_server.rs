@@ -31,10 +31,6 @@ struct Args {
 }
 
 #[fbinit::main]
-#[expect(
-    deprecated,
-    reason = "legacy worker-thread path; this caller moves to `build_on` separately"
-)]
 fn main(_fb: FacebookInit) -> Result<()> {
     agentbus_core::server_lib::init_logging();
 
@@ -45,14 +41,12 @@ fn main(_fb: FacebookInit) -> Result<()> {
         None => ParsedBackend::Memory,
     };
 
-    agentbus_core::server_lib::run_server(&args.common, metrics, move || {
+    agentbus_core::server_lib::run_server(&args.common, metrics, move |env| {
         let factory = CoreAgentBusFactory::new(
             None,
             Box::new(|| Ok(Rc::new(NoopMetrics) as Rc<dyn AgentBusMetrics>)),
             Box::new(|| Ok(Rc::new(NoopLogger) as Rc<dyn AgentbusLogger>)),
         );
-        factory
-            .build(backend)
-            .expect("Failed to initialize AgentBus backend")
+        factory.build_on(env, backend)
     })
 }

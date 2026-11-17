@@ -21,6 +21,7 @@ use agentbus_core::AgentBusMetrics;
 use agentbus_core::AgentbusLogger;
 use agentbus_core::NoopLogger;
 use agentbus_core::NoopMetrics;
+use agentbus_core::RealEnvironment;
 use agentbus_core::server_lib::ParsedBackend;
 use agentbus_core::server_lib::parse_backend_url;
 use agentbus_factory::ChanneledAgentBusFactory;
@@ -55,8 +56,8 @@ pub struct CommonArgs {
 }
 
 /// Run the CLI using the configured `--agentbus` backend URL.
-pub async fn run_common(args: CommonArgs) -> Result<()> {
-    run_agentbus_url(&args.agentbus, args.agent_bus_id, args.command).await
+pub async fn run_common(args: CommonArgs, env: Rc<RealEnvironment>) -> Result<()> {
+    run_agentbus_url(&args.agentbus, args.agent_bus_id, args.command, env).await
 }
 
 /// Run a CLI command against a direct AgentBus backend URL.
@@ -64,13 +65,14 @@ pub async fn run_agentbus_url(
     agentbus_url: &str,
     agent_bus_id: String,
     command: Commands,
+    env: Rc<RealEnvironment>,
 ) -> Result<()> {
     let factory = CoreAgentBusFactory::new(
         None,
         Box::new(|| Ok(Rc::new(NoopMetrics) as Rc<dyn AgentBusMetrics>)),
         Box::new(|| Ok(Rc::new(NoopLogger) as Rc<dyn AgentbusLogger>)),
     );
-    run_agentbus_url_with_factory(factory, agentbus_url, agent_bus_id, command).await
+    run_agentbus_url_with_factory(factory, agentbus_url, agent_bus_id, command, env).await
 }
 
 /// Run a CLI command against a backend URL using the supplied AgentBus factory.
@@ -79,6 +81,7 @@ pub async fn run_agentbus_url_with_factory<F>(
     agentbus_url: &str,
     agent_bus_id: String,
     command: Commands,
+    env: Rc<RealEnvironment>,
 ) -> Result<()>
 where
     F: ChanneledAgentBusFactory,
@@ -107,11 +110,7 @@ where
         ParsedBackend::Other(_) => {}
     }
 
-    #[expect(
-        deprecated,
-        reason = "legacy worker-thread path; this caller moves to `build_on` separately"
-    )]
-    let bus = factory.build(backend)?;
+    let bus = factory.build_on(env, backend)?;
     run(&bus, agent_bus_id, command).await
 }
 

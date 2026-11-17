@@ -7,7 +7,9 @@
 
 use std::future::Future;
 use std::path::PathBuf;
+use std::rc::Rc;
 
+use agentbus_core::RealEnvironment;
 use anyhow::Result;
 use clap::Parser;
 use logact_local_server_lib::run_server;
@@ -28,7 +30,15 @@ struct Args {
 async fn main() -> Result<()> {
     agentbus_core::server_lib::init_logging();
     let args = Args::parse();
-    run_server(args.socket, args.sqlite_path, shutdown_signal()?).await
+    let shutdown = shutdown_signal()?;
+    tokio::task::LocalSet::new()
+        .run_until(run_server(
+            Rc::new(RealEnvironment::new()),
+            args.socket,
+            args.sqlite_path,
+            shutdown,
+        ))
+        .await
 }
 
 fn shutdown_signal() -> Result<impl Future<Output = ()>> {
