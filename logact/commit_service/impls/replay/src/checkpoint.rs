@@ -27,12 +27,12 @@ pub trait CheckpointStore {
         bus_id: &str,
     ) -> impl std::future::Future<Output = CommitResult<Option<Checkpoint>>>;
 
-    /// Save `checkpoint` if the stored checkpoint is still at `expected`; a
-    /// store may decline otherwise.
+    /// Save `checkpoint` unless the store already holds one for the bus at or
+    /// past its position, so a late or out-of-order save can't replace a
+    /// further checkpoint.
     fn save(
         &self,
         bus_id: &str,
         checkpoint: &Checkpoint,
-        expected: Option<i64>,
     ) -> impl std::future::Future<Output = CommitResult<()>>;
 }

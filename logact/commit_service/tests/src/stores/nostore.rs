@@ -81,12 +81,7 @@ impl<T: AgentBus> CheckpointStore for NoStoreCheckpoints<T> {
         Ok(position.map(|position| Checkpoint { state, position }))
     }
 
-    async fn save(
-        &self,
-        _bus_id: &str,
-        _checkpoint: &Checkpoint,
-        _expected: Option<i64>,
-    ) -> CommitResult<()> {
+    async fn save(&self, _bus_id: &str, _checkpoint: &Checkpoint) -> CommitResult<()> {
         Ok(())
     }
 }

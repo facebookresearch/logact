@@ -77,31 +77,15 @@ impl<S: Storage> CheckpointStore for StorageCheckpoints<S> {
         }))
     }
 
-    /// The storage CAS rejects the save if another drive saved first.
-    async fn save(
-        &self,
-        bus_id: &str,
-        checkpoint: &Checkpoint,
-        expected: Option<i64>,
-    ) -> CommitResult<()> {
-        let saved = self
-            .storage
-            .put(
+    async fn save(&self, bus_id: &str, checkpoint: &Checkpoint) -> CommitResult<()> {
+        self.storage
+            .put_if_newer(
                 &engine_state_key(bus_id),
                 Bytes::from(encode_engine_record(&checkpoint.state)),
-                expected,
                 checkpoint.position,
             )
             .await
             .map_err(storage_error)?;
-        if !saved {
-            tracing::info!(
-                bus_id,
-                position = checkpoint.position,
-                ?expected,
-                "checkpoint save lost a race; another drive saved first"
-            );
-        }
         Ok(())
     }
 }
@@ -181,7 +165,7 @@ mod tests {
                 position: 9,
                 ..checkpoint
             };
-            store.save("bus", &saved, Some(7)).await.unwrap();
+            store.save("bus", &saved).await.unwrap();
             let (bytes, position) = storage
                 .get(&engine_state_key("bus"))
                 .await

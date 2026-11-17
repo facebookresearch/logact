@@ -26,24 +26,13 @@ impl CheckpointStore for LocalCheckpoints {
         Ok(self.checkpoints.borrow().get(bus_id).cloned())
     }
 
-    async fn save(
-        &self,
-        bus_id: &str,
-        checkpoint: &Checkpoint,
-        expected: Option<i64>,
-    ) -> CommitResult<()> {
+    async fn save(&self, bus_id: &str, checkpoint: &Checkpoint) -> CommitResult<()> {
         let mut checkpoints = self.checkpoints.borrow_mut();
-        let stored = checkpoints.get(bus_id).map(|stored| stored.position);
-        if stored == expected {
+        if checkpoints
+            .get(bus_id)
+            .is_none_or(|stored| stored.position < checkpoint.position)
+        {
             checkpoints.insert(bus_id.to_owned(), checkpoint.clone());
-        } else {
-            tracing::info!(
-                bus_id,
-                position = checkpoint.position,
-                ?expected,
-                ?stored,
-                "checkpoint save lost a race; another drive saved first"
-            );
         }
         Ok(())
     }

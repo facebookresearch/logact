@@ -63,11 +63,11 @@ where
     P::Error: Into<anyhow::Error>,
 {
     /// Saving is best-effort: a failed save only lengthens a later drive.
-    async fn save_checkpoint(&self, bus_id: &str, checkpoint: Checkpoint, expected: Option<i64>)
+    async fn save_checkpoint(&self, bus_id: &str, checkpoint: Checkpoint)
     where
         C: CheckpointStore,
     {
-        if let Err(error) = self.checkpoints.save(bus_id, &checkpoint, expected).await {
+        if let Err(error) = self.checkpoints.save(bus_id, &checkpoint).await {
             tracing::warn!(bus_id, position = checkpoint.position, error = %error, "saving checkpoint failed");
         }
     }
@@ -119,7 +119,7 @@ where
             state
                 .materialize(&entry, &|config| self.voter_factory.validate_config(config))
                 .map_err(apply_error)?;
-            self.save_checkpoint(&request.bus_id, Checkpoint { state, position }, None)
+            self.save_checkpoint(&request.bus_id, Checkpoint { state, position })
                 .await;
         }
         Ok(())
@@ -169,8 +169,7 @@ where
             state: drive.state,
             position: decided_at,
         };
-        self.save_checkpoint(bus_id, checkpoint, checkpoint_position)
-            .await;
+        self.save_checkpoint(bus_id, checkpoint).await;
         Ok(outcome)
     }
 }
