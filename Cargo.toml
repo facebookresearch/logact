@@ -11,6 +11,7 @@ members = [
   "bus/impls/simple",
   "bus/impls/sqlite",
   "bus/impls/writeonce",
+  "bus/lease",
   "bus/proto",
   "bus/simulator",
   "bus/testing/conformance",
