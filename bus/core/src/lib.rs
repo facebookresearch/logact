@@ -6,7 +6,6 @@
  */
 
 // Module declarations
-pub mod appserver;
 pub mod channeled_agentbus;
 pub mod client;
 pub mod config;

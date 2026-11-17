@@ -14,14 +14,12 @@ agent_bus_proto-rust = { path = "../proto" }
 agentbus_api = { version = "0.1.0", path = "../api" }
 agentbus_observable = { version = "0.1.0", path = "../impls/observable" }
 anyhow = "1.0.104"
-appserver_proto-rust = { path = "../appserver_proto" }
 async-trait = "0.1.92"
 clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 futures = { version = "0.3.34", features = ["async-await", "compat"] }
 llm-voter-proto-rust = { path = "../voters/llm/proto" }
 rule-based-voter-proto-rust = { path = "../voters/rule-based/proto" }
 serde = { version = "1.0.229", features = ["derive", "rc"] }
-serde_yaml = "0.9.25"
 signal-hook = "0.4.6"
 signal-hook-tokio = { version = "0.4.0", features = ["futures-v0_3"] }
 thiserror = "2.0.21"
@@ -35,3 +33,4 @@ tracing-subscriber = { version = "0.3.23", features = ["chrono", "env-filter", "
 agentbus_simple = { version = "0.1.0", path = "../impls/simple" }
 agentbus_simulator = { version = "0.1.0", path = "../simulator" }
 rand = "0.10.3"
+serde_yaml = "0.9.25"

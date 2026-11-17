@@ -5,16 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! YAML config file parsing for AppServer.
-//!
-//! Parses a YAML config into `AppServerConfig` plus a list of initial local
-//! voter definitions. These are the static voter configs loaded from YAML/CLI
-//! before runtime `VoterPolicy` updates are applied. There is no bus-visible
-//! voter ID: `VoterPolicy` updates continue to fan out by config type.
+//! Initial voter configurations loaded by the commit service.
 
-use std::time::Duration;
-
-use anyhow::Context;
 use anyhow::Result;
 use llm_voter_proto_rust::llm_voter::LlmVoterConfig;
 use rule_based_voter_proto_rust::rule_based_voter::RuleBasedVoterConfig;
@@ -25,23 +17,6 @@ use rule_based_voter_proto_rust::rule_based_voter::VoterRuleSubject;
 use rule_based_voter_proto_rust::rule_based_voter::voter_rule_subject;
 use serde::Deserialize;
 use serde::Deserializer;
-
-use crate::appserver::AppServerConfig;
-
-#[derive(Deserialize)]
-pub struct AppServerConfigFile {
-    pub bus_id: String,
-    #[serde(default = "default_gate_timeout")]
-    pub gate_check_timeout_ms: u64,
-    /// Internal polling interval (ms) for WriteOnce-backed blocking_poll.
-    pub blocking_poll_interval_ms: Option<u64>,
-    #[serde(default)]
-    pub voters: Vec<InitialVoterConfig>,
-}
-
-fn default_gate_timeout() -> u64 {
-    30000
-}
 
 /// Initial voter config loaded from YAML/CLI before runtime voter policy
 /// overrides are applied.
@@ -130,27 +105,6 @@ struct BusIdPrefixSubject {
     bus_id_prefix: String,
 }
 
-impl AppServerConfigFile {
-    pub fn from_yaml(yaml: &str) -> Result<Self> {
-        serde_yaml::from_str(yaml).context("failed to parse config YAML")
-    }
-
-    pub fn from_path(path: &str) -> Result<Self> {
-        let contents = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read config file: {}", path))?;
-        Self::from_yaml(&contents)
-    }
-
-    pub fn into_config(self) -> Result<(AppServerConfig, Vec<InitialVoterConfig>)> {
-        let config = AppServerConfig {
-            bus_id: self.bus_id,
-            gate_check_timeout: Duration::from_millis(self.gate_check_timeout_ms),
-            blocking_poll_interval: self.blocking_poll_interval_ms.map(Duration::from_millis),
-        };
-        Ok((config, self.voters))
-    }
-}
-
 impl VoterConfigEntry {
     fn into_initial_config(self) -> InitialVoterConfig {
         match self {
@@ -216,31 +170,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_minimal_config() {
-        let yaml = r#"
-bus_id: "test-bus"
-"#;
-        let config = AppServerConfigFile::from_yaml(yaml).unwrap();
-        assert_eq!(config.bus_id, "test-bus");
-        assert!(config.voters.is_empty());
-
-        let (domain, voters) = config.into_config().unwrap();
-        assert_eq!(domain.bus_id, "test-bus");
-        assert!(voters.is_empty());
-    }
-
-    #[test]
     fn test_parse_llm_voter() {
         let yaml = r#"
-bus_id: "test-bus"
-voters:
-  - type: llm
-    prompt_override: "custom prompt"
-    model: "test-model"
-    api_endpoint: "http://127.0.0.1:8080"
+- type: llm
+  prompt_override: "custom prompt"
+  model: "test-model"
+  api_endpoint: "http://127.0.0.1:8080"
 "#;
-        let config = AppServerConfigFile::from_yaml(yaml).unwrap();
-        let (_, voters) = config.into_config().unwrap();
+        let voters: Vec<InitialVoterConfig> = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(voters.len(), 1);
         match &voters[0] {
             InitialVoterConfig::Llm {
@@ -259,25 +196,22 @@ voters:
     #[test]
     fn test_parse_rule_based_voter() {
         let yaml = r#"
-bus_id: "test-bus"
-voters:
-  - type: rule-based
-    default_action: allow
-    rules:
-      - pattern: "rm -rf"
-        action: deny
-        match_type: substring
-        reason: "destructive"
-        subjects:
-          - exact_bus_id: "fenced-bus"
-          - bus_id_prefix: "quarantined/"
-      - pattern: "echo"
-        action: allow
-        match_type: exact
-        reason: "safe"
+- type: rule-based
+  default_action: allow
+  rules:
+    - pattern: "rm -rf"
+      action: deny
+      match_type: substring
+      reason: "destructive"
+      subjects:
+        - exact_bus_id: "fenced-bus"
+        - bus_id_prefix: "quarantined/"
+    - pattern: "echo"
+      action: allow
+      match_type: exact
+      reason: "safe"
 "#;
-        let config = AppServerConfigFile::from_yaml(yaml).unwrap();
-        let (_, voters) = config.into_config().unwrap();
+        let voters: Vec<InitialVoterConfig> = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(voters.len(), 1);
         match &voters[0] {
             InitialVoterConfig::RuleBased(rb) => {
@@ -301,32 +235,17 @@ voters:
     }
 
     #[test]
-    fn test_defaults_applied() {
-        let yaml = r#"
-bus_id: "test-bus"
-"#;
-        let config = AppServerConfigFile::from_yaml(yaml).unwrap();
-        assert_eq!(config.gate_check_timeout_ms, 30000);
-
-        let (domain, _) = config.into_config().unwrap();
-        assert_eq!(domain.gate_check_timeout, Duration::from_millis(30000));
-    }
-
-    #[test]
     fn test_parse_mixed_voters() {
         let yaml = r#"
-bus_id: "test-bus"
-voters:
-  - type: llm
-    model: "model-a"
-  - type: rule-based
-    rules:
-      - pattern: "rm"
-        action: deny
-        reason: "no delete"
+- type: llm
+  model: "model-a"
+- type: rule-based
+  rules:
+    - pattern: "rm"
+      action: deny
+      reason: "no delete"
 "#;
-        let config = AppServerConfigFile::from_yaml(yaml).unwrap();
-        let (_, voters) = config.into_config().unwrap();
+        let voters: Vec<InitialVoterConfig> = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(voters.len(), 2);
         assert!(matches!(voters[0], InitialVoterConfig::Llm { .. }));
         assert!(matches!(voters[1], InitialVoterConfig::RuleBased(_)));
@@ -335,15 +254,12 @@ voters:
     #[test]
     fn test_multiple_voters_of_same_type_allowed() {
         let yaml = r#"
-bus_id: "test-bus"
-voters:
-  - type: llm
-    model: "model-a"
-  - type: llm
-    model: "model-b"
+- type: llm
+  model: "model-a"
+- type: llm
+  model: "model-b"
 "#;
-        let config = AppServerConfigFile::from_yaml(yaml).unwrap();
-        let (_, voters) = config.into_config().unwrap();
+        let voters: Vec<InitialVoterConfig> = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(voters.len(), 2);
     }
 }
