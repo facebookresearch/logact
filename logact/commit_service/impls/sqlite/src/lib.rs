@@ -105,11 +105,67 @@ impl Storage for SqliteStorage {
 
         Ok(rows_changed == 1)
     }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        if new_position < 0 {
+            return Err(StorageError::InvalidPosition(new_position));
+        }
+        let rows_changed = self
+            .db
+            .execute(
+                "INSERT INTO logact_commit_service_storage (storage_key, position, value)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(storage_key) DO UPDATE
+                 SET position = excluded.position, value = excluded.value
+                 WHERE logact_commit_service_storage.position < excluded.position",
+                (key.to_owned(), new_position, value.to_vec()),
+            )
+            .await
+            .map_err(|error| storage_error(error, "SQLite put_if_newer failed"))?;
+        Ok(rows_changed == 1)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn independent_connections_keep_the_highest_position() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("commit-service.db");
+        let first = SqliteStorage::open(&path).unwrap();
+        let second = SqliteStorage::open(&path).unwrap();
+        let (lower, higher) = tokio::join!(
+            first.put_if_newer("key", Bytes::from_static(b"lower"), 10),
+            second.put_if_newer("key", Bytes::from_static(b"higher"), 20),
+        );
+        lower.unwrap();
+        assert!(higher.unwrap(), "the highest position must be accepted");
+        assert_eq!(
+            first.get("key").await.unwrap(),
+            Some((Bytes::from_static(b"higher"), 20))
+        );
+        drop(first);
+        drop(second);
+        let reopened = SqliteStorage::open(&path).unwrap();
+        assert!(
+            !reopened
+                .put_if_newer("key", Bytes::from_static(b"equal"), 20)
+                .await
+                .unwrap(),
+            "an equal position must preserve the persisted payload"
+        );
+        assert_eq!(
+            reopened.get("key").await.unwrap(),
+            Some((Bytes::from_static(b"higher"), 20))
+        );
+    }
 
     #[tokio::test]
     async fn data_persists_across_reopen() {

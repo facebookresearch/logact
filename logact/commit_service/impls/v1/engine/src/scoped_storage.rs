@@ -54,6 +54,17 @@ impl<S: Storage> Storage for ScopedStorage<S> {
             .put(&self.scoped_key(key), value, expected, new_position)
             .await
     }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        self.inner
+            .put_if_newer(&self.scoped_key(key), value, new_position)
+            .await
+    }
 }
 
 #[cfg(test)]

@@ -19,9 +19,97 @@ mod defs {
     use anyhow::Result;
     use bytes::Bytes;
     use logact_commit_service_engine::Storage;
+    use logact_commit_service_engine::StorageError;
 
     use crate::fixtures::ConformanceFixture;
     use crate::fixtures::StorageTestFixture;
+
+    #[scenario]
+    pub async fn run_test_put_if_newer<F: StorageTestFixture>(fixture: &F) -> Result<()> {
+        let storage = fixture.create_impl();
+        assert!(
+            storage
+                .put_if_newer("key", Bytes::from("first"), 10)
+                .await?
+        );
+        assert!(
+            storage
+                .put_if_newer("key", Bytes::from("newer"), 20)
+                .await?
+        );
+        for position in [0, 10, 19, 20] {
+            assert!(
+                !storage
+                    .put_if_newer("key", Bytes::from("rejected"), position)
+                    .await?,
+                "equal or lower position {position} should leave the value unchanged"
+            );
+        }
+        assert_eq!(storage.get("key").await?, Some((Bytes::from("newer"), 20)));
+        assert!(storage.put("key", Bytes::from("cas"), Some(20), 21).await?);
+        assert!(
+            storage
+                .put_if_newer("key", Bytes::from("latest"), 30)
+                .await?
+        );
+        assert!(
+            !storage
+                .put("key", Bytes::from("stale cas"), Some(21), 31)
+                .await?
+        );
+        assert_eq!(storage.get("key").await?, Some((Bytes::from("latest"), 30)));
+        Ok(())
+    }
+
+    #[scenario]
+    pub async fn run_test_put_if_newer_rejects_negative_positions<F: StorageTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let storage = fixture.create_impl();
+        for position in [i64::MIN, -1] {
+            assert!(matches!(
+                storage.put_if_newer("empty", Bytes::from("invalid"), position).await,
+                Err(StorageError::InvalidPosition(rejected)) if rejected == position
+            ));
+            assert!(storage.get("empty").await?.is_none());
+        }
+        assert!(storage.put_if_newer("key", Bytes::from("zero"), 0).await?);
+        assert!(matches!(
+            storage
+                .put_if_newer("key", Bytes::from("invalid"), -1)
+                .await,
+            Err(StorageError::InvalidPosition(-1))
+        ));
+        assert_eq!(storage.get("key").await?, Some((Bytes::from("zero"), 0)));
+        assert!(
+            storage
+                .put_if_newer("key", Bytes::from("maximum"), i64::MAX)
+                .await?
+        );
+        assert_eq!(
+            storage.get("key").await?,
+            Some((Bytes::from("maximum"), i64::MAX))
+        );
+        Ok(())
+    }
+
+    #[scenario]
+    pub async fn run_test_concurrent_put_if_newer<F: StorageTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let storage = fixture.create_impl();
+        let (lower, higher) = futures::join!(
+            storage.put_if_newer("key", Bytes::from("lower"), 10),
+            storage.put_if_newer("key", Bytes::from("higher"), 20),
+        );
+        lower?;
+        assert!(
+            higher?,
+            "the highest position should be written in either order"
+        );
+        assert_eq!(storage.get("key").await?, Some((Bytes::from("higher"), 20)));
+        Ok(())
+    }
 
     #[scenario]
     pub async fn run_test_get_missing_key<F: StorageTestFixture>(fixture: &F) -> Result<()> {

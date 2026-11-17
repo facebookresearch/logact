@@ -23,7 +23,7 @@ use crate::StorageResult;
 /// Retries `Timeout` and `BackendUnavailable` failures of the wrapped storage.
 /// `TransactionConflict` is left to the caller's concurrency handling.
 ///
-/// A failed `put` attempt may still have landed, so a retry can find its own
+/// A failed write attempt may still have landed, so a retry can find its own
 /// write and return `Ok(false)`. Callers already reload after any rejected
 /// `put`, which reconciles with whichever write won.
 pub struct RetryingStorage<S, E> {
@@ -47,9 +47,9 @@ fn decide(error: &StorageError) -> RetryDecision {
         StorageError::Timeout(_) | StorageError::BackendUnavailable(_) => {
             RetryDecision::RetryWithBackoff
         }
-        StorageError::TransactionConflict(_) | StorageError::InternalError(_) => {
-            RetryDecision::Stop
-        }
+        StorageError::InvalidPosition(_)
+        | StorageError::TransactionConflict(_)
+        | StorageError::InternalError(_) => RetryDecision::Stop,
     }
 }
 
@@ -77,6 +77,22 @@ impl<S: Storage, E: Environment> Storage for RetryingStorage<S, E> {
             &*self.environment,
             self.config,
             || self.inner.put(key, value.clone(), expected, new_position),
+            decide,
+        )
+        .await
+        .map_err(RetryFailure::into_last_error)
+    }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        retry(
+            &*self.environment,
+            self.config,
+            || self.inner.put_if_newer(key, value.clone(), new_position),
             decide,
         )
         .await

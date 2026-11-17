@@ -185,6 +185,27 @@ impl<S: Storage, E: Environment> Storage for FaultInjectingStorage<S, E> {
 
         self.inner.put(key, value, expected, new_position).await
     }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        if self.should_fail(self.config.put_failure_rate) {
+            self.state
+                .put_failures
+                .set(self.state.put_failures.get().saturating_add(1));
+            return Err(StorageError::BackendUnavailable(anyhow!(
+                "injected fault on put_if_newer"
+            )));
+        }
+        let _in_flight_put = self.acquire_in_flight_put(key)?;
+        if !self.config.put_delay.is_zero() {
+            self.env.sleep(self.config.put_delay).await;
+        }
+        self.inner.put_if_newer(key, value, new_position).await
+    }
 }
 
 /// A [`StorageFaultConfig`] encoded as a type, so it can parameterize

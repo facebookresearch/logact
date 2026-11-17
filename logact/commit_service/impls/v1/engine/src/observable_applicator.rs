@@ -93,6 +93,7 @@ fn error_code(err: &ApplyError) -> &'static str {
         ApplyError::MalformedPolicy { .. } => "MalformedPolicy",
         ApplyError::DeprecatedOperation { .. } => "DeprecatedOperation",
         ApplyError::Storage(error) => match error {
+            StorageError::InvalidPosition(_) => "StorageInvalidPosition",
             StorageError::TransactionConflict(_) => "StorageTransactionConflict",
             StorageError::Timeout(_) => "StorageTimeout",
             StorageError::BackendUnavailable(_) => "StorageBackendUnavailable",

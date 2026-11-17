@@ -108,6 +108,9 @@ impl<S: Storage> CheckpointStore for StorageCheckpoints<S> {
 
 pub(crate) fn storage_error(error: StorageError) -> CommitError {
     match error {
+        error @ StorageError::InvalidPosition(_) => {
+            CommitError::InvalidArgument(anyhow::Error::new(error))
+        }
         error @ StorageError::TransactionConflict(_) => {
             CommitError::Concurrency(anyhow::Error::new(error))
         }

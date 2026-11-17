@@ -67,4 +67,15 @@ impl<S: Storage + 'static> Storage for LatencyStorage<S> {
         self.call(async move |storage| storage.put(&key, value, expected, new_position).await)
             .await
     }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        let key = key.to_owned();
+        self.call(async move |storage| storage.put_if_newer(&key, value, new_position).await)
+            .await
+    }
 }

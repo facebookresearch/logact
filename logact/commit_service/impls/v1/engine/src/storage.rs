@@ -16,6 +16,8 @@ use thiserror::Error;
 /// Failure categories for storage operations.
 #[derive(Debug, Error)]
 pub enum StorageError {
+    #[error("logical position must be nonnegative: {0}")]
+    InvalidPosition(i64),
     #[error("transaction conflict")]
     TransactionConflict(#[source] AnyhowError),
     #[error("timeout")]
@@ -28,7 +30,7 @@ pub enum StorageError {
 
 pub type StorageResult<T> = std::result::Result<T, StorageError>;
 
-/// Key-value store with compare-and-swap writes.
+/// Key-value store with compare-and-swap and highest-position writes.
 ///
 /// Every value is stored alongside a position (i64). `put` is a CAS operation:
 /// it succeeds only if the current stored position matches `expected`, which
@@ -55,6 +57,18 @@ pub trait Storage {
         expected: Option<i64>,
         new_position: i64,
     ) -> StorageResult<bool>;
+
+    /// Atomically stores `value` at `new_position` if the key is absent or its
+    /// stored position is strictly lower. Equal or higher positions leave the
+    /// existing value unchanged. Returns `Ok(true)` if written, `Ok(false)` if
+    /// unchanged, or `Err` on backend failure.
+    ///
+    /// Returns `InvalidPosition` for a negative `new_position`. Keys used with
+    /// this method must contain only nonnegative positions, including writes
+    /// through `put`. A timeout can leave the outcome unknown; retrying the same
+    /// write may return `Ok(false)` after it landed.
+    async fn put_if_newer(&self, key: &str, value: Bytes, new_position: i64)
+    -> StorageResult<bool>;
 }
 
 /// `Rc<S>` is itself a `Storage`, delegating to the shared inner store. This lets
@@ -75,11 +89,19 @@ impl<S: Storage + ?Sized> Storage for Rc<S> {
     ) -> StorageResult<bool> {
         (**self).put(key, value, expected, new_position).await
     }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        (**self).put_if_newer(key, value, new_position).await
+    }
 }
 
-/// In-memory `Storage` backed by `RefCell<HashMap>`. Infallible — never returns
-/// `Err`; tests layer fault injection around it. Not `Clone`: share it by wrapping
-/// in `Rc` (see the `Storage for Rc<S>` impl above).
+/// In-memory `Storage` backed by `RefCell<HashMap>`. Not `Clone`: share it by
+/// wrapping in `Rc` (see the `Storage for Rc<S>` impl above).
 #[derive(Default)]
 pub struct InMemoryStorage {
     data: RefCell<HashMap<String, (Bytes, i64)>>,
@@ -115,6 +137,26 @@ impl Storage for InMemoryStorage {
             }
         }
         data.insert(key.to_string(), (value, new_position));
+        Ok(true)
+    }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        if new_position < 0 {
+            return Err(StorageError::InvalidPosition(new_position));
+        }
+        let mut data = self.data.borrow_mut();
+        if data
+            .get(key)
+            .is_some_and(|(_, position)| *position >= new_position)
+        {
+            return Ok(false);
+        }
+        data.insert(key.to_owned(), (value, new_position));
         Ok(true)
     }
 }
@@ -154,5 +196,17 @@ impl Storage for FaultyStorage {
             ))),
             Self::RejectPut => Ok(false),
         }
+    }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        if new_position < 0 {
+            return Err(StorageError::InvalidPosition(new_position));
+        }
+        self.put(key, value, None, new_position).await
     }
 }

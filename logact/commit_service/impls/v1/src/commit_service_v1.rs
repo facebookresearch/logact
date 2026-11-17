@@ -117,6 +117,9 @@ fn commit_error_from_engine(error: EngineError) -> CommitError {
 
 fn commit_error_from_storage(error: StorageError) -> CommitError {
     match error {
+        error @ StorageError::InvalidPosition(_) => {
+            CommitError::InvalidArgument(anyhow::Error::new(error))
+        }
         error @ StorageError::TransactionConflict(_) => {
             CommitError::Concurrency(anyhow::Error::new(error))
         }
@@ -130,6 +133,9 @@ fn commit_error_from_storage(error: StorageError) -> CommitError {
 
 fn commit_error_from_apply(error: ApplyError) -> CommitError {
     match error {
+        error @ ApplyError::Storage(StorageError::InvalidPosition(_)) => {
+            CommitError::InvalidArgument(anyhow::Error::new(error))
+        }
         error @ ApplyError::Bus(AgentBusError::PositionNotFound(_)) => {
             CommitError::BusDataLoss(error.into())
         }

@@ -8,7 +8,7 @@
 //! Observability wrapper for the [`Storage`] API.
 //!
 //! The wrapper records low-cardinality metrics and one structured row per
-//! operation. A completed CAS rejection remains `Ok(false)` and is represented
+//! operation. An unchanged write remains `Ok(false)` and is represented
 //! as `success=1` with `applied:0` in the response context; backend failures
 //! retain their [`StorageError`] category as the row's error code.
 
@@ -73,6 +73,7 @@ fn base_row(method: &str, key: &str, elapsed: Duration) -> LogRow {
 
 fn storage_error_code(error: &StorageError) -> &'static str {
     match error {
+        StorageError::InvalidPosition(_) => "InvalidPosition",
         StorageError::TransactionConflict(_) => "TransactionConflict",
         StorageError::Timeout(_) => "Timeout",
         StorageError::BackendUnavailable(_) => "BackendUnavailable",
@@ -82,6 +83,7 @@ fn storage_error_code(error: &StorageError) -> &'static str {
 
 fn storage_error_message(error: &StorageError) -> String {
     let source = match error {
+        StorageError::InvalidPosition(_) => return error.to_string(),
         StorageError::TransactionConflict(source)
         | StorageError::Timeout(source)
         | StorageError::BackendUnavailable(source)
@@ -219,6 +221,55 @@ where
 
         result
     }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        let value_bytes = value.len();
+        self.observability
+            .metrics
+            .record_counter("put_if_newer.storage.num_calls", 1, NO_TAGS);
+        self.observability.metrics.record_histogram(
+            "put_if_newer.storage.value_bytes",
+            value_bytes as i64,
+            NO_TAGS,
+        );
+        let start = self.monotonic_time();
+        let result = self.inner.put_if_newer(key, value, new_position).await;
+        let elapsed = self.elapsed(start);
+        record_latency(
+            &*self.observability.metrics,
+            "put_if_newer.storage.latency_us",
+            elapsed,
+        );
+        match &result {
+            Ok(true) => {}
+            Ok(false) => self.observability.metrics.record_counter(
+                "put_if_newer.storage.num_unchanged",
+                1,
+                NO_TAGS,
+            ),
+            Err(_) => self.observability.metrics.record_counter(
+                "put_if_newer.storage.num_errors",
+                1,
+                NO_TAGS,
+            ),
+        }
+        let row = base_row("put_if_newer", key, elapsed).add_string_vector_field(
+            "request_context",
+            vec![
+                detail("version", new_position),
+                detail("value_bytes", value_bytes),
+            ],
+        );
+        self.observability
+            .logger
+            .log_row(add_put_result(row, &result));
+        result
+    }
 }
 
 #[cfg(test)]
@@ -287,11 +338,60 @@ mod tests {
         ) -> StorageResult<bool> {
             Err(StorageError::TransactionConflict(anyhow!("put source")))
         }
+
+        async fn put_if_newer(
+            &self,
+            _key: &str,
+            _value: Bytes,
+            _new_position: i64,
+        ) -> StorageResult<bool> {
+            Err(StorageError::Timeout(anyhow!("put_if_newer source")))
+        }
+    }
+
+    #[test]
+    fn records_put_if_newer_outcomes() {
+        let (observability, metrics, logger) = observability();
+        let storage = ObservableStorage::new(InMemoryStorage::new(), observability.clone());
+        assert!(block_on(storage.put_if_newer("key", Bytes::from("value"), 10)).unwrap());
+        assert!(!block_on(storage.put_if_newer("key", Bytes::from("equal"), 10)).unwrap());
+        let failing = ObservableStorage::new(FailingStorage, observability);
+        assert!(matches!(
+            block_on(failing.put_if_newer("key", Bytes::new(), 20)),
+            Err(StorageError::Timeout(_))
+        ));
+        assert_eq!(metrics.counter("put_if_newer.storage.num_calls"), 3);
+        assert_eq!(metrics.counter("put_if_newer.storage.num_unchanged"), 1);
+        assert_eq!(metrics.counter("put_if_newer.storage.num_errors"), 1);
+        assert_eq!(metrics.counter("put.storage.num_cas_rejections"), 0);
+        assert_eq!(
+            metrics.histogram("put_if_newer.storage.latency_us").len(),
+            3
+        );
+        let rows = logger.rows();
+        assert_eq!(rows.len(), 3);
+        assert!(rows.iter().all(|row| row.api_call_name == "put_if_newer"));
+        assert_eq!(
+            string_vector_field(&rows[0], "request_context"),
+            Some(vec!["version:10".to_string(), "value_bytes:5".to_string(),])
+        );
+        assert_eq!(
+            string_vector_field(&rows[1], "response_context"),
+            Some(vec!["applied:0".to_string()])
+        );
+        assert_eq!(field(&rows[1], "success"), Some("1".to_string()));
+        assert_eq!(rows[1].error_code, None);
+        assert_eq!(rows[2].error_code.as_deref(), Some("Timeout"));
     }
 
     #[test]
     fn storage_error_codes_and_messages_preserve_categories() {
         for (error, code, message) in [
+            (
+                StorageError::InvalidPosition(-1),
+                "InvalidPosition",
+                "logical position must be nonnegative: -1",
+            ),
             (
                 StorageError::TransactionConflict(anyhow!("conflict source")),
                 "TransactionConflict",

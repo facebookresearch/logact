@@ -157,6 +157,36 @@ impl<S: Storage, E: Environment> Storage for CachingStorage<S, E> {
         }
         result
     }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        self.cache.borrow_mut().get(key);
+        let expires_at =
+            self.environment.with_clock(Clock::monotonic_time) + self.cache.borrow().config.ttl;
+        let result = self
+            .inner
+            .put_if_newer(key, value.clone(), new_position)
+            .await;
+        let mut cache = self.cache.borrow_mut();
+        match &result {
+            Ok(true) => cache.insert(
+                key,
+                CachedValue {
+                    value,
+                    position: new_position,
+                    expires_at,
+                },
+            ),
+            _ => {
+                cache.get(key);
+            }
+        }
+        result
+    }
 }
 
 #[cfg(test)]
@@ -177,6 +207,52 @@ mod tests {
         max_value_bytes: 8 * 1024 * 1024,
     };
 
+    #[test]
+    fn put_if_newer_caches_only_accepted_values() {
+        block_on(async {
+            let inner = Rc::new(InMemoryStorage::new());
+            let storage =
+                CachingStorage::new(inner.clone(), Rc::new(Simulator::new(0)), CACHE_CONFIG);
+            assert!(
+                storage
+                    .put_if_newer("key", Bytes::from("cached"), 10)
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(
+                storage.cache.borrow().values.peek("key").unwrap().position,
+                10
+            );
+            assert!(
+                inner
+                    .put_if_newer("key", Bytes::from("newer"), 20)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                !storage
+                    .put_if_newer("key", Bytes::from("rejected"), 15)
+                    .await
+                    .unwrap()
+            );
+            assert!(storage.cache.borrow().values.peek("key").is_none());
+            assert_eq!(
+                storage.get("key").await.unwrap(),
+                Some((Bytes::from("newer"), 20))
+            );
+            assert!(
+                !storage
+                    .put_if_newer("key", Bytes::from("equal"), 20)
+                    .await
+                    .unwrap()
+            );
+            assert_eq!(
+                storage.get("key").await.unwrap(),
+                Some((Bytes::from("newer"), 20))
+            );
+        });
+    }
+
     struct DelayedWriteStorage {
         inner: InMemoryStorage,
         release: RefCell<Option<oneshot::Receiver<()>>>,
@@ -196,6 +272,22 @@ mod tests {
             new_position: i64,
         ) -> StorageResult<bool> {
             let result = self.inner.put(key, value, expected, new_position).await;
+            let release = self.release.borrow_mut().take();
+            if let Some(release) = release {
+                release
+                    .await
+                    .expect("test should release the write response");
+            }
+            result
+        }
+
+        async fn put_if_newer(
+            &self,
+            key: &str,
+            value: Bytes,
+            new_position: i64,
+        ) -> StorageResult<bool> {
+            let result = self.inner.put_if_newer(key, value, new_position).await;
             let release = self.release.borrow_mut().take();
             if let Some(release) = release {
                 release
@@ -233,6 +325,37 @@ mod tests {
             assert_eq!(
                 storage.get("key").await.unwrap(),
                 Some((Bytes::from_static(b"new"), 11))
+            );
+        });
+    }
+
+    #[test]
+    fn delayed_put_if_newer_response_preserves_newer_cached_value() {
+        block_on(async {
+            let (release, wait) = oneshot::channel();
+            let storage = CachingStorage::new(
+                Rc::new(DelayedWriteStorage {
+                    inner: InMemoryStorage::new(),
+                    release: RefCell::new(Some(wait)),
+                }),
+                Rc::new(Simulator::new(0)),
+                CACHE_CONFIG,
+            );
+            let old = storage.put_if_newer("key", Bytes::from("old"), 10);
+            let new = async {
+                assert!(
+                    storage
+                        .put_if_newer("key", Bytes::from("new"), 20)
+                        .await
+                        .unwrap()
+                );
+                release.send(()).unwrap();
+            };
+            let (old, ()) = futures::join!(old, new);
+            assert!(old.unwrap());
+            assert_eq!(
+                storage.get("key").await.unwrap(),
+                Some((Bytes::from("new"), 20))
             );
         });
     }

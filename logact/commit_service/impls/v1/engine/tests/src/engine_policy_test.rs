@@ -177,6 +177,15 @@ impl Storage for RetryTestStorage {
         }
         self.inner.put(key, value, expected, new_position).await
     }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        self.inner.put_if_newer(key, value, new_position).await
+    }
 }
 
 struct PersistentConflictStorage {
@@ -215,6 +224,15 @@ impl Storage for PersistentConflictStorage {
             )));
         }
         self.inner.put(key, value, expected, new_position).await
+    }
+
+    async fn put_if_newer(
+        &self,
+        key: &str,
+        value: Bytes,
+        new_position: i64,
+    ) -> StorageResult<bool> {
+        self.inner.put_if_newer(key, value, new_position).await
     }
 }
 
