@@ -51,7 +51,8 @@ pub enum CommitError {
     #[error(transparent)]
     InvalidArgument(anyhow::Error),
 
-    /// A concurrency failure occurred.
+    /// A concurrency failure occurred. The operation may still take effect, e.g.
+    /// when the failure follows appending an intention to the bus.
     #[error(transparent)]
     Concurrency(anyhow::Error),
 

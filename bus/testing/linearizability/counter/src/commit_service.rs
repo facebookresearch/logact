@@ -342,7 +342,7 @@ where
 pub fn commit_outcome_unknown(error: &anyhow::Error) -> bool {
     matches!(
         error.downcast_ref::<CommitError>(),
-        Some(CommitError::Timeout(_) | CommitError::Unavailable(_))
+        Some(CommitError::Concurrency(_) | CommitError::Timeout(_) | CommitError::Unavailable(_))
     ) || outcome_unknown(error)
 }
 
