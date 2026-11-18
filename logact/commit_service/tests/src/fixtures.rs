@@ -63,6 +63,7 @@ pub use lease::LeaseBasedTestPolicyProvider;
 pub use observable::ObservableCommitServiceFixture;
 pub use random_routing::CommitServiceV1ProductionShape;
 pub use random_routing::RandomRoutingCommitServiceFixture;
+pub use random_routing::RandomRoutingFixture;
 pub use replay::ReplayCommitServiceFixture;
 pub use replay::TestCheckpoints;
 pub use v1::CommitServiceV1Fixture;

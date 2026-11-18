@@ -18,14 +18,10 @@ use crate::fixtures::DeciderPolicyFixture;
 use crate::fixtures::SimulatorFixture;
 use crate::simulator::Simulator;
 
-/// Wraps a commit-service fixture with queues shared by all its service handles.
-pub struct BufferingCommitServiceFixture<CF>
-where
-    CF: ConformanceFixture,
-    CF::Impl: CommitSvc,
-{
+/// Each `create_impl` is a separate server: a `BufferingCommitService` with its
+/// own queues over a new service from `CF`.
+pub struct BufferingCommitServiceFixture<CF> {
     inner: CF,
-    service: BufferingCommitService<CF::Impl>,
 }
 
 impl<CF> ConformanceFixture for BufferingCommitServiceFixture<CF>
@@ -41,7 +37,7 @@ where
     }
 
     fn create_impl(&self) -> Self::Impl {
-        self.service.clone()
+        BufferingCommitService::new(self.inner.create_impl())
     }
 }
 
@@ -51,24 +47,15 @@ where
     CF::Impl: CommitSvc,
 {
     fn new(simulator: Simulator) -> Self {
-        Self::from_inner(CF::new(simulator))
+        Self {
+            inner: CF::new(simulator),
+        }
     }
 
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
-        Ok(Self::from_inner(CF::try_new_with_config(
-            simulator, config,
-        )?))
-    }
-}
-
-impl<CF> BufferingCommitServiceFixture<CF>
-where
-    CF: ConformanceFixture<Env = Simulator>,
-    CF::Impl: CommitSvc,
-{
-    fn from_inner(inner: CF) -> Self {
-        let service = BufferingCommitService::new(inner.create_impl());
-        Self { inner, service }
+        Ok(Self {
+            inner: CF::try_new_with_config(simulator, config)?,
+        })
     }
 }
 

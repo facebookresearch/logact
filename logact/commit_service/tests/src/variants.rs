@@ -57,6 +57,18 @@ macro_rules! commit_service_fixtures {
             ]
             $(, $ctx)?
         );
+        // Buffered V1 replicas behind a router. Clients of a bus mostly reach its
+        // home replica, so they contend in that replica's queues.
+        $cb!(
+            [
+                $crate::fixtures::RandomRoutingFixture<
+                    $crate::fixtures::BufferingCommitServiceFixture<CommitServiceV1Fixture<FaultInjectingFixture<SimpleMemoryFixture>>>,
+                >,
+                random_routing_buffered_v1_simple_memory,
+                sim
+            ]
+            $(, $ctx)?
+        );
         // Observability decorator over a single V1 service and over a router.
         $cb!(
             [

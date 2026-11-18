@@ -8,14 +8,13 @@
 //! A test-only `CommitSvc` that routes requests to each bus's home replica,
 //! with optional random misrouting, plus a fixture for the generic suite.
 //!
-//! The fixture builds `NUM_SERVICES` engine front-ends once, each over its own
-//! bus from the injected `AgentBusTestFixture` (all onto one shared log), with one
-//! shared storage and one shared decider-policy register. Every `create_impl` is
-//! a router over those same engines, routing each request by its bus ID.
-//! Because the engines share the log (one total order), the storage (one cursor /
-//! decider state, advanced under CAS), and the policy register, they behave as
-//! one logical service with several front-ends, shared by every client, so
-//! routing requests across them stays linearizable.
+//! The fixture builds `NUM_SERVICES` replicas once, each one `create_impl` of a
+//! commit-service fixture. Every `create_impl` is a router over those same
+//! replicas, routing each request by its bus ID. For V1 replicas, which share
+//! the log (one total order), the storage (one cursor / decider state, advanced
+//! under CAS), and the policy register, they behave as one logical service with
+//! several front-ends, shared by every client, so routing requests across them
+//! stays linearizable.
 
 use std::hash::DefaultHasher;
 use std::hash::Hash;
@@ -36,9 +35,6 @@ use agentbus_api::PollResponse;
 use agentbus_api::ReadNextRequest;
 use agentbus_api::ReadNextResponse;
 use agentbus_api::validation::validate_bus_id;
-use agentbus_tests::fixtures::AgentBusTestFixture;
-use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
-use anyhow::Context as _;
 use anyhow::Result;
 use conformance::TestConfig;
 use logact_commit_service_api::CommitIntentionCommand;
@@ -46,27 +42,17 @@ use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_api::CreateBusCommand;
-use logact_commit_service_engine::CachingStorage;
-use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
-use logact_commit_service_engine::Storage;
-use logact_commit_service_engine::load_engine_state;
-use logact_commit_service_engine_tests::fixtures::EnvStorageFixture;
 use logact_commit_service_engine_tests::fixtures::InMemoryStorageFixture;
 use logact_commit_service_engine_tests::fixtures::ScopedStorageFixture;
-use logact_commit_service_engine_tests::fixtures::StorageTestFixture;
-use logact_commit_service_v1::CommitServiceV1;
-use logact_commit_service_v1::DelegatingVoterFactory;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 use rand::RngExt as _;
 
 use crate::fixtures::CheckpointFixture;
+use crate::fixtures::CommitServiceV1Fixture;
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::DeciderPolicyFixture;
-use crate::fixtures::SettableDeciderPolicy;
 use crate::fixtures::SimulatorFixture;
-use crate::fixtures::TestPolicyProvider;
-use crate::fixtures::build_v1;
 use crate::simulator::Simulator;
 
 /// Routes each commit request by its bus ID, as production does: to the bus's
@@ -214,57 +200,27 @@ impl<S: CommitSvc, E: Environment> CommitSvc for RandomRoutingCommitService<S, E
     }
 }
 
-/// Number of underlying instances to route across.
+/// Number of replicas to route across.
 const NUM_SERVICES: usize = 3;
 
-type RoutedV1<T, P, S> = CommitServiceV1<
-    T,
-    DelegatingVoterFactory,
-    CachingStorage<S, Simulator>,
-    P,
-    DeciderFactoryImpl<S>,
-    Simulator,
->;
+/// Runs the generic suite against a router over `NUM_SERVICES` replicas, each
+/// one `create_impl` of the commit-service fixture `CF`. `CF`'s replicas share
+/// its durable state, so they behave as one logical service.
+pub struct RandomRoutingFixture<CF: ConformanceFixture> {
+    inner: CF,
+    router: RandomRoutingCommitService<CF::Impl, Simulator>,
+}
 
-/// Runs the generic suite against a router over `NUM_SERVICES` v1 services, with
-/// the bus from the injected `AgentBusTestFixture`, one storage shared by every
-/// service from the storage fixture `SF`, and one shared policy provider. Generic
-/// over the provider `P`; the variant list pins it to the default
-/// `SynchronousRegisterProvider`, while `#[scenario_for]` tests can pin a
-/// different provider.
-pub struct RandomRoutingCommitServiceFixture<
+/// A router over V1 replicas with the bus from the injected
+/// `AgentBusTestFixture`, one storage shared by every replica from the storage
+/// fixture `SF`, and one shared policy provider. Generic over the provider `P`;
+/// the variant list pins it to the default `SynchronousRegisterProvider`, while
+/// `#[scenario_for]` tests can pin a different provider.
+pub type RandomRoutingCommitServiceFixture<
     BF,
     P = SynchronousRegisterProvider<InMemoryStorage>,
     SF = InMemoryStorageFixture,
-> where
-    BF: AgentBusTestFixture<Env = Simulator>,
-    P: TestPolicyProvider,
-    SF: StorageTestFixture,
-{
-    bus_fixture: BF,
-    policy_controller: P::Controller,
-    storage: Rc<SF::Impl>,
-    router: RandomRoutingCommitService<RoutedV1<BF::Impl, P, SF::Impl>, Simulator>,
-}
-
-/// Build a v1 engine over a `bus` front-end, the shared `storage`, and the shared
-/// `policy` provider. Each engine gets a fresh bus handle (onto the same shared
-/// log) and a clone of the one `Rc` storage handle and the one provider, so they
-/// all read and write the same log, engine state, and policy.
-fn make_v1<T: AgentBus + Clone + 'static, P: TestPolicyProvider, S: Storage + 'static>(
-    bus: T,
-    storage: Rc<S>,
-    policy: P,
-    environment: Rc<Simulator>,
-) -> RoutedV1<T, P, S> {
-    build_v1(
-        bus,
-        storage,
-        |_| DelegatingVoterFactory::default(),
-        policy,
-        environment,
-    )
-}
+> = RandomRoutingFixture<CommitServiceV1Fixture<BF, P, SF>>;
 
 /// The commit service as production deploys it, with in-memory stand-ins for
 /// ZippyDB: requests routed across replicas, each with its own
@@ -276,98 +232,69 @@ pub type CommitServiceV1ProductionShape = RandomRoutingCommitServiceFixture<
     ScopedStorageFixture,
 >;
 
-impl<BF, P, SF> ConformanceFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
+impl<CF> ConformanceFixture for RandomRoutingFixture<CF>
 where
-    BF: AgentBusTestFixture<Env = Simulator>,
-    BF::Impl: Clone + 'static,
-    P: TestPolicyProvider,
-    SF: StorageTestFixture<Impl: 'static>,
+    CF: ConformanceFixture<Env = Simulator, Impl: CommitSvc + Clone>,
 {
     type Env = Simulator;
-    type Impl = RandomRoutingCommitService<RoutedV1<BF::Impl, P, SF::Impl>, Simulator>;
+    type Impl = RandomRoutingCommitService<CF::Impl, Simulator>;
 
     fn get_env(&self) -> Rc<Self::Env> {
-        self.bus_fixture.get_env()
+        self.inner.get_env()
     }
 
-    /// A router over the shared engines. Every clone shares the salt, so it routes
-    /// each bus to the same home engine.
+    /// A router over the shared replicas. Every clone shares the salt, so it
+    /// routes each bus to the same home replica.
     fn create_impl(&self) -> Self::Impl {
         self.router.clone()
     }
 }
 
-impl<BF, P, SF> SimulatorFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
+impl<CF> SimulatorFixture for RandomRoutingFixture<CF>
 where
-    BF: AgentBusTestFixture<Env = Simulator> + BusSimulatorFixture,
-    BF::Impl: Clone + 'static,
-    P: TestPolicyProvider,
-    SF: EnvStorageFixture<Impl: 'static>,
+    CF: ConformanceFixture<Env = Simulator, Impl: CommitSvc + Clone> + SimulatorFixture,
 {
     fn new(simulator: Simulator) -> Self {
         Self::try_new_with_config(simulator, &TestConfig::default())
             .expect("the default config should be valid")
     }
 
-    /// The scenario's config goes to both the bus and the storage fixture.
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
-        let bus_fixture = <BF as BusSimulatorFixture>::try_new_with_config(simulator, config)?;
-        let env = bus_fixture.get_env();
-        let storage = Rc::new(SF::try_new_on_env(env.clone(), config)?.create_impl());
-        let (policy, policy_controller) = P::for_test(bus_fixture.get_env());
-        let services = (0..NUM_SERVICES)
-            .map(|_| {
-                make_v1(
-                    bus_fixture.create_impl(),
-                    storage.clone(),
-                    policy.clone(),
-                    env.clone(),
-                )
-            })
-            .collect();
-        Ok(Self {
-            bus_fixture,
-            policy_controller,
-            storage,
-            router: RandomRoutingCommitService::new(services, env)
-                .with_switch_probability(1.0 - config.stickiness()),
-        })
+        let inner = CF::try_new_with_config(simulator, config)?;
+        let replicas = (0..NUM_SERVICES).map(|_| inner.create_impl()).collect();
+        let router = RandomRoutingCommitService::new(replicas, inner.get_env())
+            .with_switch_probability(1.0 - config.stickiness());
+        Ok(Self { inner, router })
     }
 }
 
-impl<BF, P, SF> CheckpointFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
+impl<CF> CheckpointFixture for RandomRoutingFixture<CF>
 where
-    BF: AgentBusTestFixture<Env = Simulator>,
-    BF::Impl: Clone,
-    P: TestPolicyProvider,
-    P::Controller: SettableDeciderPolicy,
-    SF: StorageTestFixture<Impl: 'static>,
+    CF: CheckpointFixture<Env = Simulator, Impl: Clone>,
 {
-    /// The shared engine-state cursor.
     async fn checkpoint_position(&self, _service: &Self::Impl, bus_id: &str) -> Result<i64> {
-        load_engine_state(&*self.storage, bus_id)
-            .await?
-            .1
-            .context("no engine state")
+        self.inner
+            .checkpoint_position(&self.inner.create_impl(), bus_id)
+            .await
     }
 
     fn is_checkpoint_durable(&self) -> bool {
-        true
+        self.inner.is_checkpoint_durable()
     }
 }
 
-impl<BF, P, SF> DeciderPolicyFixture for RandomRoutingCommitServiceFixture<BF, P, SF>
+impl<CF> DeciderPolicyFixture for RandomRoutingFixture<CF>
 where
-    BF: AgentBusTestFixture<Env = Simulator>,
-    BF::Impl: Clone,
-    P: TestPolicyProvider,
-    P::Controller: SettableDeciderPolicy,
-    SF: StorageTestFixture<Impl: 'static>,
+    CF: DeciderPolicyFixture<Env = Simulator, Impl: Clone>,
 {
-    type Controller = P::Controller;
+    type Controller = CF::Controller;
 
     fn policy_controller(&self) -> Self::Controller {
-        self.policy_controller.clone()
+        self.inner.policy_controller()
+    }
+
+    fn supports_first_boolean_wins(&self) -> bool {
+        self.inner.supports_first_boolean_wins()
     }
 }
 
