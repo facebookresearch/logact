@@ -12,13 +12,10 @@
 //! with `spawn_local()`. This module keeps the state behind a cloneable channel
 //! handle, following the channeled AgentBus pattern.
 
-use std::io;
-use std::panic::AssertUnwindSafe;
 use std::rc::Rc;
 
 use agentbus_api::AgentBus;
 use agentbus_api::Environment;
-use agentbus_api::RealEnvironment;
 use logact_commit_service_api::CommitError;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
@@ -55,51 +52,6 @@ pub struct ChanneledCommitServiceHandle {
 }
 
 impl<B> ChanneledCommitService<B> {
-    /// Try to create an in-process channel-backed service. The underlying
-    /// service runs on a dedicated current-thread runtime so `Rc`-based
-    /// implementations can be shared with `Send` callers such as a tonic
-    /// server.
-    #[deprecated(note = "Use `new_on_environment`, which takes the caller's environment.")]
-    pub fn try_new_in_process<S, Factory>(bus: B, factory: Factory) -> io::Result<Self>
-    where
-        S: CommitSvc + 'static,
-        B: AgentBus + Clone + Send + 'static,
-        Factory: FnOnce(B) -> S + Send + 'static,
-    {
-        let (tx, rx) = unbounded_channel::<Op>();
-        let worker_bus = bus.clone();
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-        std::thread::Builder::new()
-            .name("commit-svc".to_string())
-            .spawn(move || {
-                // The receiver is owned by the worker. Unwinding drops it and
-                // all in-flight replies before the panic is logged, so callers
-                // observe `WorkerTerminated`.
-                let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    let local = tokio::task::LocalSet::new();
-                    local.block_on(&runtime, async move {
-                        let env = Rc::new(RealEnvironment::new());
-                        Self::run_worker(factory(worker_bus), env, rx).await;
-                    });
-                }));
-                if let Err(payload) = result {
-                    let message = payload
-                        .downcast_ref::<&str>()
-                        .copied()
-                        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                        .unwrap_or("non-string panic payload");
-                    tracing::error!(panic = message, "CommitService worker thread panicked");
-                }
-            })?;
-
-        Ok(Self {
-            commit: ChanneledCommitServiceHandle { tx },
-            bus,
-        })
-    }
-
     /// Create a channel-backed handle that runs on the provided environment's
     /// local executor. The same logical bus is retained for `agent_bus()` and
     /// passed to `factory` for the worker-owned commit-service implementation.
