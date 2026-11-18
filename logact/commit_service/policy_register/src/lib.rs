@@ -26,6 +26,7 @@ pub mod lease;
 pub mod storage;
 pub mod synchronous_provider;
 
+pub use lease::DEFAULT_POLICY_LEASE_CONFIG;
 pub use lease::LeaseBasedPolicyRegister;
 pub use lease::PolicyLeaseConfig;
 pub use storage::StoragePolicyRegister;

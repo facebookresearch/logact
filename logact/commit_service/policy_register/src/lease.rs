@@ -27,6 +27,14 @@ use crate::PolicyRegister;
 use crate::PolicyRegisterError;
 use crate::PolicyRegisterResult;
 
+/// Timing bounds for commit-service policy registers. Every reader and every
+/// writer of a register must use the same bounds.
+pub const DEFAULT_POLICY_LEASE_CONFIG: PolicyLeaseConfig = PolicyLeaseConfig {
+    lease_duration: Duration::from_secs(5 * 60),
+    drift_allowance: Duration::from_secs(30),
+    recovery_grace: Duration::from_secs(10),
+};
+
 /// A [`PolicyRegister`] that adds the [`agentbus_lease`] protocol to another
 /// register.
 ///

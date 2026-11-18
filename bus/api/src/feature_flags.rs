@@ -25,6 +25,9 @@ pub struct FeatureFlags {
     /// action output, agent output, and mail. Intentions, votes, decisions,
     /// and policy updates are not allowed.
     pub disable_direct_agentbus_appends: bool,
+    /// Serve commit-service policy reads from a lease over the policy register
+    /// instead of reading the register on every commit.
+    pub enable_leased_policy_reads: bool,
 }
 
 impl Default for FeatureFlags {
@@ -35,6 +38,7 @@ impl Default for FeatureFlags {
             enable_background_replay_checkpoints: false,
             enable_commit_buffering: true,
             disable_direct_agentbus_appends: false,
+            enable_leased_policy_reads: false,
         }
     }
 }
