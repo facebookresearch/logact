@@ -113,6 +113,7 @@ mod tests {
     use std::time::Duration;
 
     use agent_bus_proto_rust::agent_bus::DeciderPolicy;
+    use agent_bus_proto_rust::agent_bus::LeasingMetadata;
     use agent_bus_proto_rust::agent_bus::VoterConfig;
     use agentbus_api::RetryConfig;
     use agentbus_simulator::Simulator;
@@ -321,6 +322,26 @@ mod tests {
             PolicyRegisterError::Storage(StorageError::TransactionConflict(_))
         ));
         assert_eq!(storage.put_calls.get(), 2);
+    }
+
+    #[test]
+    fn leasing_metadata_round_trips() {
+        let (_, register) = register();
+        let state = PolicyState {
+            leasing: Some(LeasingMetadata {
+                revoked: true,
+                visible_version: Some(vec![1, 2]),
+                lease_duration_ms: 1000,
+            }),
+            ..policy(DeciderPolicy::OnByDefault)
+        };
+        let version =
+            block_on(register.set_policy(&state, None)).expect("policy should be installed");
+
+        assert_eq!(
+            block_on(register.read_validated()).expect("policy should be readable"),
+            VersionedPolicyState { state, version }
+        );
     }
 
     #[test]

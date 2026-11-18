@@ -29,7 +29,8 @@ pub struct VersionedPolicy {
 }
 
 /// A stored [`PolicyState`] and its version, as kept by durable policy
-/// sources.
+/// sources. Its `leasing` field belongs to the lease protocol and is not part
+/// of the [`Policy`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct VersionedPolicyState {
     pub state: PolicyState,
@@ -45,9 +46,11 @@ impl TryFrom<&PolicyState> for Policy {
     type Error = InvalidPolicyState;
 
     fn try_from(state: &PolicyState) -> Result<Self, Self::Error> {
+        // `leasing` is lease-protocol metadata, not part of the policy.
         let PolicyState {
             decider_policy,
             voters,
+            leasing: _,
         } = state;
         let raw = decider_policy
             .ok_or_else(|| InvalidPolicyState("missing decider policy".to_string()))?;
@@ -76,6 +79,7 @@ impl From<Policy> for PolicyState {
         PolicyState {
             decider_policy: Some(decider_policy as i32),
             voters,
+            leasing: None,
         }
     }
 }
@@ -103,6 +107,7 @@ pub trait PolicyProvider {
 
 #[cfg(test)]
 mod tests {
+    use agent_bus_proto_rust::agent_bus::LeasingMetadata;
     use agent_bus_proto_rust::agent_bus::voter_config;
 
     use super::*;
@@ -130,6 +135,21 @@ mod tests {
     }
 
     #[test]
+    fn leasing_metadata_is_not_part_of_the_policy() {
+        let mut state = PolicyState::from(Policy {
+            decider_policy: DeciderPolicy::OnByDefault,
+            voters: HashMap::new(),
+        });
+        assert_eq!(state.leasing, None);
+        let policy = Policy::try_from(&state).expect("valid state");
+        state.leasing = Some(LeasingMetadata {
+            revoked: true,
+            ..Default::default()
+        });
+        assert_eq!(Policy::try_from(&state).expect("valid state"), policy);
+    }
+
+    #[test]
     fn invalid_policy_states_are_rejected() {
         let error = |state: PolicyState| {
             Policy::try_from(&state)
@@ -150,6 +170,7 @@ mod tests {
                 voters: [("voter".to_string(), VoterConfig::default())]
                     .into_iter()
                     .collect(),
+                ..Default::default()
             }),
             "voter 'voter' has no configuration"
         );

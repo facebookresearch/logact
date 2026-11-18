@@ -355,6 +355,21 @@ message BlockingPollResponse {
   int64 next_start_position = 2;
 }
 
+// Stored form of `agentbus_lease::LeaseMetadata`. Values without it were
+// written without the lease protocol, and readers never cache them.
+message LeasingMetadata {
+  // Set while a writer revokes the lease on this value and waits for
+  // outstanding leases to expire. Readers must not cache it.
+  bool revoked = 1;
+  // The version reported to callers instead of the stored version, encoded by
+  // the cell. Set when a reservation or recovery rewrites a value without
+  // changing it.
+  optional bytes visible_version = 2;
+  // The longest lease readers may grant on this value. Zero if unknown, so
+  // readers do not cache the value.
+  uint64 lease_duration_ms = 3;
+}
+
 /**
  * AgentBus service interface
  */

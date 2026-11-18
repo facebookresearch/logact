@@ -15,4 +15,8 @@ import "agentbus_proto/agent_bus.proto";
 message PolicyState {
   optional agent_bus.DeciderPolicy decider_policy = 1;
   map<string, agent_bus.VoterConfig> voters = 2;
+  // Owned by the lease-based policy register. Absent on values written
+  // without the lease protocol, which readers do not cache. Not part of the
+  // policy.
+  agent_bus.LeasingMetadata leasing = 3;
 }
