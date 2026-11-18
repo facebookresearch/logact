@@ -191,8 +191,9 @@ where
     }
 
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
-        let (policy, policy_controller) = PolicyProvider::for_test();
         let bus_fixture = BF::try_new_with_config(simulator, config)?;
+        let (policy, policy_controller) =
+            <PolicyProvider as TestPolicyProvider>::for_test(bus_fixture.get_env());
         let checkpoints = C::new(bus_fixture.get_env());
         Ok(Self {
             bus_fixture,

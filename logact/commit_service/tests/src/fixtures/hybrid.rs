@@ -200,7 +200,8 @@ where
         let bus_fixture = BF::try_new_with_config(simulator, config)?;
         let storage =
             InMemoryStorageFixture::try_new_on_env(bus_fixture.get_env(), config)?.create_impl();
-        let (policy, policy_controller) = PolicyProvider::for_test();
+        let (policy, policy_controller) =
+            <PolicyProvider as TestPolicyProvider>::for_test(bus_fixture.get_env());
         Ok(Self {
             bus_fixture,
             policy,

@@ -12,14 +12,24 @@
 #[macro_export]
 macro_rules! policy_register_fixtures {
     ($cb:path) => {
+        $cb!([$crate::fixtures::InMemoryPolicyRegisterFixture, in_memory, sim]);
         $cb!([
-            $crate::fixtures::InMemoryPolicyRegisterFixture,
-            in_memory,
+            $crate::fixtures::LeaseBasedPolicyRegisterFixture<
+                $crate::fixtures::InMemoryPolicyRegisterFixture,
+            >,
+            lease_in_memory,
             sim
         ]);
         $cb!([
             $crate::fixtures::SqlitePolicyRegisterFixture,
             sqlite_file,
+            integration
+        ]);
+        $cb!([
+            $crate::fixtures::LeaseBasedPolicyRegisterFixture<
+                $crate::fixtures::SqlitePolicyRegisterFixture,
+            >,
+            lease_sqlite_file,
             integration
         ]);
     };

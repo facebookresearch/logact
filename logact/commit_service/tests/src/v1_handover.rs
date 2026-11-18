@@ -64,7 +64,10 @@ fn v1_and_shared_replay_hand_over_a_bus_without_migration() {
     let handle = environment.spawn(async move {
         let environment = task_environment;
         let storage = Rc::new(InMemoryStorage::new());
-        let (policy, _controller) = SynchronousRegisterProvider::<InMemoryStorage>::for_test();
+        let (policy, _controller) =
+            <SynchronousRegisterProvider<InMemoryStorage> as TestPolicyProvider>::for_test(
+                environment.clone(),
+            );
         let v1 = || {
             build_v1(
                 bus_fixture.create_impl(),

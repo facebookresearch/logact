@@ -13,11 +13,14 @@
 use logact_commit_service_policy_register::PolicyRegister;
 
 pub mod in_memory;
+pub mod lease;
 pub mod sqlite;
 
 pub use conformance::ConformanceFixture;
 pub use conformance::SimulatorFixture;
 pub use in_memory::InMemoryPolicyRegisterFixture;
+pub use lease::LeaseBasedPolicyRegisterFixture;
+pub use lease::LeasedFixture;
 pub use sqlite::SqlitePolicyRegisterFixture;
 
 /// The `PolicyRegister`-specific view of a fixture, which scenarios bind on.

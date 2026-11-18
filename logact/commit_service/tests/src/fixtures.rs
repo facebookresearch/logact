@@ -35,12 +35,15 @@ use logact_commit_service_v1::DelegatingVoterFactory;
 use logact_commit_service_v1::StaticConfigPolicyProvider;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 
+use crate::simulator::Simulator;
+
 pub mod buffering;
 pub mod buggy_stale_position;
 pub mod channeled;
 pub mod grpc;
 pub mod hybrid;
 pub mod inmem;
+pub mod lease;
 pub mod observable;
 pub mod random_routing;
 pub mod replay;
@@ -56,6 +59,7 @@ pub use conformance::SimulatorFixture;
 pub use grpc::GrpcCommitServiceFixture;
 pub use hybrid::HybridCommitServiceFixture;
 pub use inmem::InMemCommitServiceFixture;
+pub use lease::LeaseBasedTestPolicyProvider;
 pub use observable::ObservableCommitServiceFixture;
 pub use random_routing::CommitServiceV1ProductionShape;
 pub use random_routing::RandomRoutingCommitServiceFixture;
@@ -80,7 +84,7 @@ where
     B: AgentBus + Clone + 'static,
     VF: VoterFactory + 'static,
     S: Storage + 'static,
-    P: TestPolicyProvider,
+    P: TestPolicyProvider<E>,
     E: Environment + 'static,
 {
     let voter_factory = make_voter_factory(storage.clone());
@@ -112,8 +116,8 @@ where
 pub trait CommitServiceTestFixture: ConformanceFixture<Impl: CommitSvc> {}
 impl<F: ConformanceFixture<Impl: CommitSvc>> CommitServiceTestFixture for F {}
 
-/// A fixture that can update the decider policy used by its commit service.
-/// The next `commit_intention` observes an installed policy.
+/// A fixture with a controllable, register-backed policy. A completed policy
+/// update must be visible to subsequent commits, including through reader caches.
 pub trait DeciderPolicyFixture: CommitServiceTestFixture {
     type Controller: SettableDeciderPolicy;
 
@@ -152,16 +156,18 @@ pub trait CheckpointFixture: CommitServiceTestFixture {
 }
 
 /// A `PolicyProvider` and its test-only controller, constructed together.
-pub trait TestPolicyProvider: PolicyProvider<Error: Into<anyhow::Error>> + Clone + 'static {
+pub trait TestPolicyProvider<E: Environment = Simulator>:
+    PolicyProvider<Error: Into<anyhow::Error>> + Clone + 'static
+{
     type Controller: Clone + 'static;
 
-    fn for_test() -> (Self, Self::Controller);
+    fn for_test(environment: Rc<E>) -> (Self, Self::Controller);
 }
 
-impl TestPolicyProvider for SynchronousRegisterProvider<InMemoryStorage> {
+impl<E: Environment> TestPolicyProvider<E> for SynchronousRegisterProvider<InMemoryStorage> {
     type Controller = StoragePolicyRegister<InMemoryStorage>;
 
-    fn for_test() -> (Self, Self::Controller) {
+    fn for_test(_environment: Rc<E>) -> (Self, Self::Controller) {
         let voter_factory = DelegatingVoterFactory::default();
         let register = StoragePolicyRegister::new(Rc::new(InMemoryStorage::new()), "test-policy");
         futures::executor::block_on(register.set_policy(
@@ -181,12 +187,12 @@ impl TestPolicyProvider for SynchronousRegisterProvider<InMemoryStorage> {
     }
 }
 
-impl TestPolicyProvider for StaticConfigPolicyProvider {
+impl<E: Environment> TestPolicyProvider<E> for StaticConfigPolicyProvider {
     type Controller = ();
 
     /// Fixed at construction to deny — `OFF_BY_DEFAULT` with no voters — so the
     /// construction-time policy is observable as a denied `commit_intention`.
-    fn for_test() -> (Self, Self::Controller) {
+    fn for_test(_environment: Rc<E>) -> (Self, Self::Controller) {
         (
             StaticConfigPolicyProvider::new(DeciderPolicy::OffByDefault, Vec::new(), |_| Ok(())),
             (),

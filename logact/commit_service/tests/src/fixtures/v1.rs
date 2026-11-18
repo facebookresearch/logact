@@ -59,7 +59,7 @@ pub struct CommitServiceV1Fixture<
     P = SynchronousRegisterProvider<InMemoryStorage>,
     SF = InMemoryStorageFixture,
 > where
-    P: TestPolicyProvider,
+    P: TestPolicyProvider<BF::Env>,
     SF: StorageTestFixture,
 {
     bus_fixture: BF,
@@ -72,7 +72,7 @@ impl<BF, P, SF> ConformanceFixture for CommitServiceV1Fixture<BF, P, SF>
 where
     BF: AgentBusTestFixture,
     BF::Impl: Clone + 'static,
-    P: TestPolicyProvider,
+    P: TestPolicyProvider<BF::Env>,
     SF: StorageTestFixture<Impl: 'static>,
 {
     type Env = BF::Env;
@@ -116,7 +116,7 @@ where
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let bus_fixture = BF::try_new_with_config(simulator, config)?;
         let storage = SF::try_new_on_env(bus_fixture.get_env(), config)?.create_impl();
-        let (policy, policy_controller) = P::for_test();
+        let (policy, policy_controller) = P::for_test(bus_fixture.get_env());
         Ok(Self {
             bus_fixture,
             policy,

@@ -314,7 +314,7 @@ where
         let bus_fixture = <BF as BusSimulatorFixture>::try_new_with_config(simulator, config)?;
         let env = bus_fixture.get_env();
         let storage = Rc::new(SF::try_new_on_env(env.clone(), config)?.create_impl());
-        let (policy, policy_controller) = P::for_test();
+        let (policy, policy_controller) = P::for_test(bus_fixture.get_env());
         let services = (0..NUM_SERVICES)
             .map(|_| {
                 make_v1(

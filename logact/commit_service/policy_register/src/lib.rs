@@ -6,7 +6,8 @@
  */
 
 //! The policy register API: a versioned, structurally validated desired-policy
-//! register, with a [`logact_commit_service_engine::Storage`]-backed implementation.
+//! register, with a [`logact_commit_service_engine::Storage`]-backed implementation and a lease-based
+//! implementation that layers over any other register.
 
 use std::time::Duration;
 
@@ -21,12 +22,16 @@ use logact_commit_service_api::VersionedPolicyState;
 use logact_commit_service_engine::StorageError;
 use thiserror::Error;
 
+pub mod lease;
 pub mod storage;
 pub mod synchronous_provider;
 
+pub use lease::LeaseBasedPolicyRegister;
+pub use lease::PolicyLeaseConfig;
 pub use storage::StoragePolicyRegister;
+pub use synchronous_provider::RegisterPolicyProvider;
+pub use synchronous_provider::RegisterProviderError;
 pub use synchronous_provider::SynchronousRegisterProvider;
-pub use synchronous_provider::SynchronousRegisterProviderError;
 
 /// Failures while reading, validating, or mutating a policy register.
 #[derive(Debug, Error)]

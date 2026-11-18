@@ -30,6 +30,7 @@ macro_rules! commit_service_fixtures {
         // V1 over every AgentBus backend; `$cb` is forwarded through the registry to
         // `cs_bus_bridge`, which emits the V1 fixture per sim bus.
         agentbus_tests::agentbus_fixtures!($crate::cs_bus_bridge, ($cb $(, $ctx)?));
+        agentbus_tests::agentbus_fixtures!($crate::cs_lease_bus_bridge, ($cb $(, $ctx)?));
         // Deterministic latency-only V1 fixture. Registering it here runs every
         // generic commit-service scenario against the same fixture used by the
         // replay-latency scenario.
@@ -110,6 +111,27 @@ macro_rules! commit_service_fixtures {
         );
         // A random mix of V1 and replay servers over every AgentBus backend.
         agentbus_tests::agentbus_fixtures!($crate::cs_hybrid_bus_bridge, ($cb $(, $ctx)?));
+        $cb!([
+            $crate::fixtures::InMemCommitServiceFixture<$crate::fixtures::LeaseBasedTestPolicyProvider>,
+            lease_inmem,
+            sim
+        ] $(, $ctx)?);
+        $cb!([
+            $crate::fixtures::RandomRoutingCommitServiceFixture<
+                SimpleMemoryFixture,
+                $crate::fixtures::LeaseBasedTestPolicyProvider
+            >,
+            lease_random_routing,
+            sim
+        ] $(, $ctx)?);
+        $cb!([
+            $crate::fixtures::RandomRoutingCommitServiceFixture<
+                FaultInjectingFixture<SimpleMemoryFixture>,
+                $crate::fixtures::LeaseBasedTestPolicyProvider
+            >,
+            lease_random_routing_fault,
+            sim
+        ] $(, $ctx)?);
     };
 }
 
@@ -143,6 +165,24 @@ macro_rules! cs_hybrid_bus_bridge {
     ([$bus:ty, $sfx:ident, sim], ($cb:path $(, $ctx:tt)?)) => {
         paste::paste! {
             $cb!([$crate::fixtures::HybridCommitServiceFixture<$bus>, [<hybrid_ $sfx>], sim] $(, $ctx)?);
+        }
+    };
+    ([$bus:ty, $sfx:ident, integration], ($cb:path $(, $ctx:tt)?)) => {};
+}
+
+/// Run the same simulator scenarios with independent lease-based reader caches.
+#[macro_export]
+macro_rules! cs_lease_bus_bridge {
+    ([$bus:ty, $sfx:ident, sim], ($cb:path $(, $ctx:tt)?)) => {
+        paste::paste! {
+            $cb!([
+                $crate::fixtures::CommitServiceV1Fixture<
+                    $bus,
+                    $crate::fixtures::LeaseBasedTestPolicyProvider
+                >,
+                [<lease_ $sfx>],
+                sim
+            ] $(, $ctx)?);
         }
     };
     ([$bus:ty, $sfx:ident, integration], ($cb:path $(, $ctx:tt)?)) => {};

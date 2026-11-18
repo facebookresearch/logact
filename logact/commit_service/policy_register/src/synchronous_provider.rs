@@ -17,7 +17,6 @@ use logact_commit_service_api::Policy;
 use logact_commit_service_api::PolicyProvider;
 use logact_commit_service_api::VersionedPolicy;
 use logact_commit_service_api::VersionedPolicyState;
-use logact_commit_service_engine::Storage;
 use thiserror::Error;
 
 use crate::PolicyRegister;
@@ -26,20 +25,24 @@ use crate::StoragePolicyRegister;
 
 /// Failures while reading a policy for use by this node.
 #[derive(Debug, Error)]
-pub enum SynchronousRegisterProviderError {
+pub enum RegisterProviderError {
     #[error(transparent)]
     Register(#[from] PolicyRegisterError),
     #[error("policy is unsupported by this node: {message}")]
     UnsupportedPolicy { message: String },
 }
 
-/// A synchronous read-consistency mechanism over a policy register.
-pub struct SynchronousRegisterProvider<S> {
-    register: StoragePolicyRegister<S>,
+/// A provider that reads a policy register and checks that this node supports
+/// the policy.
+pub struct RegisterPolicyProvider<R> {
+    register: R,
     validate_policy: Rc<dyn Fn(&Policy) -> anyhow::Result<()>>,
 }
 
-impl<S> Clone for SynchronousRegisterProvider<S> {
+/// A provider that reads the stored register on every lookup.
+pub type SynchronousRegisterProvider<S> = RegisterPolicyProvider<StoragePolicyRegister<S>>;
+
+impl<R: Clone> Clone for RegisterPolicyProvider<R> {
     fn clone(&self) -> Self {
         Self {
             register: self.register.clone(),
@@ -48,11 +51,11 @@ impl<S> Clone for SynchronousRegisterProvider<S> {
     }
 }
 
-impl<S: Storage> SynchronousRegisterProvider<S> {
+impl<R: PolicyRegister> RegisterPolicyProvider<R> {
     /// Create a provider that reads `register` and validates node support on
     /// every policy lookup.
     pub fn new(
-        register: StoragePolicyRegister<S>,
+        register: R,
         validate_policy: impl Fn(&Policy) -> anyhow::Result<()> + 'static,
     ) -> Self {
         Self {
@@ -62,8 +65,8 @@ impl<S: Storage> SynchronousRegisterProvider<S> {
     }
 }
 
-impl<S: Storage> PolicyProvider for SynchronousRegisterProvider<S> {
-    type Error = SynchronousRegisterProviderError;
+impl<R: PolicyRegister> PolicyProvider for RegisterPolicyProvider<R> {
+    type Error = RegisterProviderError;
 
     async fn read(&self, _bus_id: &str) -> Result<VersionedPolicy, Self::Error> {
         let VersionedPolicyState { state, version } = self.register.read_validated().await?;
@@ -72,7 +75,7 @@ impl<S: Storage> PolicyProvider for SynchronousRegisterProvider<S> {
             version,
         };
         (self.validate_policy)(&desired.policy).map_err(|error| {
-            SynchronousRegisterProviderError::UnsupportedPolicy {
+            RegisterProviderError::UnsupportedPolicy {
                 message: format!("{error:#}"),
             }
         })?;
@@ -124,7 +127,7 @@ mod tests {
             block_on(provider.read("agent-1")).expect_err("an absent policy register should fail");
         assert!(matches!(
             error,
-            SynchronousRegisterProviderError::Register(PolicyRegisterError::Uninitialized { .. })
+            RegisterProviderError::Register(PolicyRegisterError::Uninitialized { .. })
         ));
     }
 
@@ -193,7 +196,7 @@ mod tests {
             .expect_err("node capability validation should reject the policy");
         assert!(matches!(
             error,
-            SynchronousRegisterProviderError::UnsupportedPolicy { .. }
+            RegisterProviderError::UnsupportedPolicy { .. }
         ));
     }
 }

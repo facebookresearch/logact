@@ -19,6 +19,7 @@ path = "tests/src/sim_tests.rs"
 [dependencies]
 agent_bus_proto-rust = { path = "../../../bus/proto" }
 agentbus_api = { version = "0.1.0", path = "../../../bus/api" }
+agentbus_lease = { version = "0.1.0", path = "../../../bus/lease" }
 anyhow = "1.0.104"
 bytes = { version = "1.12.1", features = ["serde"] }
 logact_commit_service_api = { version = "0.1.0", path = "../api" }

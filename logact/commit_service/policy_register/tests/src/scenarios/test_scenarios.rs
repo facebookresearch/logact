@@ -29,6 +29,7 @@ mod defs {
     use logact_commit_service_policy_register::PolicyRegisterError;
     use prost_types::Any;
 
+    use crate::fixtures::LeasedFixture;
     use crate::fixtures::PolicyRegisterTestFixture;
 
     fn policy(decider_policy: DeciderPolicy) -> PolicyState {
@@ -191,7 +192,10 @@ mod defs {
         fixture: &F,
     ) -> Result<()> {
         let register = fixture.create_impl();
-        let mut state = policy(DeciderPolicy::OnByDefault);
+        let mut state = PolicyState {
+            decider_policy: Some(DeciderPolicy::OnByDefault as i32),
+            ..Default::default()
+        };
         state.voters.insert("voter-a".to_string(), voter("test/a"));
         state.voters.insert("voter-b".to_string(), voter("test/b"));
         let initial = register.set_policy(&state, None).await?;
@@ -318,6 +322,161 @@ mod defs {
         };
         assert_eq!(
             survivor.read_validated().await?,
+            VersionedPolicyState { state, version }
+        );
+        Ok(())
+    }
+
+    fn is_reserved(current: &VersionedPolicyState) -> bool {
+        current
+            .state
+            .leasing
+            .as_ref()
+            .is_some_and(|leasing| leasing.revoked)
+    }
+
+    /// Reads roll back a crashed writer's reservation without changing
+    /// the reported version, so the policy becomes cacheable again.
+    #[scenario_for(
+        logact_commit_service_policy_register_tests::fixtures::LeaseBasedPolicyRegisterFixture<
+            logact_commit_service_policy_register_tests::fixtures::InMemoryPolicyRegisterFixture,
+        >,
+        suffix = lease_in_memory,
+        sim_only
+    )]
+    pub async fn run_test_reader_rolls_back_crashed_writer<F>(fixture: &F) -> Result<()>
+    where
+        F: LeasedFixture<Impl: PolicyRegister>,
+    {
+        let crashed = fixture.create_impl();
+        let reader = fixture.create_impl();
+        let inner = fixture.create_inner();
+        let env = fixture.get_env();
+        let state = policy(DeciderPolicy::OnByDefault);
+        let expected = VersionedPolicyState {
+            version: crashed.set_policy(&state, None).await?,
+            state,
+        };
+        let abandoned = policy(DeciderPolicy::OffByDefault);
+        let write = crashed.set_policy(&abandoned, Some(expected.version));
+        let _ = select(pin!(write), pin!(env.sleep(Duration::from_millis(1)))).await;
+        let reserved = inner.read_validated().await?;
+        assert!(is_reserved(&reserved));
+        assert!(reserved.version > expected.version);
+        for _ in 0..100 {
+            assert_eq!(reader.read_validated().await?, expected);
+            let stored = inner.read_validated().await?;
+            if !is_reserved(&stored) {
+                assert!(stored.version > reserved.version);
+                assert_eq!(reader.read_validated().await?, expected);
+                let state = policy(DeciderPolicy::FirstBooleanWins);
+                let version = reader.set_policy(&state, Some(expected.version)).await?;
+                assert!(version > stored.version);
+                assert_eq!(
+                    reader.read_validated().await?,
+                    VersionedPolicyState { state, version }
+                );
+                return Ok(());
+            }
+            env.sleep(Duration::from_millis(10)).await;
+        }
+        anyhow::bail!("reads did not roll back the crashed writer's reservation")
+    }
+
+    /// A register written without the lease protocol is never cached, so readers
+    /// can adopt the protocol while older writers remain. The first write
+    /// through the protocol enables caching.
+    #[scenario_for(
+        logact_commit_service_policy_register_tests::fixtures::LeaseBasedPolicyRegisterFixture<
+            logact_commit_service_policy_register_tests::fixtures::InMemoryPolicyRegisterFixture,
+        >,
+        suffix = lease_in_memory,
+        sim_only
+    )]
+    pub async fn run_test_unleased_register_is_not_cached<F>(fixture: &F) -> Result<()>
+    where
+        F: LeasedFixture<Impl: PolicyRegister>,
+    {
+        let inner = fixture.create_inner();
+        let reader = fixture.create_impl();
+        let first = inner
+            .set_policy(&policy(DeciderPolicy::OnByDefault), None)
+            .await?;
+        reader.read_validated().await?;
+        let second = inner
+            .set_policy(&policy(DeciderPolicy::OffByDefault), Some(first))
+            .await?;
+        let current = reader.read_validated().await?;
+        assert_eq!(
+            current.state.decider_policy,
+            Some(DeciderPolicy::OffByDefault as i32),
+            "an unleased policy should not be cached"
+        );
+        assert_eq!(current.version, second);
+
+        let published = fixture
+            .create_impl()
+            .set_policy(&policy(DeciderPolicy::FirstBooleanWins), Some(second))
+            .await?;
+        let current = reader.read_validated().await?;
+        assert_eq!(
+            current.state.decider_policy,
+            Some(DeciderPolicy::FirstBooleanWins as i32)
+        );
+        assert_eq!(current.version, published);
+        // A write that bypasses the protocol is hidden while the lease lasts.
+        inner
+            .set_policy(&policy(DeciderPolicy::OnByDefault), Some(published))
+            .await?;
+        assert_eq!(
+            reader.read_validated().await?.version,
+            published,
+            "a protocol write should enable caching"
+        );
+        Ok(())
+    }
+
+    /// The lease protocol adopts a register written without it, continuing from
+    /// its existing version.
+    #[scenario_for(
+        logact_commit_service_policy_register_tests::fixtures::LeaseBasedPolicyRegisterFixture<
+            logact_commit_service_policy_register_tests::fixtures::InMemoryPolicyRegisterFixture,
+        >,
+        suffix = lease_in_memory,
+        sim_only
+    )]
+    #[scenario_for(
+        logact_commit_service_policy_register_tests::fixtures::LeaseBasedPolicyRegisterFixture<
+            logact_commit_service_policy_register_tests::fixtures::SqlitePolicyRegisterFixture,
+        >,
+        suffix = lease_sqlite_file,
+        int_only
+    )]
+    pub async fn run_test_adopts_existing_register<F>(fixture: &F) -> Result<()>
+    where
+        F: LeasedFixture<Impl: PolicyRegister>,
+    {
+        let inner = fixture.create_inner();
+        let register = fixture.create_impl();
+        let initial = inner
+            .set_policy(&policy(DeciderPolicy::OnByDefault), None)
+            .await?;
+        let state = policy(DeciderPolicy::OffByDefault);
+        let existing = inner.set_policy(&state, Some(initial)).await?;
+        assert_eq!(
+            register.read_validated().await?,
+            VersionedPolicyState {
+                state,
+                version: existing,
+            }
+        );
+
+        let state = policy(DeciderPolicy::FirstBooleanWins);
+        let version = register.set_policy(&state, Some(existing)).await?;
+        assert!(version > existing);
+        assert_eq!(version, inner.read_validated().await?.version);
+        assert_eq!(
+            register.read_validated().await?,
             VersionedPolicyState { state, version }
         );
         Ok(())

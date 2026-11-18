@@ -12,6 +12,8 @@ pub mod voter_factory;
 
 pub use commit_service_v1::CommitServiceV1;
 pub use logact_commit_service_engine::StaticConfigPolicyProvider;
+pub use logact_commit_service_policy_register::LeaseBasedPolicyRegister;
+pub use logact_commit_service_policy_register::PolicyLeaseConfig;
 pub use logact_commit_service_policy_register::SynchronousRegisterProvider;
 pub use voter_factory::DelegatingVoterFactory;
 pub use voter_factory::LlmVoterFactory;

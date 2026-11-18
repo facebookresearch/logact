@@ -17,7 +17,6 @@ use anyhow::Result;
 use conformance::TestConfig;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_inmem::InMemCommitService;
-use logact_commit_service_policy_register::StoragePolicyRegister;
 use logact_commit_service_v1::SynchronousRegisterProvider;
 
 use crate::fixtures::CheckpointFixture;
@@ -27,18 +26,18 @@ use crate::fixtures::SimulatorFixture;
 use crate::fixtures::TestPolicyProvider;
 use crate::simulator::Simulator;
 
-type PolicyProvider = SynchronousRegisterProvider<InMemoryStorage>;
-type PolicyController = StoragePolicyRegister<InMemoryStorage>;
-
-pub struct InMemCommitServiceFixture {
+pub struct InMemCommitServiceFixture<P = SynchronousRegisterProvider<InMemoryStorage>>
+where
+    P: TestPolicyProvider,
+{
     env: Rc<Simulator>,
-    service: InMemCommitService<Simulator, PolicyProvider>,
-    policy_controller: PolicyController,
+    service: InMemCommitService<Simulator, P>,
+    policy_controller: P::Controller,
 }
 
-impl ConformanceFixture for InMemCommitServiceFixture {
+impl<P: TestPolicyProvider> ConformanceFixture for InMemCommitServiceFixture<P> {
     type Env = Simulator;
-    type Impl = InMemCommitService<Simulator, PolicyProvider>;
+    type Impl = InMemCommitService<Simulator, P>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.env.clone()
@@ -49,7 +48,7 @@ impl ConformanceFixture for InMemCommitServiceFixture {
     }
 }
 
-impl SimulatorFixture for InMemCommitServiceFixture {
+impl<P: TestPolicyProvider> SimulatorFixture for InMemCommitServiceFixture<P> {
     fn new(simulator: Simulator) -> Self {
         Self::try_new_with_config(simulator, &TestConfig::default())
             .expect("the default config should be valid")
@@ -58,7 +57,7 @@ impl SimulatorFixture for InMemCommitServiceFixture {
     /// `ttl` expires entries on the service's own bus.
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
         let env = Rc::new(simulator);
-        let (policy_provider, policy_controller) = PolicyProvider::for_test();
+        let (policy_provider, policy_controller) = P::for_test(env.clone());
         let service = InMemCommitService::with_policy_provider(env.clone(), policy_provider);
         Ok(Self {
             service: match config.ttl {
@@ -71,7 +70,7 @@ impl SimulatorFixture for InMemCommitServiceFixture {
     }
 }
 
-impl CheckpointFixture for InMemCommitServiceFixture {
+impl<P: TestPolicyProvider> CheckpointFixture for InMemCommitServiceFixture<P> {
     async fn checkpoint_position(&self, service: &Self::Impl, bus_id: &str) -> Result<i64> {
         service
             .checkpoint_position(bus_id)
@@ -83,8 +82,12 @@ impl CheckpointFixture for InMemCommitServiceFixture {
     }
 }
 
-impl DeciderPolicyFixture for InMemCommitServiceFixture {
-    type Controller = PolicyController;
+impl<P> DeciderPolicyFixture for InMemCommitServiceFixture<P>
+where
+    P: TestPolicyProvider,
+    P::Controller: crate::fixtures::SettableDeciderPolicy,
+{
+    type Controller = P::Controller;
 
     fn policy_controller(&self) -> Self::Controller {
         self.policy_controller.clone()
