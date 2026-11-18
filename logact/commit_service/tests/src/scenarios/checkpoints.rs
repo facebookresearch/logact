@@ -7,7 +7,6 @@
 
 #[conformance_macros::scenarios(commit_service_checkpoints_list)]
 mod defs {
-    use std::collections::HashSet;
     use std::time::Duration;
 
     use agent_bus_proto_rust::agent_bus::DeciderPolicy;
@@ -19,6 +18,7 @@ mod defs {
     use agentbus_api::AppendRequest;
     use agentbus_api::Environment;
     use agentbus_tests::common::helpers::read_linearizable_snapshot;
+    use agentbus_tests::decisions::first_decisions;
     use anyhow::Result;
     use futures::future::Either;
     use futures::future::select;
@@ -74,14 +74,7 @@ mod defs {
                 entry.payload.as_ref()?.payload.as_ref()?,
             ))
         });
-        let decided: HashSet<i64> = payloads
-            .clone()
-            .filter_map(|(_, payload)| match payload {
-                payload::Payload::Commit(commit) => Some(commit.intention_id),
-                payload::Payload::Abort(abort) => Some(abort.intention_id),
-                _ => None,
-            })
-            .collect();
+        let decided = first_decisions(&entries);
         let latest = payloads
             .clone()
             .filter(|(intention_position, payload)| {
@@ -93,7 +86,7 @@ mod defs {
             anyhow::ensure!(
                 intention_position > position
                     || !matches!(payload, payload::Payload::Intention(_))
-                    || decided.contains(&intention_position)
+                    || decided.contains_key(&intention_position)
                     || (allow_pending && Some(intention_position) == latest),
                 "checkpoint at {position} covers undecided intention at {intention_position}"
             );

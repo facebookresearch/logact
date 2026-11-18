@@ -17,10 +17,10 @@ use agent_bus_proto_rust::agent_bus::BusEntry;
 use agent_bus_proto_rust::agent_bus::BusId;
 use agent_bus_proto_rust::agent_bus::CheckTailRequest;
 use agent_bus_proto_rust::agent_bus::intention;
-use agent_bus_proto_rust::agent_bus::payload;
 use agentbus_api::AgentBus;
 use agentbus_api::Environment;
 use agentbus_simulator::Simulator;
+use agentbus_tests::decisions::DecisionReader;
 use anyhow::Context as _;
 use anyhow::Result;
 use linearizability::history::Observation;
@@ -62,6 +62,7 @@ struct CounterReplay {
     intentions: BTreeMap<i64, CounterCommand>,
     decisions: HashMap<i64, bool>,
     forced_aborts: usize,
+    decision_reader: DecisionReader,
 }
 
 impl CounterReplay {
@@ -77,16 +78,12 @@ impl CounterReplay {
                 "duplicate counter intention at {position}"
             );
         }
-        let decision = match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
-            Some(payload::Payload::Commit(commit)) => Some((commit.intention_id, true)),
-            Some(payload::Payload::Abort(abort)) => {
-                if abort.reason == FORCED_ABORT_REASON {
-                    self.forced_aborts += 1;
-                }
-                Some((abort.intention_id, false))
+        let decision = self.decision_reader.observe(entry).map(|decision| {
+            if !decision.approved && decision.reason == FORCED_ABORT_REASON {
+                self.forced_aborts += 1;
             }
-            _ => None,
-        };
+            (decision.intention_id, decision.approved)
+        });
         if let Some((intention, approved)) = decision {
             if let Some(previous) = self.decisions.insert(intention, approved) {
                 anyhow::ensure!(
@@ -458,6 +455,7 @@ mod tests {
     use agent_bus_proto_rust::agent_bus::Header;
     use agent_bus_proto_rust::agent_bus::Intention;
     use agent_bus_proto_rust::agent_bus::Payload;
+    use agent_bus_proto_rust::agent_bus::payload;
 
     use super::*;
 

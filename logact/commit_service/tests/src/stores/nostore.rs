@@ -5,19 +5,18 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-use std::collections::HashSet;
 use std::rc::Rc;
 
 use agent_bus_proto_rust::agent_bus::VoterConfig;
 use agent_bus_proto_rust::agent_bus::payload;
 use agentbus_api::AgentBus;
+use agentbus_tests::decisions::first_decisions;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_replay::Checkpoint;
 use logact_commit_service_replay::CheckpointStore;
 use logact_commit_service_replay::ReplayState;
 use logact_commit_service_replay::store_support::LogPlayer;
 use logact_commit_service_replay::store_support::apply_error;
-use logact_commit_service_replay::store_support::decided_intention;
 use logact_commit_service_replay::store_support::entry_position;
 
 /// Validates a voter config from a logged `PolicyBatch`, as V1's policy playback
@@ -56,11 +55,7 @@ impl<T: AgentBus> CheckpointStore for NoStoreCheckpoints<T> {
             entries.extend(batch);
         }
         // Pass 1: the intentions with a logged decision.
-        let decided: HashSet<i64> = entries
-            .iter()
-            .filter_map(|entry| entry.payload.as_ref()?.payload.as_ref())
-            .filter_map(decided_intention)
-            .collect();
+        let decided = first_decisions(&entries);
         // Pass 2: materialize up to the first intention without one.
         let mut state = ReplayState::default();
         let mut position = None;
@@ -68,7 +63,7 @@ impl<T: AgentBus> CheckpointStore for NoStoreCheckpoints<T> {
             let entry_position = entry_position(entry)?;
             if let Some(payload) = entry.payload.as_ref() {
                 if matches!(payload.payload, Some(payload::Payload::Intention(_)))
-                    && !decided.contains(&entry_position)
+                    && !decided.contains_key(&entry_position)
                 {
                     break;
                 }

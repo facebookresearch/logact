@@ -23,6 +23,7 @@ mod defs {
     use agentbus_api::Clock;
     use agentbus_api::Environment;
     use agentbus_tests::common::helpers::read_linearizable_snapshot;
+    use agentbus_tests::decisions::DecisionReader;
     use anyhow::Result;
     use logact_commit_service_api::CommitIntentionCommand;
     use logact_commit_service_api::CommitSvc;
@@ -108,23 +109,12 @@ mod defs {
         let mut expected_intentions = seeded_intentions.to_vec();
         expected_intentions.push(fresh_intention);
 
+        let mut reader = DecisionReader::default();
         let decisions = entries
             .iter()
-            .filter_map(|entry| {
-                let decision_position = entry.header.as_ref()?.log_position;
-                if decision_position < seeded_tail {
-                    return None;
-                }
-                match entry.payload.as_ref()?.payload.as_ref()? {
-                    payload::Payload::Commit(commit) => {
-                        Some((commit.intention_id, true, decision_position))
-                    }
-                    payload::Payload::Abort(abort) => {
-                        Some((abort.intention_id, false, decision_position))
-                    }
-                    _ => None,
-                }
-            })
+            .filter_map(|entry| reader.observe(entry))
+            .filter(|decision| decision.position >= seeded_tail)
+            .map(|decision| (decision.intention_id, decision.approved, decision.position))
             .collect::<Vec<_>>();
 
         anyhow::ensure!(

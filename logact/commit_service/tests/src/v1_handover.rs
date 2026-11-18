@@ -12,8 +12,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use agentbus_api::BusId;
-use agentbus_api::payload;
 use agentbus_tests::common::helpers::read_linearizable_snapshot;
+use agentbus_tests::decisions::DecisionReader;
 use agentbus_tests::fixtures::simtest::SimpleMemoryFixture;
 use conformance::ConformanceFixture;
 use conformance::SimulatorFixture;
@@ -116,17 +116,10 @@ fn v1_and_shared_replay_hand_over_a_bus_without_migration() {
             None,
         )
         .await;
+        let mut reader = DecisionReader::default();
         let mut decisions: HashMap<i64, usize> = HashMap::new();
-        for payload in entries
-            .iter()
-            .filter_map(|entry| entry.payload.as_ref()?.payload.as_ref())
-        {
-            let intention_id = match payload {
-                payload::Payload::Commit(commit) => commit.intention_id,
-                payload::Payload::Abort(abort) => abort.intention_id,
-                _ => continue,
-            };
-            *decisions.entry(intention_id).or_default() += 1;
+        for decision in entries.iter().filter_map(|entry| reader.observe(entry)) {
+            *decisions.entry(decision.intention_id).or_default() += 1;
         }
         for intention in intentions {
             assert_eq!(

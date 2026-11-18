@@ -23,6 +23,7 @@ mod defs {
     use agentbus_api::Environment;
     use agentbus_api::intention_texts;
     use agentbus_tests::common::helpers::read_linearizable_snapshot;
+    use agentbus_tests::decisions::first_decisions;
     use anyhow::Result;
     use logact_commit_service_api::CommitError;
     use logact_commit_service_api::CommitIntentionCommand;
@@ -76,17 +77,10 @@ mod defs {
     /// Whether each decided intention, by position, was approved by its first
     /// decision.
     fn decisions(entries: &[BusEntry]) -> HashMap<i64, bool> {
-        let mut decisions = HashMap::new();
-        for entry in entries {
-            let (intention_id, approved) =
-                match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
-                    Some(payload::Payload::Commit(commit)) => (commit.intention_id, true),
-                    Some(payload::Payload::Abort(abort)) => (abort.intention_id, false),
-                    _ => continue,
-                };
-            decisions.entry(intention_id).or_insert(approved);
-        }
-        decisions
+        first_decisions(entries)
+            .into_iter()
+            .map(|(intention_id, decision)| (intention_id, decision.approved))
+            .collect()
     }
 
     #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]

@@ -13,6 +13,8 @@ mod defs {
     use agent_bus_proto_rust::agent_bus::payload;
     use agentbus_api::Environment;
     use agentbus_tests::common::helpers::read_linearizable_snapshot;
+    use agentbus_tests::decisions::LoggedDecision;
+    use agentbus_tests::decisions::first_decisions;
     use anyhow::Context as _;
     use anyhow::Result;
     use logact_commit_service_api::CommitIntentionCommand;
@@ -50,29 +52,17 @@ mod defs {
         let (entries, _) = read_linearizable_snapshot(
             service.agent_bus(),
             bus_id,
-            first.log_position.min(second.log_position),
+            0,
             None,
             fixture.get_env().as_ref(),
             Some(1),
         )
         .await;
+        let decisions = first_decisions(&entries);
         for outcome in [first, second] {
-            let decision = entries
-                .iter()
-                .filter_map(|entry| match entry.payload.as_ref()?.payload.as_ref()? {
-                    payload::Payload::Commit(commit)
-                        if commit.intention_id == outcome.log_position =>
-                    {
-                        Some((true, &commit.reason))
-                    }
-                    payload::Payload::Abort(abort)
-                        if abort.intention_id == outcome.log_position =>
-                    {
-                        Some((false, &abort.reason))
-                    }
-                    _ => None,
-                })
-                .next();
+            let decision = decisions
+                .get(&outcome.log_position)
+                .map(|decision| (decision.approved, &decision.reason));
             anyhow::ensure!(
                 decision == Some((outcome.approved, &outcome.reason)),
                 "each concurrent request must return its first durable decision"
@@ -141,7 +131,7 @@ mod defs {
         let (entries, _) = read_linearizable_snapshot(
             service.agent_bus(),
             bus_id.to_owned(),
-            outcome.log_position,
+            0,
             None,
             environment,
             Some(1),
@@ -150,43 +140,35 @@ mod defs {
         anyhow::ensure!(
             matches!(
                 entries
-                    .first()
+                    .iter()
+                    .find(|entry| entry
+                        .header
+                        .as_ref()
+                        .is_some_and(|header| header.log_position == outcome.log_position))
                     .and_then(|entry| entry.payload.as_ref()?.payload.as_ref()),
                 Some(payload::Payload::Intention(_))
             ),
             "returned position {} must identify the committed intention",
             outcome.log_position,
         );
-        let (position, approved, reason) = entries
-            .iter()
-            .find_map(|entry| {
-                let position = entry.header.as_ref()?.log_position;
-                match entry.payload.as_ref()?.payload.as_ref()? {
-                    payload::Payload::Commit(commit)
-                        if commit.intention_id == outcome.log_position =>
-                    {
-                        Some((position, true, &commit.reason))
-                    }
-                    payload::Payload::Abort(abort)
-                        if abort.intention_id == outcome.log_position =>
-                    {
-                        Some((position, false, &abort.reason))
-                    }
-                    _ => None,
-                }
-            })
-            .with_context(|| {
-                format!(
-                    "returned outcome for intention {} (approved={}) has no persisted Commit/Abort",
-                    outcome.log_position, outcome.approved,
-                )
-            })?;
+        let decisions = first_decisions(&entries);
+        let LoggedDecision {
+            position,
+            approved,
+            reason,
+            ..
+        } = decisions.get(&outcome.log_position).with_context(|| {
+            format!(
+                "returned outcome for intention {} (approved={}) has no persisted decision",
+                outcome.log_position, outcome.approved,
+            )
+        })?;
         anyhow::ensure!(
-            position > outcome.log_position,
+            *position > outcome.log_position,
             "decision must follow its intention"
         );
         anyhow::ensure!(
-            approved == outcome.approved && reason == &outcome.reason,
+            *approved == outcome.approved && reason == &outcome.reason,
             "returned outcome disagrees with the first persisted decision at {position}"
         );
         Ok(())

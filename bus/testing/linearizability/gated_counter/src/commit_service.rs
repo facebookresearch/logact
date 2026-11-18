@@ -23,6 +23,8 @@ use agentbus_api::AgentBus;
 use agentbus_api::Environment;
 use agentbus_simulator::Simulator;
 use agentbus_tests::common::helpers::read_linearizable_snapshot;
+use agentbus_tests::decisions::DecisionReader;
+use agentbus_tests::decisions::first_decisions;
 use anyhow::Context as _;
 use anyhow::Result;
 use anyhow::bail;
@@ -324,24 +326,16 @@ fn replay_gated_counter(
     outcomes: &CounterOutcomes,
 ) -> Result<i64> {
     let mut outcomes = outcomes.borrow().clone();
-    for entry in entries {
-        let decision = match entry.payload.as_ref().and_then(|p| p.payload.as_ref()) {
-            Some(payload::Payload::Commit(commit)) => {
-                Some((commit.intention_id, CounterOutcome::Applied))
-            }
-            Some(payload::Payload::Abort(abort)) => Some((
-                abort.intention_id,
-                if skipped_for_policy_version(&abort.reason) {
-                    CounterOutcome::VersionStale
-                } else {
-                    CounterOutcome::GateDenied
-                },
-            )),
-            _ => None,
+    let mut reader = DecisionReader::default();
+    for decision in entries.iter().filter_map(|entry| reader.observe(entry)) {
+        let outcome = if decision.approved {
+            CounterOutcome::Applied
+        } else if skipped_for_policy_version(&decision.reason) {
+            CounterOutcome::VersionStale
+        } else {
+            CounterOutcome::GateDenied
         };
-        if let Some((position, outcome)) = decision {
-            outcomes.entry(position).or_insert(outcome);
-        }
+        outcomes.entry(decision.intention_id).or_insert(outcome);
     }
     let mut counter = CounterSpec::new();
     let mut applied_version = None;
@@ -481,12 +475,10 @@ fn candidate_from_bus(
             _ => None,
         })
         .collect();
-    let committed: HashSet<_> = entries
-        .iter()
-        .filter_map(|entry| match entry.payload.as_ref()?.payload.as_ref()? {
-            payload::Payload::Commit(commit) => Some(commit.intention_id),
-            _ => None,
-        })
+    let committed: HashSet<_> = first_decisions(entries)
+        .into_iter()
+        .filter(|(_, decision)| decision.approved)
+        .map(|(intention_id, _)| intention_id)
         .collect();
     let mut landed = HashSet::new();
     for entry in entries {
