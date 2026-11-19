@@ -9,8 +9,8 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use logact_commit_service_api::CommitResult;
 use logact_commit_service_replay::Checkpoint;
+use logact_commit_service_replay::CheckpointResult;
 use logact_commit_service_replay::CheckpointStore;
 
 /// One server's private checkpoints, held in memory. Servers never see each
@@ -22,11 +22,11 @@ pub struct LocalCheckpoints {
 }
 
 impl CheckpointStore for LocalCheckpoints {
-    async fn load(&self, bus_id: &str) -> CommitResult<Option<Checkpoint>> {
+    async fn load(&self, bus_id: &str) -> CheckpointResult<Option<Checkpoint>> {
         Ok(self.checkpoints.borrow().get(bus_id).cloned())
     }
 
-    async fn save(&self, bus_id: &str, checkpoint: &Checkpoint) -> CommitResult<()> {
+    async fn save(&self, bus_id: &str, checkpoint: &Checkpoint) -> CheckpointResult<()> {
         let mut checkpoints = self.checkpoints.borrow_mut();
         if checkpoints
             .get(bus_id)

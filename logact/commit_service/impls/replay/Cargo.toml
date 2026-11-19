@@ -18,6 +18,7 @@ logact_commit_service_engine = { version = "0.1.0", path = "../v1/engine" }
 logact_commit_service_policy_proto-rust = { path = "../../proto" }
 lru = { version = "0.19.0", default-features = false }
 prost = { version = "0.14.4", default-features = false }
+thiserror = "2.0.21"
 tracing = { version = "0.1.41", features = ["attributes", "valuable"] }
 
 [dev-dependencies]

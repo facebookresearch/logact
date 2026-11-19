@@ -103,6 +103,7 @@ mod tests {
                 CommitError::Concurrency(_) => "concurrency",
                 CommitError::Timeout(_) => "timeout",
                 CommitError::Unavailable(_) => "unavailable",
+                CommitError::CheckpointStoreUnavailable(_) => "checkpoint store unavailable",
                 CommitError::Internal(_) => "internal",
             };
             assert_eq!(actual, expected, "unexpected classification for {code:?}");

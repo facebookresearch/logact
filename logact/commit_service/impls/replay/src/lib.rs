@@ -24,6 +24,8 @@ mod storage;
 
 pub use background::BackgroundCheckpoints;
 pub use checkpoint::Checkpoint;
+pub use checkpoint::CheckpointError;
+pub use checkpoint::CheckpointResult;
 pub use checkpoint::CheckpointStore;
 pub use service::ReplayCommitService;
 pub use state::ReplayState;

@@ -22,12 +22,14 @@ use logact_commit_service_api::CommitSvc;
 use logact_commit_service_api::CreateBusCommand;
 use logact_commit_service_api::PolicyProvider;
 use logact_commit_service_api::VersionedPolicy;
+use logact_commit_service_engine::StorageError;
 use logact_commit_service_engine::VoterFactory;
 use logact_commit_service_engine::installed_policy;
 use logact_commit_service_engine::plan_policy_batch;
 use logact_commit_service_engine::policy_batch_payload;
 
 use crate::Checkpoint;
+use crate::CheckpointError;
 use crate::CheckpointStore;
 use crate::ReplayState;
 use crate::drive::Drive;
@@ -142,7 +144,11 @@ where
     ) -> CommitResult<CommitIntentionOutcome> {
         let bus_id = request.bus_id.agent_bus_id.as_str();
         let desired = self.desired_policy(bus_id).await?;
-        let checkpoint = self.checkpoints.load(bus_id).await?;
+        let checkpoint = self
+            .checkpoints
+            .load(bus_id)
+            .await
+            .map_err(CommitError::from)?;
         let checkpoint_position = checkpoint.as_ref().map(|checkpoint| checkpoint.position);
         let start = checkpoint_position.map_or(0, |position| position + 1);
         let state = checkpoint.map_or_else(ReplayState::default, |checkpoint| checkpoint.state);
@@ -205,4 +211,92 @@ fn compute_speculation(desired: &VersionedPolicy) -> Option<SpeculativeDecision>
         approved,
         reason: reason.to_string(),
     })
+}
+
+impl From<CheckpointError> for CommitError {
+    fn from(error: CheckpointError) -> Self {
+        match &error {
+            CheckpointError::Storage(StorageError::TransactionConflict(_)) => {
+                CommitError::Concurrency(error.into())
+            }
+            CheckpointError::Storage(StorageError::Timeout(_))
+            | CheckpointError::Storage(StorageError::BackendUnavailable(_))
+            | CheckpointError::Unavailable(_) => {
+                CommitError::CheckpointStoreUnavailable(error.into())
+            }
+            CheckpointError::Storage(StorageError::InvalidPosition(_))
+            | CheckpointError::Storage(StorageError::InternalError(_))
+            | CheckpointError::Internal(_) => CommitError::Internal(error.into()),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_errors_preserve_service_categories_and_sources() {
+        let source = || anyhow::Error::new(std::io::Error::other("checkpoint backend failed"));
+        let cases = [
+            (
+                CheckpointError::Storage(StorageError::TransactionConflict(source())),
+                "Concurrency",
+            ),
+            (
+                CheckpointError::Storage(StorageError::Timeout(source())),
+                "CheckpointStoreUnavailable",
+            ),
+            (
+                CheckpointError::Storage(StorageError::BackendUnavailable(source())),
+                "CheckpointStoreUnavailable",
+            ),
+            (
+                CheckpointError::Storage(StorageError::InternalError(source())),
+                "Internal",
+            ),
+            (
+                CheckpointError::Unavailable(source()),
+                "CheckpointStoreUnavailable",
+            ),
+            (CheckpointError::Internal(source()), "Internal"),
+        ];
+        for (error, expected_category) in cases {
+            let (category, source) = match CommitError::from(error) {
+                CommitError::BusDataLoss(source) => ("BusDataLoss", source),
+                CommitError::InvalidArgument(source) => ("InvalidArgument", source),
+                CommitError::Concurrency(source) => ("Concurrency", source),
+                CommitError::Timeout(source) => ("Timeout", source),
+                CommitError::Unavailable(source) => ("Unavailable", source),
+                CommitError::CheckpointStoreUnavailable(source) => {
+                    ("CheckpointStoreUnavailable", source)
+                }
+                CommitError::Internal(source) => ("Internal", source),
+            };
+            assert_eq!(category, expected_category);
+            let checkpoint_error = source
+                .downcast_ref::<CheckpointError>()
+                .expect("commit errors should retain the typed checkpoint cause");
+            let backend_source = match checkpoint_error {
+                CheckpointError::Storage(StorageError::TransactionConflict(source))
+                | CheckpointError::Storage(StorageError::Timeout(source))
+                | CheckpointError::Storage(StorageError::BackendUnavailable(source))
+                | CheckpointError::Storage(StorageError::InternalError(source))
+                | CheckpointError::Unavailable(source)
+                | CheckpointError::Internal(source) => source,
+                CheckpointError::Storage(StorageError::InvalidPosition(_)) => {
+                    panic!("unexpected invalid position")
+                }
+            };
+            assert!(backend_source.downcast_ref::<std::io::Error>().is_some());
+        }
+        let error = CommitError::from(CheckpointError::Storage(StorageError::InvalidPosition(-1)));
+        let CommitError::Internal(source) = error else {
+            panic!("invalid checkpoint positions indicate a commit-service implementation bug");
+        };
+        assert!(matches!(
+            source.downcast_ref::<CheckpointError>(),
+            Some(CheckpointError::Storage(StorageError::InvalidPosition(-1)))
+        ));
+    }
 }

@@ -64,6 +64,10 @@ pub enum CommitError {
     #[error(transparent)]
     Unavailable(anyhow::Error),
 
+    /// The checkpoint store could not supply the state needed to commit.
+    #[error(transparent)]
+    CheckpointStoreUnavailable(anyhow::Error),
+
     /// An uncategorized failure inside the service implementation.
     #[error(transparent)]
     Internal(anyhow::Error),

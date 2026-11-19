@@ -41,6 +41,18 @@ mod defs {
         }
     }
 
+    async fn tail<S: CommitSvc>(service: &S, bus_id: &str) -> Result<i64> {
+        Ok(service
+            .agent_bus()
+            .check_tail(CheckTailRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: bus_id.to_owned(),
+                }),
+            })
+            .await?
+            .tail_position)
+    }
+
     async fn check_checkpointed_history_can_expire<F: CheckpointFixture>(
         fixture: &F,
         allow_data_loss: bool,
@@ -79,8 +91,12 @@ mod defs {
                 .await,
             Err(AgentBusError::PositionNotFound(_))
         ));
+        let tail_before = tail(&service, &bus_id).await?;
         match service.commit_intention(command(&bus_id, "d")).await {
             Ok(outcome) => assert!(outcome.approved),
+            Err(CommitError::CheckpointStoreUnavailable(_)) => {
+                assert_eq!(tail(&service, &bus_id).await?, tail_before);
+            }
             Err(CommitError::BusDataLoss(_))
                 if allow_data_loss || !fixture.is_checkpoint_durable() => {}
             Err(error) => return Err(error.into()),
@@ -153,6 +169,11 @@ mod defs {
             .await
         {
             Ok(outcome) => assert!(outcome.approved),
+            Err(CommitError::CheckpointStoreUnavailable(_)) => {
+                let tail_after = tail(&fresh, &bus_id).await?;
+                assert!(tail_after == tail_before || tail_after == 0);
+                return Ok(());
+            }
             Err(CommitError::BusDataLoss(_)) if !fixture.is_checkpoint_durable() => return Ok(()),
             Err(error) => return Err(error.into()),
         }
@@ -204,12 +225,9 @@ mod defs {
         );
         env.sleep(Duration::from_millis(1200)).await;
         assert_eq!(service.agent_bus().append(append).await?.log_position, 2);
-        assert!(matches!(
-            service
-                .commit_intention(command(&bus_id, "after expiry"))
-                .await,
-            Err(CommitError::BusDataLoss(_))
-        ));
+        let result = service
+            .commit_intention(command(&bus_id, "after expiry"))
+            .await;
         let tail = service
             .agent_bus()
             .check_tail(CheckTailRequest {
@@ -221,10 +239,16 @@ mod defs {
             .tail_position;
         // Without a durable checkpoint, the loss may be detected before the
         // intention is appended.
-        assert!(
-            tail == 4 || (!fixture.is_checkpoint_durable() && tail == 3),
-            "data loss must not append a fallback abort"
-        );
+        match result {
+            Err(CommitError::BusDataLoss(_)) => assert!(
+                tail == 4 || (!fixture.is_checkpoint_durable() && tail == 3),
+                "data loss must not append a fallback abort"
+            ),
+            Err(CommitError::CheckpointStoreUnavailable(_)) => assert_eq!(tail, 3),
+            other => {
+                anyhow::bail!("expected BusDataLoss or CheckpointStoreUnavailable, got {other:?}")
+            }
+        }
         Ok(())
     }
 
@@ -233,7 +257,7 @@ mod defs {
     /// policy and intention advance its post-expiry tail by two. A bus retaining
     /// its append position writes past the expired entries, advancing the
     /// pre-expiry tail by two. Both must report `BusDataLoss` without a fallback
-    /// abort.
+    /// abort, or fail to load their checkpoint without appending anything.
     #[scenario(sim_only, ttl_ms = 1000, sticky = 1.0)]
     pub async fn run_test_detects_lost_bus_tail<F>(fixture: &F) -> Result<()>
     where
@@ -298,6 +322,7 @@ mod defs {
             .tail_position;
         let durable = fixture.is_checkpoint_durable();
         match result {
+            Err(CommitError::CheckpointStoreUnavailable(_)) => assert_eq!(tail_after, tail),
             // Without a durable checkpoint, the loss may be detected before
             // anything is appended.
             Err(CommitError::BusDataLoss(_)) => assert!(
@@ -309,7 +334,9 @@ mod defs {
             // Without a durable checkpoint, a bus whose entries have all
             // expired and been reclaimed looks new.
             Ok(_) if !durable && tail == 0 => {}
-            other => anyhow::bail!("expected BusDataLoss, got {other:?}"),
+            other => {
+                anyhow::bail!("expected BusDataLoss or CheckpointStoreUnavailable, got {other:?}")
+            }
         }
         Ok(())
     }

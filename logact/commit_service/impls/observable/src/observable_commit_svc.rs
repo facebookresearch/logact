@@ -83,6 +83,7 @@ fn error_code(error: &CommitError) -> &'static str {
         CommitError::Concurrency(_) => "CommitConcurrency",
         CommitError::Timeout(_) => "CommitTimeout",
         CommitError::Unavailable(_) => "CommitUnavailable",
+        CommitError::CheckpointStoreUnavailable(_) => "CommitCheckpointStoreUnavailable",
         CommitError::Internal(_) => "CommitInternal",
     }
 }

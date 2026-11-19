@@ -68,7 +68,9 @@ fn commit_status(error: CommitError) -> Status {
         CommitError::InvalidArgument(_) => Status::invalid_argument(error.to_string()),
         CommitError::Concurrency(_) => Status::aborted(error.to_string()),
         CommitError::Timeout(_) => Status::deadline_exceeded(error.to_string()),
-        CommitError::Unavailable(_) => Status::unavailable(error.to_string()),
+        CommitError::Unavailable(_) | CommitError::CheckpointStoreUnavailable(_) => {
+            Status::unavailable(error.to_string())
+        }
         CommitError::Internal(_) => Status::internal(error.to_string()),
     }
 }

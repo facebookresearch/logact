@@ -49,7 +49,9 @@ mod defs {
 
     fn is_transient(error: &CommitError) -> bool {
         match error {
-            CommitError::Timeout(_) | CommitError::Unavailable(_) => true,
+            CommitError::Timeout(_)
+            | CommitError::Unavailable(_)
+            | CommitError::CheckpointStoreUnavailable(_) => true,
             CommitError::BusDataLoss(_)
             | CommitError::InvalidArgument(_)
             | CommitError::Concurrency(_)

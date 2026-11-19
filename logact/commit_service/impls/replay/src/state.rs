@@ -10,8 +10,6 @@ use agent_bus_proto_rust::agent_bus::Payload;
 use agent_bus_proto_rust::agent_bus::SpeculativeDecision;
 use agent_bus_proto_rust::agent_bus::VoterConfig;
 use agent_bus_proto_rust::agent_bus::payload;
-use logact_commit_service_api::CommitError;
-use logact_commit_service_api::CommitResult;
 use logact_commit_service_engine::ApplyError;
 use logact_commit_service_engine::PerBusEngineState;
 use logact_commit_service_engine::abort_payload;
@@ -20,6 +18,8 @@ use logact_commit_service_engine::load_decider_spec_from_state;
 use logact_commit_service_engine::policy_constraint_failure;
 use logact_commit_service_engine::state_voter_configs;
 
+use crate::CheckpointError;
+use crate::CheckpointResult;
 use crate::decider::DeciderMachine;
 
 /// The state materialized from a bus's log: the installed policy and the
@@ -106,12 +106,12 @@ impl ReplayState {
     }
 
     /// The state an engine-state record holds, written by V1 or by this crate.
-    pub(crate) fn from_engine_state(mut policy: PerBusEngineState) -> CommitResult<Self> {
+    pub(crate) fn from_engine_state(mut policy: PerBusEngineState) -> CheckpointResult<Self> {
         let stored = policy.replay_decider_state.take();
         let spec = load_decider_spec_from_state(&policy)
-            .map_err(|error| CommitError::Internal(anyhow::Error::new(error)))?;
+            .map_err(|error| CheckpointError::Internal(anyhow::Error::new(error)))?;
         let decider =
-            DeciderMachine::from_stored(spec.config, stored).map_err(CommitError::Internal)?;
+            DeciderMachine::from_stored(spec.config, stored).map_err(CheckpointError::Internal)?;
         Ok(Self { policy, decider })
     }
 }

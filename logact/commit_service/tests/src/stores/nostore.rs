@@ -11,8 +11,10 @@ use agent_bus_proto_rust::agent_bus::VoterConfig;
 use agent_bus_proto_rust::agent_bus::payload;
 use agentbus_api::AgentBus;
 use agentbus_tests::decisions::first_decisions;
-use logact_commit_service_api::CommitResult;
+use logact_commit_service_api::CommitError;
 use logact_commit_service_replay::Checkpoint;
+use logact_commit_service_replay::CheckpointError;
+use logact_commit_service_replay::CheckpointResult;
 use logact_commit_service_replay::CheckpointStore;
 use logact_commit_service_replay::ReplayState;
 use logact_commit_service_replay::store_support::LogPlayer;
@@ -44,11 +46,14 @@ impl<T: AgentBus> CheckpointStore for NoStoreCheckpoints<T> {
     /// The bus materialized up to its first intention with no decision.
     /// Everything before it is settled; the drive replays the rest and appends
     /// whatever outputs it calls for.
-    async fn load(&self, bus_id: &str) -> CommitResult<Option<Checkpoint>> {
+    async fn load(&self, bus_id: &str) -> CheckpointResult<Option<Checkpoint>> {
         let mut player = LogPlayer::new(&self.bus, bus_id, 0);
         let mut entries = Vec::new();
         loop {
-            let batch = player.next_batch().await?;
+            let batch = player
+                .next_batch()
+                .await
+                .map_err(|error| CheckpointError::Unavailable(error.into()))?;
             if batch.is_empty() {
                 break;
             }
@@ -60,7 +65,7 @@ impl<T: AgentBus> CheckpointStore for NoStoreCheckpoints<T> {
         let mut state = ReplayState::default();
         let mut position = None;
         for entry in &entries {
-            let entry_position = entry_position(entry)?;
+            let entry_position = entry_position(entry).map_err(checkpoint_error)?;
             if let Some(payload) = entry.payload.as_ref() {
                 if matches!(payload.payload, Some(payload::Payload::Intention(_)))
                     && !decided.contains_key(&entry_position)
@@ -69,14 +74,19 @@ impl<T: AgentBus> CheckpointStore for NoStoreCheckpoints<T> {
                 }
                 state
                     .materialize(entry, &*self.validate_config)
-                    .map_err(apply_error)?;
+                    .map_err(apply_error)
+                    .map_err(checkpoint_error)?;
             }
             position = Some(entry_position);
         }
         Ok(position.map(|position| Checkpoint { state, position }))
     }
 
-    async fn save(&self, _bus_id: &str, _checkpoint: &Checkpoint) -> CommitResult<()> {
+    async fn save(&self, _bus_id: &str, _checkpoint: &Checkpoint) -> CheckpointResult<()> {
         Ok(())
     }
+}
+
+fn checkpoint_error(error: CommitError) -> CheckpointError {
+    CheckpointError::Internal(error.into())
 }

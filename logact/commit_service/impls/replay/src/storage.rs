@@ -9,15 +9,14 @@ use std::rc::Rc;
 
 use anyhow::Context;
 use bytes::Bytes;
-use logact_commit_service_api::CommitError;
-use logact_commit_service_api::CommitResult;
 use logact_commit_service_engine::PerBusEngineState;
 use logact_commit_service_engine::Storage;
-use logact_commit_service_engine::StorageError;
 use logact_commit_service_engine::engine_state_key;
 use prost::Message;
 
 use crate::Checkpoint;
+use crate::CheckpointError;
+use crate::CheckpointResult;
 use crate::CheckpointStore;
 use crate::ReplayState;
 
@@ -54,21 +53,16 @@ pub(crate) fn encode_engine_record(state: &ReplayState) -> Vec<u8> {
 }
 
 /// Decode a V1 engine-state record, written by V1 or by this store.
-pub(crate) fn decode_engine_record(bytes: &[u8]) -> CommitResult<ReplayState> {
+pub(crate) fn decode_engine_record(bytes: &[u8]) -> CheckpointResult<ReplayState> {
     let state = PerBusEngineState::decode(bytes)
         .context("decoding an engine-state record")
-        .map_err(CommitError::Internal)?;
+        .map_err(CheckpointError::Internal)?;
     ReplayState::from_engine_state(state)
 }
 
 impl<S: Storage> CheckpointStore for StorageCheckpoints<S> {
-    async fn load(&self, bus_id: &str) -> CommitResult<Option<Checkpoint>> {
-        let Some((bytes, position)) = self
-            .storage
-            .get(&engine_state_key(bus_id))
-            .await
-            .map_err(storage_error)?
-        else {
+    async fn load(&self, bus_id: &str) -> CheckpointResult<Option<Checkpoint>> {
+        let Some((bytes, position)) = self.storage.get(&engine_state_key(bus_id)).await? else {
             return Ok(None);
         };
         Ok(Some(Checkpoint {
@@ -77,32 +71,15 @@ impl<S: Storage> CheckpointStore for StorageCheckpoints<S> {
         }))
     }
 
-    async fn save(&self, bus_id: &str, checkpoint: &Checkpoint) -> CommitResult<()> {
+    async fn save(&self, bus_id: &str, checkpoint: &Checkpoint) -> CheckpointResult<()> {
         self.storage
             .put_if_newer(
                 &engine_state_key(bus_id),
                 Bytes::from(encode_engine_record(&checkpoint.state)),
                 checkpoint.position,
             )
-            .await
-            .map_err(storage_error)?;
+            .await?;
         Ok(())
-    }
-}
-
-pub(crate) fn storage_error(error: StorageError) -> CommitError {
-    match error {
-        error @ StorageError::InvalidPosition(_) => {
-            CommitError::InvalidArgument(anyhow::Error::new(error))
-        }
-        error @ StorageError::TransactionConflict(_) => {
-            CommitError::Concurrency(anyhow::Error::new(error))
-        }
-        error @ StorageError::Timeout(_) => CommitError::Timeout(anyhow::Error::new(error)),
-        error @ StorageError::BackendUnavailable(_) => {
-            CommitError::Unavailable(anyhow::Error::new(error))
-        }
-        error @ StorageError::InternalError(_) => CommitError::Internal(anyhow::Error::new(error)),
     }
 }
 
@@ -128,6 +105,34 @@ mod tests {
             ..Default::default()
         }
         .encode_to_vec()
+    }
+
+    #[test]
+    fn load_reports_invalid_checkpoint_data() {
+        block_on(async {
+            for bytes in [
+                vec![0xff],
+                PerBusEngineState {
+                    decider: Some(VersionedDecider {
+                        policy: i32::MAX,
+                        id: 0,
+                    }),
+                    ..Default::default()
+                }
+                .encode_to_vec(),
+            ] {
+                let storage = Rc::new(InMemoryStorage::new());
+                storage
+                    .put(&engine_state_key("bus"), Bytes::from(bytes), None, 7)
+                    .await
+                    .unwrap();
+                let store = StorageCheckpoints::new(storage);
+                assert!(matches!(
+                    store.load("bus").await,
+                    Err(CheckpointError::Internal(_))
+                ));
+            }
+        });
     }
 
     #[test]

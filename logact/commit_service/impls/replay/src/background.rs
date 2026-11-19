@@ -10,10 +10,10 @@ use std::num::NonZeroUsize;
 use std::rc::Rc;
 
 use agentbus_api::Environment;
-use logact_commit_service_api::CommitResult;
 use lru::LruCache;
 
 use crate::Checkpoint;
+use crate::CheckpointResult;
 use crate::CheckpointStore;
 
 const MAX_UNFLUSHED_BUSES: NonZeroUsize = NonZeroUsize::new(1024).unwrap();
@@ -57,7 +57,7 @@ where
     C: CheckpointStore + Clone + 'static,
     E: Environment,
 {
-    async fn load(&self, bus_id: &str) -> CommitResult<Option<Checkpoint>> {
+    async fn load(&self, bus_id: &str) -> CheckpointResult<Option<Checkpoint>> {
         let stored = self.inner.load(bus_id).await?;
         let unflushed = self.unflushed.borrow().peek(bus_id).cloned();
         Ok(stored
@@ -66,7 +66,7 @@ where
             .max_by_key(|checkpoint| checkpoint.position))
     }
 
-    async fn save(&self, bus_id: &str, checkpoint: &Checkpoint) -> CommitResult<()> {
+    async fn save(&self, bus_id: &str, checkpoint: &Checkpoint) -> CheckpointResult<()> {
         let position = checkpoint.position;
         {
             let mut unflushed = self.unflushed.borrow_mut();
