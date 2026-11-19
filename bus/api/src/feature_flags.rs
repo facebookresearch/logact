@@ -10,8 +10,8 @@
 /// Feature flags for AgentBus and commit-service components.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FeatureFlags {
-    /// Run the replay commit service with shared storage checkpoints instead of
-    /// V1.
+    /// Select replay instead of V1 in test fixtures. The production server
+    /// always runs replay.
     pub enable_replay_commit_service: bool,
     /// Save the shared replay service's checkpoints in the background with
     /// `put_if_newer`, so a commit doesn't wait for its checkpoint save.
@@ -22,9 +22,8 @@ pub struct FeatureFlags {
     pub enable_speculative_decisions: bool,
     /// Serialize commit intentions per bus.
     pub enable_commit_buffering: bool,
-    /// Disable direct appends to CommitSvc's AgentBus except agent input,
-    /// action output, agent output, and mail. Intentions, votes, decisions,
-    /// and policy updates are not allowed.
+    /// Retained for compatibility; the commit service always restricts direct
+    /// appends to agent events and mail.
     pub disable_direct_agentbus_appends: bool,
     /// Serve commit-service policy reads from a lease over the policy register
     /// instead of reading the register on every commit.
