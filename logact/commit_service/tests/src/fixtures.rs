@@ -19,7 +19,6 @@ use agentbus_api::AgentBus;
 use agentbus_api::Environment;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_engine::BaseEngine;
-use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::CachingStorageConfig;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
@@ -82,7 +81,7 @@ pub const ENGINE_CACHE: CachingStorageConfig = CachingStorageConfig {
 };
 
 /// Build a `CommitServiceV1` over `bus` and `storage` with the engine's default
-/// decider and cached engine storage, leaving only the voter factory and policy
+/// decider and uncached engine storage, leaving only the voter factory and policy
 /// to vary.
 pub fn build_v1<B, VF, S, P, E>(
     bus: B,
@@ -90,7 +89,7 @@ pub fn build_v1<B, VF, S, P, E>(
     make_voter_factory: impl FnOnce(Rc<S>) -> VF,
     policy: P,
     environment: Rc<E>,
-) -> CommitServiceV1<B, VF, CachingStorage<S, E>, P, DeciderFactoryImpl<S>, E>
+) -> CommitServiceV1<B, VF, S, P, DeciderFactoryImpl<S>, E>
 where
     B: AgentBus + Clone + 'static,
     VF: VoterFactory + 'static,
@@ -103,11 +102,7 @@ where
     CommitServiceV1::new(bus, |bus| {
         BaseEngine::new(
             bus,
-            Rc::new(CachingStorage::new(
-                storage,
-                environment.clone(),
-                ENGINE_CACHE,
-            )),
+            storage,
             voter_factory,
             policy,
             decider_factory,

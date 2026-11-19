@@ -19,7 +19,6 @@ use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
 use anyhow::Context as _;
 use anyhow::Result;
 use conformance::TestConfig;
-use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::load_engine_state;
@@ -79,7 +78,7 @@ where
     type Impl = CommitServiceV1<
         BF::Impl,
         DelegatingVoterFactory<NoopLogger, RealEnvironment>,
-        CachingStorage<SF::Impl, BF::Env>,
+        SF::Impl,
         P,
         DeciderFactoryImpl<SF::Impl>,
         BF::Env,
@@ -177,7 +176,7 @@ where
     type Impl = CommitServiceV1<
         BF::Impl,
         CountingVoterFactory<FaultInjectingStorage<InMemoryStorage, Simulator>>,
-        CachingStorage<FaultInjectingStorage<InMemoryStorage, Simulator>, Simulator>,
+        FaultInjectingStorage<InMemoryStorage, Simulator>,
         StaticConfigPolicyProvider,
         DeciderFactoryImpl<FaultInjectingStorage<InMemoryStorage, Simulator>>,
         Simulator,

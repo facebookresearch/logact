@@ -22,7 +22,6 @@ use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_api::CreateBusCommand;
-use logact_commit_service_engine::CachingStorage;
 use logact_commit_service_engine::DeciderFactoryImpl;
 use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::load_engine_state;
@@ -56,7 +55,7 @@ type EngineStorage = <InMemoryStorageFixture as ConformanceFixture>::Impl;
 type V1Service<B> = CommitServiceV1<
     B,
     VoterFactory,
-    CachingStorage<EngineStorage, Simulator>,
+    EngineStorage,
     PolicyProvider,
     DeciderFactoryImpl<EngineStorage>,
     Simulator,
