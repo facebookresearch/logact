@@ -13,6 +13,7 @@
 use std::rc::Rc;
 
 use agentbus_api::Environment;
+use agentbus_api::FeatureFlags;
 use agentbus_api::NoopLogger;
 use agentbus_api::RealEnvironment;
 use agentbus_tests::BusProductionShape;
@@ -90,13 +91,18 @@ impl ConformanceFixture for FeatureFlagProductionFixture {
 
     fn create_impl(&self) -> Self::Impl {
         let env = self.get_env();
-        let flags = env.feature_flags();
+        let FeatureFlags {
+            enable_replay_commit_service,
+            enable_background_replay_checkpoints,
+            enable_speculative_decisions: speculative,
+            enable_commit_buffering: buffering,
+            disable_direct_agentbus_appends: _,
+            enable_leased_policy_reads: _,
+        } = env.feature_flags();
         let bus = self.bus_fixture.create_impl();
         let storage = self.storage.clone();
         let policy = self.policy.clone();
-        let buffering = flags.enable_commit_buffering;
-        let speculative = flags.enable_speculative_decisions;
-        if !flags.enable_replay_commit_service {
+        if !enable_replay_commit_service {
             let service_env = env.clone();
             return channeled(env, bus, buffering, move |bus| {
                 build_v1(
@@ -113,7 +119,7 @@ impl ConformanceFixture for FeatureFlagProductionFixture {
             env.clone(),
             ENGINE_CACHE,
         )));
-        if flags.enable_background_replay_checkpoints {
+        if enable_background_replay_checkpoints {
             let checkpoints = BackgroundCheckpoints::new(checkpoints, env.clone());
             return channeled(env, bus, buffering, move |bus| {
                 ReplayCommitService::new(bus, VoterFactory::default(), policy, checkpoints)
