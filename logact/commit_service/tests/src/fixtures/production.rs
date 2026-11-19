@@ -7,8 +7,8 @@
 
 //! The commit service as production servers build it, with in-memory stand-ins
 //! for ZippyDB. Like the server, each replica reads the environment's feature
-//! flags to pick V1 or replay, buffering, and background checkpoints, and runs
-//! behind `ChanneledCommitService`.
+//! flags to pick V1 or replay, buffering, background checkpoints and speculative
+//! decisions, and runs behind `ChanneledCommitService`.
 
 use std::rc::Rc;
 
@@ -95,6 +95,7 @@ impl ConformanceFixture for FeatureFlagProductionFixture {
         let storage = self.storage.clone();
         let policy = self.policy.clone();
         let buffering = flags.enable_commit_buffering;
+        let speculative = flags.enable_speculative_decisions;
         if !flags.enable_replay_commit_service {
             let service_env = env.clone();
             return channeled(env, bus, buffering, move |bus| {
@@ -116,10 +117,12 @@ impl ConformanceFixture for FeatureFlagProductionFixture {
             let checkpoints = BackgroundCheckpoints::new(checkpoints, env.clone());
             return channeled(env, bus, buffering, move |bus| {
                 ReplayCommitService::new(bus, VoterFactory::default(), policy, checkpoints)
+                    .with_speculative_decisions(speculative)
             });
         }
         channeled(env, bus, buffering, move |bus| {
             ReplayCommitService::new(bus, VoterFactory::default(), policy, checkpoints)
+                .with_speculative_decisions(speculative)
         })
     }
 }

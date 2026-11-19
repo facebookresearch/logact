@@ -74,6 +74,9 @@ struct Args {
     /// Save replay checkpoints in the background.
     #[arg(long)]
     background_checkpoints: bool,
+    /// Attach speculative decisions to the replay service's intentions.
+    #[arg(long)]
+    speculative: bool,
     /// Don't serialize commit intentions per bus.
     #[arg(long)]
     no_buffering: bool,
@@ -125,6 +128,7 @@ where
     let flags = FeatureFlags {
         enable_replay_commit_service: args.replay,
         enable_background_replay_checkpoints: args.background_checkpoints,
+        enable_speculative_decisions: args.speculative,
         enable_commit_buffering: !args.no_buffering,
         ..FeatureFlags::default()
     };
