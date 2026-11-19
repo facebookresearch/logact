@@ -45,6 +45,7 @@ pub mod hybrid;
 pub mod inmem;
 pub mod lease;
 pub mod observable;
+pub mod production;
 pub mod random_routing;
 pub mod replay;
 pub mod v1;
@@ -61,6 +62,7 @@ pub use hybrid::HybridCommitServiceFixture;
 pub use inmem::InMemCommitServiceFixture;
 pub use lease::LeaseBasedTestPolicyProvider;
 pub use observable::ObservableCommitServiceFixture;
+pub use production::CommitServiceProductionShape;
 pub use random_routing::CommitServiceV1ProductionShape;
 pub use random_routing::RandomRoutingCommitServiceFixture;
 pub use random_routing::RandomRoutingFixture;
@@ -70,6 +72,14 @@ pub use v1::CommitServiceV1Fixture;
 pub use v1::CommitServiceV1StorageConflictFixture;
 pub use v1_latency::CommitServiceV1LatencyFixture;
 pub use v1_with_counting_voter::CommitServiceV1CountingVoterFixture;
+
+/// The engine checkpoint cache production servers default to: each server's
+/// own cache over the shared engine storage.
+pub const ENGINE_CACHE: CachingStorageConfig = CachingStorageConfig {
+    ttl: Duration::from_secs(60),
+    max_entries: 1024,
+    max_value_bytes: 1024 * 1024,
+};
 
 /// Build a `CommitServiceV1` over `bus` and `storage` with the engine's default
 /// decider and cached engine storage, leaving only the voter factory and policy
@@ -96,11 +106,7 @@ where
             Rc::new(CachingStorage::new(
                 storage,
                 environment.clone(),
-                CachingStorageConfig {
-                    ttl: Duration::from_secs(60),
-                    max_entries: 128,
-                    max_value_bytes: 8 * 1024 * 1024,
-                },
+                ENGINE_CACHE,
             )),
             voter_factory,
             policy,

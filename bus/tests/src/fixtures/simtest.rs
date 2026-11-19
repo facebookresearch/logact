@@ -30,19 +30,18 @@ use rand::distr::Uniform;
 use super::SimulatorFixture;
 use super::WriteOnceAgentBusGenericFixture;
 use crate::common::fault_config::FaultConfig;
-use crate::conditional_write_space::fixtures::simtest::InMemoryConditionalWriteSpaceFixture;
 use crate::impls::chained_agentbus::ChainedAgentBus;
 use crate::impls::chained_agentbus::ChainedMode;
 use crate::impls::fault_injecting_agentbus::FaultInjectingAgentBus;
 use crate::impls::latency_wrapper::LatencyWrapper;
 use crate::impls::retrying_agentbus::RetryingAgentBus;
 use crate::simulator::Simulator;
-use crate::write_once_space::fixtures::WriteOnceAdapterFixture;
 use crate::write_once_space::fixtures::simtest::AmbiguousOnceWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::CachingWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::ChanneledWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::FaultInjectingWriteOnceSpaceFixture;
 use crate::write_once_space::fixtures::simtest::InMemoryWriteOnceSpaceFixture;
+use crate::write_once_space::fixtures::simtest::SpaceProductionShape;
 
 /// A write-once AgentBus over in-memory storage, with an explicit cache capacity.
 /// Instances created by the fixture have independent caches and share storage
@@ -546,15 +545,12 @@ pub type SpaceChanneled = WriteOnceAgentBusGenericFixture<
 >;
 /// The AgentBus each production server builds over ZippyDB, with an in-memory
 /// conditional-write space in place of ZippyDB: `ChanneledAgentBus` over
-/// `WriteOnceAgentBus` over `CachingWriteOnceSpace` over `WriteOnceSpaceAdapter`
-/// over that space. Each `create_impl` is a separate server's stack; only the space
-/// is shared. Latency is injected at the space, and `retry` retries above the
-/// adapter. The observability wrappers production adds are left out.
-pub type BusProductionShape = ChanneledFixture<
-    WriteOnceAgentBusGenericFixture<
-        CachingWriteOnceSpaceFixture<WriteOnceAdapterFixture<InMemoryConditionalWriteSpaceFixture>>,
-    >,
->;
+/// `WriteOnceAgentBus` over a [`SpaceProductionShape`]. Each `create_impl` is a
+/// separate server's stack; only the space is shared. Latency is injected at the
+/// space, and `retry` retries above the adapter. The observability wrappers
+/// production adds are left out.
+pub type BusProductionShape =
+    ChanneledFixture<WriteOnceAgentBusGenericFixture<SpaceProductionShape>>;
 pub type SpaceAmbiguousWriteEmpty = WriteOnceAgentBusGenericFixture<
     AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, false>,
 >;

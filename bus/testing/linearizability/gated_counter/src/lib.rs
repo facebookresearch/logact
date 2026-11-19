@@ -17,7 +17,7 @@ pub use futures;
 conformance::define_driver! {
     $,
     root = gated_counter_suite,
-    scenario_mods = [gated_counter],
+    scenario_mods = [gated_counter, benchmark],
     fixtures = gated_counter_fixtures,
     suite = gated_counter,
 }

@@ -21,11 +21,13 @@ use conformance::TestConfig;
 use rand::distr::Uniform;
 
 use crate::common::fault_config::FaultConfig;
+use crate::conditional_write_space::fixtures::simtest::InMemoryConditionalWriteSpaceFixture;
 use crate::fixtures::SimulatorFixture;
 use crate::impls::fault_injecting_write_once_space::AmbiguousOnceWriteOnceSpace;
 use crate::impls::fault_injecting_write_once_space::FaultInjectingWriteOnceSpace;
 use crate::impls::latency_wrapper::LatencyWrapper;
 use crate::simulator::Simulator;
+use crate::write_once_space::fixtures::WriteOnceAdapterFixture;
 
 /// Fixture for testing InMemoryWriteOnceSpace directly.
 /// The bottom-most write-once space a simulator fixture builds: `space` behind
@@ -141,6 +143,49 @@ where
             F::try_new_with_config(simulator, config)?,
             config.ttl,
         ))
+    }
+}
+
+/// The write-once space each production server builds over ZippyDB, with an
+/// in-memory conditional-write space in place of ZippyDB: `CachingWriteOnceSpace`,
+/// with production's default limits, over `WriteOnceSpaceAdapter` over that
+/// space. Each `create_impl` is a separate server's cache; only the space is
+/// shared.
+pub struct SpaceProductionShape {
+    inner: WriteOnceAdapterFixture<InMemoryConditionalWriteSpaceFixture>,
+    ttl: Option<Duration>,
+}
+
+impl ConformanceFixture for SpaceProductionShape {
+    type Env = Simulator;
+    type Impl = CachingWriteOnceSpace<
+        <WriteOnceAdapterFixture<InMemoryConditionalWriteSpaceFixture> as ConformanceFixture>::Impl,
+    >;
+
+    fn get_env(&self) -> Rc<Self::Env> {
+        self.inner.get_env()
+    }
+
+    fn create_impl(&self) -> Self::Impl {
+        let space = CachingWriteOnceSpace::new(self.inner.create_impl(), 1024, 1024 * 1024);
+        match self.ttl {
+            Some(ttl) => space.with_write_ttl(self.inner.get_env(), ttl),
+            None => space,
+        }
+    }
+}
+
+impl SimulatorFixture for SpaceProductionShape {
+    fn new(simulator: Simulator) -> Self {
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: WriteOnceAdapterFixture::try_new_with_config(simulator, config)?,
+            ttl: config.ttl,
+        })
     }
 }
 

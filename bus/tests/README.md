@@ -91,3 +91,24 @@ implementation that reaches outside the `Environment`. Because it needs two fixt
 at one seed — which the one-fixture scenario contract can't express — it stays
 hand-written and is emitted per fixture from `sim_tests.rs`. (The multi-node
 *consistency* check is a regular `sim_only` scenario.)
+
+## Benchmarks
+
+Benchmarks are scenarios in `gated_counter/src/scenarios/benchmark.rs`, pinned
+with `#[scenario_for]` to `CommitServiceProductionShape`, which builds the
+commit service as production servers do from the simulator's feature flags.
+`run_benchmark_independent_buses_concurrent` runs four counter clients on each
+of three buses, with up to 50 ms injected per storage hop and 0.99 stickiness,
+and prints the completed operations' mean and p99 latency. CI runs it with
+production's default flags.
+
+`logact/commit_service/tests:sim_benchmark` runs any gated-counter scenario on
+any fixture it runs on, exactly as its simtest does, once per seed. Options
+override the scenario's annotation and the feature flags (`--replay`,
+`--background-checkpoints`, `--no-buffering`); `--list` shows the fixtures and
+scenarios:
+
+```bash
+buck2 run @fbcode//mode/opt fbcode//msl_infra/experimental/agentic/logact/commit_service/tests:sim_benchmark -- \
+  --scenario run_benchmark_independent_buses_concurrent --seed 1 --iterations 5 --replay
+```

@@ -141,6 +141,24 @@ pub trait IntegrationFixture: Sized {
     fn new_async(fb: FacebookInit) -> impl std::future::Future<Output = Result<Self>>;
 }
 
+/// Runs `scenario` once against the fixture `create` builds on a simulator at
+/// `seed`. `sim_test!` runs each test through this, as does the commit-service
+/// benchmark.
+pub fn run_sim_scenario<F>(
+    seed: u64,
+    create: impl FnOnce(Simulator) -> Result<F>,
+    scenario: impl AsyncFnOnce(&F) -> Result<()> + 'static,
+) -> Result<()>
+where
+    F: ConformanceFixture<Env = Simulator> + 'static,
+{
+    let fixture = create(Simulator::new(seed))?;
+    let env = fixture.get_env();
+    let handle = env.spawn(async move { scenario(&fixture).await });
+    env.run();
+    futures::executor::block_on(handle).expect("scenario task should complete")
+}
+
 /// Emit one deterministic simulator `#[test]`.
 ///
 /// `$test_fn` is the fully-qualified scenario function (the caller supplies it
@@ -164,32 +182,26 @@ macro_rules! sim_test {
         $crate::sim_test!(@run $test_fn, $test_name, $suffix, $fix,
             $crate::sim_test!(@seed $($seed)?),
             |simulator| $crate::try_new_fixture::<$fix>(simulator, &$config)
-                .expect("fixture should support the scenario's config")
         );
     };
     (@seed) => { agentbus_simulator::generate_seed() };
     (@seed $seed:tt) => { $seed };
     ($test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $seed:tt) => {
         $crate::sim_test!(@run $test_fn, $test_name, $suffix, $fix, $seed,
-            |simulator| <$fix as $crate::SimulatorFixture>::new(simulator)
+            |simulator| Ok(<$fix as $crate::SimulatorFixture>::new(simulator))
         );
     };
     (@run $test_fn:path, $test_name:ident, $suffix:ident, $fix:ty, $seed:expr, $create:expr) => {
         paste::paste! {
             #[test]
             fn [<$test_name _ $suffix>]() {
-                use $crate::ConformanceFixture as _;
                 use $crate::SimulatorFixture as _;
                 let seed: u64 = $seed;
                 eprintln!("Simulator seed: {seed}");
-                let simulator = agentbus_simulator::Simulator::new(seed);
-                let fixture = ($create)(simulator);
-                let env = fixture.get_env();
-                let handle = env.spawn(async move { $test_fn(&fixture).await });
-                env.run();
-                futures::executor::block_on(handle)
-                    .expect("scenario task should complete")
-                    .expect("scenario should succeed");
+                $crate::run_sim_scenario(seed, $create, async |fixture: &$fix| {
+                    $test_fn(fixture).await
+                })
+                .expect("scenario should succeed");
             }
         }
     };

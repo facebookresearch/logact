@@ -40,6 +40,9 @@ macro_rules! commit_service_fixtures {
         // write-once AgentBus over a caching adapter over one shared
         // conditional-write space, and shared scoped engine storage.
         $cb!([$crate::fixtures::CommitServiceV1ProductionShape, v1_production_shape, sim] $(, $ctx)?);
+        // The commit service as production builds it from the simulator's
+        // feature flags; the defaults are production's.
+        $cb!([$crate::fixtures::CommitServiceProductionShape, production_shape, sim] $(, $ctx)?);
         // Channeled wrapper over the simple in-memory bus.
         $cb!(
             [

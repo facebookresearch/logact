@@ -46,5 +46,10 @@ macro_rules! write_once_space_fixtures {
             wos_channeled,
             sim
         ]);
+        $cb!([
+            $crate::write_once_space::fixtures::simtest::SpaceProductionShape,
+            wos_production_shape,
+            sim
+        ]);
     };
 }

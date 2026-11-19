@@ -95,11 +95,29 @@ pub trait LinearizabilityImplementation {
     }
 }
 
-/// Run a declarative workload against one concrete implementation.
+/// Run a declarative workload against one concrete implementation, and return
+/// how many operations completed.
 pub async fn run_linearizability_test<Workload, Implementation>(
     workload: Workload,
     implementation: Rc<Implementation>,
 ) -> Result<usize>
+where
+    Workload: LinearizabilityWorkload<
+            Operation = <<Implementation::Object as LinearizableObject>::Spec as SequentialSpec>::Operation,
+        >,
+    Implementation: LinearizabilityImplementation,
+{
+    Ok(run_linearizability_test_timed(workload, implementation)
+        .await?
+        .len())
+}
+
+/// [`run_linearizability_test`], returning each completed operation's latency,
+/// from invocation to response.
+pub async fn run_linearizability_test_timed<Workload, Implementation>(
+    workload: Workload,
+    implementation: Rc<Implementation>,
+) -> Result<Vec<Duration>>
 where
     Workload: LinearizabilityWorkload<
             Operation = <<Implementation::Object as LinearizableObject>::Spec as SequentialSpec>::Operation,
@@ -154,7 +172,11 @@ where
 
     environment.run();
     completion.await.expect("completion task should complete");
-    let completed = history.observations().len();
+    let latencies = history
+        .observations()
+        .iter()
+        .map(|observation| observation.end_time - observation.start_time)
+        .collect();
     let candidate = implementation.candidate(&history).await?;
     history.verify(
         &candidate,
@@ -171,7 +193,7 @@ where
             }
         },
     )?;
-    Ok(completed)
+    Ok(latencies)
 }
 
 /// One concurrent client in a generated workload.
