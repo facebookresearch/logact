@@ -128,6 +128,8 @@ mod defs {
         bus_id: &str,
         outcome: &logact_commit_service_api::CommitIntentionOutcome,
     ) -> Result<()> {
+        // Validating a speculative decision needs the policy versions logged
+        // before the intention, so read from the start.
         let (entries, _) = read_linearizable_snapshot(
             service.agent_bus(),
             bus_id.to_owned(),
@@ -164,8 +166,8 @@ mod defs {
             )
         })?;
         anyhow::ensure!(
-            *position > outcome.log_position,
-            "decision must follow its intention"
+            *position >= outcome.log_position,
+            "decision must not precede its intention"
         );
         anyhow::ensure!(
             *approved == outcome.approved && reason == &outcome.reason,

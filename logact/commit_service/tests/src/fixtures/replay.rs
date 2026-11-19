@@ -177,6 +177,7 @@ where
         let voter_factory = VoterFactory::default();
         let checkpoints = self.checkpoints.for_server(&bus, &voter_factory);
         ReplayCommitService::new(bus, voter_factory, self.policy.clone(), checkpoints)
+            .with_speculative_decisions(true)
     }
 }
 

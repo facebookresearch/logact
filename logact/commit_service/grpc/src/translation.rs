@@ -58,10 +58,11 @@ pub mod commit_intention {
         let Intention {
             intention,
             policy_version_constraint,
+            speculative_decision,
         } = intention.ok_or_else(|| Status::invalid_argument("intention is required"))?;
-        if policy_version_constraint.is_some() {
+        if policy_version_constraint.is_some() || speculative_decision.is_some() {
             return Err(Status::invalid_argument(
-                "policy version constraints are managed by CommitService",
+                "policy version constraints and speculative decisions are managed by CommitService",
             ));
         }
 
@@ -100,6 +101,7 @@ pub mod commit_intention {
     #[cfg(test)]
     mod tests {
         use agent_bus_proto_rust::agent_bus::BusId;
+        use agent_bus_proto_rust::agent_bus::SpeculativeDecision;
         use agent_bus_proto_rust::agent_bus::intention;
         use tonic::Code;
 
@@ -203,9 +205,33 @@ pub mod commit_intention {
                     policy_version_constraint: Some(
                         intention::PolicyVersionConstraint::RequiredPolicyVersion(1),
                     ),
+                    speculative_decision: None,
                 }),
             })
             .expect_err("policy version constraint should be rejected");
+
+            assert_eq!(error.code(), Code::InvalidArgument);
+        }
+
+        #[test]
+        fn request_rejects_speculative_decision() {
+            let error = native_from_proto_request(CommitIntentionRequest {
+                bus_id: Some(BusId {
+                    agent_bus_id: "test-bus".to_string(),
+                }),
+                intention: Some(Intention {
+                    intention: Some(intention::Intention::StringIntention(
+                        "run tool".to_string(),
+                    )),
+                    policy_version_constraint: None,
+                    speculative_decision: Some(SpeculativeDecision {
+                        policy_version: 1,
+                        approved: true,
+                        reason: "client-supplied".to_string(),
+                    }),
+                }),
+            })
+            .expect_err("speculative decision should be rejected");
 
             assert_eq!(error.code(), Code::InvalidArgument);
         }

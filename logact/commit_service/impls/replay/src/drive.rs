@@ -9,6 +9,7 @@ use std::collections::HashSet;
 
 use agent_bus_proto_rust::agent_bus::BusEntry;
 use agent_bus_proto_rust::agent_bus::Payload;
+use agent_bus_proto_rust::agent_bus::SpeculativeDecision;
 use agent_bus_proto_rust::agent_bus::payload;
 use agentbus_api::AgentBus;
 use anyhow::Context;
@@ -27,6 +28,7 @@ use crate::decider::decided_intention;
 use crate::player::LogPlayer;
 use crate::player::append;
 use crate::player::entry_position;
+use crate::state::Step;
 
 /// One drive: materializes the log forward from a checkpoint until an intention
 /// is decided, appending each entry's decision and votes as it goes, unless an
@@ -81,7 +83,19 @@ impl<'a, T: AgentBus, F: VoterFactory> Drive<'a, T, F> {
                 self.record(payload);
             }
             for entry in &batch {
-                let position = self.materialize(entry).await?;
+                let position = entry_position(entry)?;
+                if let Some(speculation) = self.materialize(entry).await? {
+                    // Check if it's the intention this commit proposed.
+                    if position == proposed_position {
+                        let outcome = CommitIntentionOutcome {
+                            approved: speculation.approved,
+                            reason: speculation.reason,
+                            log_position: position,
+                        };
+                        return Ok((outcome, position));
+                    }
+                    continue;
+                }
                 if let Some(outcome) = entry
                     .payload
                     .as_ref()
@@ -98,8 +112,9 @@ impl<'a, T: AgentBus, F: VoterFactory> Drive<'a, T, F> {
         }
     }
 
-    /// Materialize `entry`, appending its outputs, and return its position.
-    async fn materialize(&mut self, entry: &BusEntry) -> CommitResult<i64> {
+    /// Materialize `entry`, appending its outputs. Returns the intention's
+    /// speculative decision if it is correct, which calls for no outputs.
+    async fn materialize(&mut self, entry: &BusEntry) -> CommitResult<Option<SpeculativeDecision>> {
         let position = entry_position(entry)?;
         if entry.payload.is_some() {
             let decided_earlier = self.logged_decisions.contains(&position);
@@ -107,7 +122,12 @@ impl<'a, T: AgentBus, F: VoterFactory> Drive<'a, T, F> {
                 .state
                 .materialize(entry, &|config| self.voter_factory.validate_config(config))
                 .map_err(apply_error)?;
-            if let Some(decision) = step.decision
+            let (decision, voters) = match step {
+                // Short-circuit for correct speculative decision.
+                Step::ShortCircuited(speculation) => return Ok(Some(speculation)),
+                Step::Continue { decision, voters } => (decision, voters),
+            };
+            if let Some(decision) = decision
                 && !decision
                     .payload
                     .as_ref()
@@ -119,7 +139,7 @@ impl<'a, T: AgentBus, F: VoterFactory> Drive<'a, T, F> {
             // Voters may be expensive (e.g. LLM calls), so an intention decided
             // before this drive reached it is not evaluated again.
             if !decided_earlier {
-                for (voter_id, config) in step.voters {
+                for (voter_id, config) in voters {
                     let key = (position, voter_id.clone(), config.encode_to_vec());
                     if self.logged_votes.contains(&key) {
                         continue;
@@ -139,7 +159,7 @@ impl<'a, T: AgentBus, F: VoterFactory> Drive<'a, T, F> {
                 }
             }
         }
-        Ok(position)
+        Ok(None)
     }
 
     async fn append(&mut self, payload: Payload) -> CommitResult<()> {

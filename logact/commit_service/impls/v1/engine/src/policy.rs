@@ -562,6 +562,7 @@ mod tests {
             payload: Some(payload::Payload::Intention(Intention {
                 intention: Some(intention::Intention::StringIntention("test".to_string())),
                 policy_version_constraint: Some(constraint),
+                speculative_decision: None,
             })),
         }
     }

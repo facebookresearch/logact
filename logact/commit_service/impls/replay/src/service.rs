@@ -6,9 +6,11 @@
  */
 
 use agent_bus_proto_rust::agent_bus::BusEntry;
+use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agent_bus_proto_rust::agent_bus::Header;
 use agent_bus_proto_rust::agent_bus::Intention;
 use agent_bus_proto_rust::agent_bus::Payload;
+use agent_bus_proto_rust::agent_bus::SpeculativeDecision;
 use agent_bus_proto_rust::agent_bus::intention;
 use agent_bus_proto_rust::agent_bus::payload;
 use agentbus_api::AgentBus;
@@ -40,6 +42,7 @@ pub struct ReplayCommitService<T, F, P, C> {
     voter_factory: F,
     policy_provider: P,
     checkpoints: C,
+    speculative_decisions: bool,
 }
 
 impl<T, F, P, C> ReplayCommitService<T, F, P, C> {
@@ -49,7 +52,15 @@ impl<T, F, P, C> ReplayCommitService<T, F, P, C> {
             voter_factory,
             policy_provider,
             checkpoints,
+            speculative_decisions: false,
         }
+    }
+
+    /// Attach a speculative decision to intentions under a decider that needs
+    /// no votes. Readers honor correct speculations either way.
+    pub fn with_speculative_decisions(mut self, enabled: bool) -> Self {
+        self.speculative_decisions = enabled;
+        self
     }
 
     pub fn checkpoints(&self) -> &C {
@@ -146,12 +157,18 @@ where
         {
             first_append = Some(append(&self.bus, bus_id, policy_batch_payload(batch)).await?);
         }
+        let speculative_decision = if self.speculative_decisions {
+            compute_speculation(&desired)
+        } else {
+            None
+        };
         let intention = Payload {
             payload: Some(payload::Payload::Intention(Intention {
                 intention: Some(request.intention),
                 policy_version_constraint: Some(
                     intention::PolicyVersionConstraint::MinimumPolicyVersion(desired.version),
                 ),
+                speculative_decision,
             })),
         };
         let proposed_position = append(&self.bus, bus_id, intention).await?;
@@ -172,4 +189,20 @@ where
         self.save_checkpoint(bus_id, checkpoint).await;
         Ok(outcome)
     }
+}
+
+/// The speculative decision for an intention proposed under `desired`, if its
+/// decider needs no votes. It is correct iff `desired` is still the applied
+/// policy when the intention lands.
+fn compute_speculation(desired: &VersionedPolicy) -> Option<SpeculativeDecision> {
+    let (approved, reason) = match desired.policy.decider_policy {
+        DeciderPolicy::OnByDefault => (true, "ON_BY_DEFAULT policy"),
+        DeciderPolicy::OffByDefault => (false, "OFF_BY_DEFAULT policy"),
+        DeciderPolicy::FirstBooleanWins => return None,
+    };
+    Some(SpeculativeDecision {
+        policy_version: desired.version,
+        approved,
+        reason: reason.to_string(),
+    })
 }

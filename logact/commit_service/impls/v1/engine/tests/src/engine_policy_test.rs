@@ -602,6 +602,7 @@ fn constrained_string_intention(
         payload: Some(payload::Payload::Intention(Intention {
             intention: Some(intention::Intention::StringIntention(body.to_string())),
             policy_version_constraint: Some(constraint),
+            speculative_decision: None,
         })),
     }
 }

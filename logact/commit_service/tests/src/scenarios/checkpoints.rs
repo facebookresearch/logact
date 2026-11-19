@@ -56,8 +56,8 @@ mod defs {
         Ok(())
     }
 
-    /// Every intention at or before `position` has a logged decision, anywhere
-    /// in the log.
+    /// Every intention at or before `position` has a decision, anywhere in the
+    /// log: a `Commit`, an `Abort`, or a correct speculative decision.
     async fn assert_prefix_decided(
         bus: &impl AgentBus,
         bus_id: &str,

@@ -16,6 +16,10 @@ pub struct FeatureFlags {
     /// Save the shared replay service's checkpoints in the background with
     /// `put_if_newer`, so a commit doesn't wait for its checkpoint save.
     pub enable_background_replay_checkpoints: bool,
+    /// Attach a speculative decision to the replay commit service's intentions
+    /// under `ON_BY_DEFAULT` and `OFF_BY_DEFAULT`. Reading correct speculations is
+    /// always on.
+    pub enable_speculative_decisions: bool,
     /// Serialize commit intentions per bus.
     pub enable_commit_buffering: bool,
     /// Disable direct appends to CommitSvc's AgentBus except agent input,
@@ -32,6 +36,7 @@ impl Default for FeatureFlags {
         Self {
             enable_replay_commit_service: false,
             enable_background_replay_checkpoints: false,
+            enable_speculative_decisions: false,
             enable_commit_buffering: true,
             disable_direct_agentbus_appends: false,
             enable_leased_policy_reads: false,

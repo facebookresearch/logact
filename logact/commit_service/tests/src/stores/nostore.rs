@@ -41,7 +41,7 @@ impl<T> NoStoreCheckpoints<T> {
 }
 
 impl<T: AgentBus> CheckpointStore for NoStoreCheckpoints<T> {
-    /// The bus materialized up to its first intention with no logged decision.
+    /// The bus materialized up to its first intention with no decision.
     /// Everything before it is settled; the drive replays the rest and appends
     /// whatever outputs it calls for.
     async fn load(&self, bus_id: &str) -> CommitResult<Option<Checkpoint>> {
@@ -54,7 +54,7 @@ impl<T: AgentBus> CheckpointStore for NoStoreCheckpoints<T> {
             }
             entries.extend(batch);
         }
-        // Pass 1: the intentions with a logged decision.
+        // Pass 1: the intentions with a decision, logged or speculative.
         let decided = first_decisions(&entries);
         // Pass 2: materialize up to the first intention without one.
         let mut state = ReplayState::default();

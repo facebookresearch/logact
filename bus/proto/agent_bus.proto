@@ -113,6 +113,19 @@ message Intention {
     // Execute under this policy generation or a later one.
     int64 minimum_policy_version = 3;
   }
+  // A decision the proposer computed from the policy at a known version. It
+  // is correct iff that version is the applied policy version at this
+  // intention's log position; otherwise the intention is decided normally.
+  SpeculativeDecision speculative_decision = 5;
+}
+
+// A decision carried by an intention, valid only under one policy version.
+// Readers validate it by tracking applied policy versions alone.
+message SpeculativeDecision {
+  // The policy version the decision was computed from.
+  int64 policy_version = 1;
+  bool approved = 2;
+  string reason = 3;
 }
 
 // One ordered, nonempty proposal with a shared decision. The outer Intention

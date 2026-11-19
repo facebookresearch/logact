@@ -134,8 +134,8 @@ mod defs {
             );
             let (_, approved, decision_position) = matching[0];
             anyhow::ensure!(
-                *decision_position > intention_position,
-                "decision at {decision_position} must follow intention at {intention_position}"
+                *decision_position >= intention_position,
+                "decision at {decision_position} must not precede intention at {intention_position}"
             );
             anyhow::ensure!(
                 *approved,

@@ -7,6 +7,7 @@
 
 use agent_bus_proto_rust::agent_bus::BusEntry;
 use agent_bus_proto_rust::agent_bus::Payload;
+use agent_bus_proto_rust::agent_bus::SpeculativeDecision;
 use agent_bus_proto_rust::agent_bus::VoterConfig;
 use agent_bus_proto_rust::agent_bus::payload;
 use logact_commit_service_api::CommitError;
@@ -30,17 +31,24 @@ pub struct ReplayState {
 }
 
 /// The outputs one materialized entry calls for.
-#[derive(Default)]
-pub struct Step {
-    pub decision: Option<Payload>,
-    /// The voters to ask about the entry, if it is an intention.
-    pub voters: Vec<(String, VoterConfig)>,
+pub enum Step {
+    /// The intention's speculative decision is correct: the intention is
+    /// decided at its own position, without a logged `Commit` or `Abort`, and
+    /// nothing else is called for.
+    ShortCircuited(SpeculativeDecision),
+    /// Continue the protocol: append `decision`, if any, and ask `voters`
+    /// about the entry, which are only ever set for an intention.
+    Continue {
+        decision: Option<Payload>,
+        voters: Vec<(String, VoterConfig)>,
+    },
 }
 
 impl ReplayState {
     /// Materialize `entry`, in V1 playback order: the policy-version constraint,
-    /// the decider and voters, then any policy change. Returns the outputs it
-    /// calls for.
+    /// the decider and voters, then any policy change. An intention with a
+    /// correct speculative decision short-circuits after the constraint.
+    /// Returns the outputs it calls for.
     pub fn materialize(
         &mut self,
         entry: &BusEntry,
@@ -52,16 +60,27 @@ impl ReplayState {
             .ok_or(ApplyError::MissingHeader)?
             .log_position;
         let Some(payload) = entry.payload.as_ref() else {
-            return Ok(Step::default());
+            return Ok(Step::Continue {
+                decision: None,
+                voters: Vec::new(),
+            });
         };
-        let mut step = Step::default();
+        let mut decision = None;
+        let mut voters = Vec::new();
         if let Some(reason) = policy_constraint_failure(payload, self.policy.applied_policy_version)
         {
-            step.decision = Some(abort_payload(position, &reason));
+            decision = Some(abort_payload(position, &reason));
         } else if let Some(inner) = payload.payload.as_ref() {
-            step.decision = self.decider.step(position, inner);
+            if let payload::Payload::Intention(intention) = inner
+                && let Some(speculation) = intention.speculative_decision.as_ref()
+                && self.policy.applied_policy_version == Some(speculation.policy_version)
+            {
+                // Short-circuit for correct speculative decision.
+                return Ok(Step::ShortCircuited(speculation.clone()));
+            }
+            decision = self.decider.step(position, inner);
             if matches!(inner, payload::Payload::Intention(_)) {
-                step.voters = state_voter_configs(&self.policy);
+                voters = state_voter_configs(&self.policy);
             }
         }
 
@@ -72,7 +91,7 @@ impl ReplayState {
             // unchanged policy, as V1 keys decider state by the installing entry.
             self.decider = DeciderMachine::new(load_decider_spec_from_state(&self.policy)?.config);
         }
-        Ok(step)
+        Ok(Step::Continue { decision, voters })
     }
 }
 
@@ -100,9 +119,35 @@ impl ReplayState {
 #[cfg(test)]
 mod tests {
     use agent_bus_proto_rust::agent_bus::DeciderPolicy;
+    use agent_bus_proto_rust::agent_bus::Header;
+    use agent_bus_proto_rust::agent_bus::Intention;
+    use agent_bus_proto_rust::agent_bus::intention;
     use prost::Message;
 
     use super::*;
+
+    fn intention(speculative_decision: Option<SpeculativeDecision>) -> Payload {
+        Payload {
+            payload: Some(payload::Payload::Intention(Intention {
+                intention: Some(intention::Intention::StringIntention("tool".to_string())),
+                policy_version_constraint: None,
+                speculative_decision,
+            })),
+        }
+    }
+
+    fn materialize(state: &mut ReplayState, position: i64, payload: &Payload) -> Step {
+        let entry = BusEntry {
+            header: Some(Header {
+                log_position: position,
+                ..Default::default()
+            }),
+            payload: Some(payload.clone()),
+        };
+        state
+            .materialize(&entry, &|_| anyhow::bail!("no voters are configured"))
+            .expect("the entry should materialize")
+    }
 
     #[test]
     fn decider_state_round_trips_through_v1_engine_state() {
@@ -123,5 +168,46 @@ mod tests {
         assert_eq!(v1.applied_policy_version, Some(3));
         let decoded = ReplayState::from_engine_state(v1).expect("the record should decode");
         assert_eq!(decoded.decider, state.decider);
+    }
+
+    #[test]
+    fn a_v1_intention_is_decided_by_the_decider() {
+        let mut state = ReplayState::default();
+        let Step::Continue { decision, .. } = materialize(&mut state, 0, &intention(None)) else {
+            panic!("a V1 intention should continue the protocol");
+        };
+        assert!(matches!(
+            decision.and_then(|decision| decision.payload),
+            Some(payload::Payload::Commit(_))
+        ));
+    }
+
+    #[test]
+    fn a_speculation_is_correct_only_at_the_applied_version() {
+        let mut state = ReplayState::default();
+        state.policy.applied_policy_version = Some(3);
+        let speculation = |policy_version| SpeculativeDecision {
+            policy_version,
+            approved: false,
+            reason: "speculated".to_string(),
+        };
+
+        assert!(
+            matches!(
+                materialize(&mut state, 5, &intention(Some(speculation(3)))),
+                Step::ShortCircuited(short_circuited) if short_circuited == speculation(3)
+            ),
+            "a correct speculation short-circuits"
+        );
+
+        let Step::Continue { decision, .. } =
+            materialize(&mut state, 6, &intention(Some(speculation(2))))
+        else {
+            panic!("a stale speculation should continue the protocol");
+        };
+        assert!(
+            decision.is_some(),
+            "a stale speculation falls back to the decider"
+        );
     }
 }
