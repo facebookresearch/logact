@@ -14,6 +14,7 @@
 pub mod agent_bus_id;
 pub mod any_helpers;
 pub mod conditional_write_space;
+pub mod eligibility;
 pub mod environment;
 pub mod feature_flags;
 pub mod helpers;
@@ -41,6 +42,8 @@ pub use conditional_write_space::ConditionalWriteResult;
 pub use conditional_write_space::ConditionalWriteSpace;
 pub use conditional_write_space::Version;
 pub use conditional_write_space::VersionedValue;
+pub use eligibility::EligibilityError;
+pub use eligibility::EligibilityGate;
 pub use environment::Clock;
 pub use environment::Environment;
 pub use environment::MonotonicInstant;

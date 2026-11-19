@@ -5,6 +5,8 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::rc::Rc;
+
 use async_trait::async_trait;
 
 /// Caller identities authenticated by the transport that received a request.
@@ -49,6 +51,18 @@ pub trait RequestGate {
         method: &'static str,
         agent_bus_id: &str,
     ) -> Result<(), AuthorizationError>;
+}
+
+#[async_trait(?Send)]
+impl<G: RequestGate + ?Sized> RequestGate for Rc<G> {
+    async fn admit(
+        &self,
+        ctx: &RequestContext,
+        method: &'static str,
+        agent_bus_id: &str,
+    ) -> Result<(), AuthorizationError> {
+        (**self).admit(ctx, method, agent_bus_id).await
+    }
 }
 
 /// Admits every request without checking the caller.
