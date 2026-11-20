@@ -43,6 +43,11 @@ pub enum AuthorizationError {
 
 /// Admits or rejects a request that entered a channel with a caller's
 /// context, before the request runs.
+///
+/// Each gate applies its own policy: `Denied` means the policy rejects the
+/// caller, and `Unavailable` means the gate could not reach a decision. For
+/// example, [`ExtremelyUnsafeNoOpGate`] admits every request, and eligibility
+/// gates follow the contract documented in [`crate::eligibility`].
 #[async_trait(?Send)]
 pub trait RequestGate {
     async fn admit(

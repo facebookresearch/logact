@@ -6,6 +6,30 @@
  */
 
 //! Caller eligibility checks for services behind a channel boundary.
+//!
+//! # Eligibility gate contract
+//!
+//! An eligibility gate is a [`RequestGate`] that admits a caller by the
+//! eligibility of its unixname. [`EligibilityGate`] implements this contract;
+//! other gates, such as [`ExtremelyUnsafeNoOpGate`], apply other policies. An
+//! eligibility gate:
+//!
+//! - Admits a caller with any exempt service identity, without an eligibility
+//!   lookup.
+//! - Otherwise needs exactly one user identity that is nonempty and not all
+//!   digits; empty users and numeric user IDs are ignored. A caller with no
+//!   such identity, or with more than one (including the same unixname twice),
+//!   is denied without a lookup.
+//! - Looks up that unixname: an eligible caller is admitted, an ineligible one
+//!   is denied, and a failed lookup is unavailable, with the lookup's error as
+//!   its source.
+//! - Decides the same way for every method and bus.
+//! - May retain allow and deny decisions for a fixed TTL measured from the
+//!   start of the request that looked them up. Serving a retained decision does
+//!   not extend it, and unavailable results are never retained. Without
+//!   retention, a changed eligibility applies to the next request.
+//!
+//! [`ExtremelyUnsafeNoOpGate`]: crate::ExtremelyUnsafeNoOpGate
 
 use std::cell::Cell;
 use std::collections::HashSet;
