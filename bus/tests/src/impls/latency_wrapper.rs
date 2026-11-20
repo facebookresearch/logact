@@ -6,15 +6,19 @@
  */
 
 //! LatencyWrapper: injects the simulator's latency into the bottom-most
-//! AgentBus, WriteOnceSpace, and ConditionalWriteSpace implementations.
+//! AgentBus, WriteOnceSpace, ConditionalWriteSpace, and RequestGate
+//! implementations.
 
 use std::future::Future;
 use std::rc::Rc;
 use std::time::Duration;
 
+use agentbus_api::AuthorizationError;
 use agentbus_api::ConditionalWriteError;
 use agentbus_api::ConditionalWriteResult;
 use agentbus_api::ConditionalWriteSpace;
+use agentbus_api::RequestContext;
+use agentbus_api::RequestGate;
 use agentbus_api::TailError;
 use agentbus_api::TailResult;
 use agentbus_api::TailableSpace;
@@ -25,6 +29,7 @@ use agentbus_api::WriteOnceResult;
 use agentbus_api::WriteOnceSpace;
 use agentbus_api::traits::*;
 use anyhow::anyhow;
+use async_trait::async_trait;
 use bytes::Bytes;
 
 use crate::simulator::Simulator;
@@ -171,5 +176,21 @@ impl<T: ConditionalWriteSpace + Clone + 'static> ConditionalWriteSpace for Laten
         self.call(async move |space| space.read(&space_id, address).await)
             .await
             .unwrap_or_else(conditional_write_timeout)
+    }
+}
+
+#[async_trait(?Send)]
+impl<T: RequestGate + 'static> RequestGate for LatencyWrapper<T> {
+    async fn admit(
+        &self,
+        ctx: &RequestContext,
+        method: &'static str,
+        agent_bus_id: &str,
+    ) -> Result<(), AuthorizationError> {
+        let ctx = ctx.clone();
+        let agent_bus_id = agent_bus_id.to_owned();
+        self.call(async move |gate| gate.admit(&ctx, method, &agent_bus_id).await)
+            .await
+            .unwrap_or_else(|| Err(AuthorizationError::Unavailable(anyhow!(TIMEOUT_MESSAGE))))
     }
 }

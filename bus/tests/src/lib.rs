@@ -22,6 +22,8 @@
 pub mod common;
 pub mod conditional_write_space;
 pub mod decisions;
+pub mod eligibility;
+pub mod eligibility_gate;
 pub mod fault_injection_helpers;
 pub mod fixtures;
 // Fault-injection fixture types, re-exported at the crate root so `#[scenario_for]`

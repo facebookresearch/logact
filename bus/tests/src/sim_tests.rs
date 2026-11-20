@@ -11,6 +11,7 @@ use agentbus_tests::agentbus_integration_suite;
 use agentbus_tests::agentbus_sim_suite;
 use agentbus_tests::conditional_write_space_integration_suite;
 use agentbus_tests::conditional_write_space_sim_suite;
+use agentbus_tests::eligibility_gate_sim_suite;
 use agentbus_tests::tailable_space_integration_suite;
 use agentbus_tests::tailable_space_sim_suite;
 use agentbus_tests::write_once_space_integration_suite;
@@ -52,4 +53,6 @@ conditional_write_space_integration_suite!();
 
 tailable_space_sim_suite!();
 tailable_space_integration_suite!();
+
+eligibility_gate_sim_suite!();
 }
