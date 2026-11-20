@@ -47,6 +47,10 @@ use crate::MonotonicInstant;
 use crate::RequestContext;
 use crate::RequestGate;
 
+mod cache;
+
+pub use self::cache::CachingEligibilityGate;
+
 const WARNING_INTERVAL: Duration = Duration::from_secs(5);
 
 type LookupFuture = Pin<Box<dyn Future<Output = anyhow::Result<bool>>>>;
@@ -113,23 +117,19 @@ impl<E: Environment> RequestGate for EligibilityGate<E> {
         let Err(error) = self.check(ctx).await else {
             return Ok(());
         };
-        self.warn(ctx, method, agent_bus_id, &error);
-        Err(match error {
-            EligibilityError::Unavailable { .. } => AuthorizationError::Unavailable(error.into()),
-            EligibilityError::MissingUnixname
-            | EligibilityError::AmbiguousUnixnames
-            | EligibilityError::Ineligible { .. } => AuthorizationError::Denied(error.into()),
-        })
+        Err(self.reject(ctx, method, agent_bus_id, error))
     }
 }
 
 impl<E: Environment> EligibilityGate<E> {
-    async fn check(&self, ctx: &RequestContext) -> Result<(), EligibilityError> {
-        if ctx
-            .services
+    fn is_exempt(&self, ctx: &RequestContext) -> bool {
+        ctx.services
             .iter()
             .any(|service| self.exempt_services.contains(service))
-        {
+    }
+
+    async fn check(&self, ctx: &RequestContext) -> Result<(), EligibilityError> {
+        if self.is_exempt(ctx) {
             return Ok(());
         }
         let unixname = caller_unixname(ctx)?;
@@ -142,6 +142,22 @@ impl<E: Environment> EligibilityGate<E> {
                 unixname: unixname.to_owned(),
                 source,
             }),
+        }
+    }
+
+    fn reject(
+        &self,
+        ctx: &RequestContext,
+        method: &str,
+        agent_bus_id: &str,
+        error: EligibilityError,
+    ) -> AuthorizationError {
+        self.warn(ctx, method, agent_bus_id, &error);
+        match error {
+            EligibilityError::Unavailable { .. } => AuthorizationError::Unavailable(error.into()),
+            EligibilityError::MissingUnixname
+            | EligibilityError::AmbiguousUnixnames
+            | EligibilityError::Ineligible { .. } => AuthorizationError::Denied(error.into()),
         }
     }
 

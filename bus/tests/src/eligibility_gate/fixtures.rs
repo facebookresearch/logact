@@ -7,9 +7,11 @@
 
 //! Test fixtures for eligibility `RequestGate` implementations
 
+use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::time::Duration;
 
+use agentbus_api::CachingEligibilityGate;
 use agentbus_api::EligibilityGate;
 use agentbus_api::RequestGate;
 use agentbus_api::RetryConfig;
@@ -144,6 +146,58 @@ impl SimulatorFixture for EligibilityGateFixture {
             eligibility: InMemoryEligibilityLookup::default(),
             env: Rc::new(simulator),
             retry: retry_config(config)?,
+        })
+    }
+}
+
+/// Fixture for a `CachingEligibilityGate` over `EligibilityGateFixture`'s gate.
+/// Each `create_impl` is a new cache, as each process has its own cache.
+pub struct CachingEligibilityGateFixture {
+    inner: EligibilityGateFixture,
+}
+
+impl CachingEligibilityGateFixture {
+    const CACHE_TTL: Duration = Duration::from_secs(1);
+}
+
+impl ConformanceFixture for CachingEligibilityGateFixture {
+    type Env = Simulator;
+    type Impl = Backend<CachingEligibilityGate<Simulator>>;
+
+    fn get_env(&self) -> Rc<Self::Env> {
+        self.inner.get_env()
+    }
+
+    fn create_impl(&self) -> Self::Impl {
+        let gate = CachingEligibilityGate::new(
+            self.inner.gate(),
+            NonZeroUsize::new(1024).expect("capacity should be nonzero"),
+            Self::CACHE_TTL,
+        );
+        backend(gate, &self.inner.env, self.inner.retry)
+    }
+}
+
+impl EligibilityGateTestFixture for CachingEligibilityGateFixture {
+    fn eligibility(&self) -> InMemoryEligibilityLookup {
+        self.inner.eligibility()
+    }
+
+    fn cache_ttl(&self) -> Duration {
+        Self::CACHE_TTL
+    }
+}
+
+impl SimulatorFixture for CachingEligibilityGateFixture {
+    fn new(simulator: Simulator) -> Self {
+        Self {
+            inner: EligibilityGateFixture::new(simulator),
+        }
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: EligibilityGateFixture::try_new_with_config(simulator, config)?,
         })
     }
 }

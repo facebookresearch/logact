@@ -25,5 +25,10 @@ macro_rules! eligibility_gate_fixtures {
             gate_eligibility,
             sim
         ]);
+        $cb!([
+            $crate::eligibility_gate::fixtures::CachingEligibilityGateFixture,
+            gate_caching,
+            sim
+        ]);
     };
 }

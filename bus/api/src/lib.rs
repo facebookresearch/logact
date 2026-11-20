@@ -42,6 +42,7 @@ pub use conditional_write_space::ConditionalWriteResult;
 pub use conditional_write_space::ConditionalWriteSpace;
 pub use conditional_write_space::Version;
 pub use conditional_write_space::VersionedValue;
+pub use eligibility::CachingEligibilityGate;
 pub use eligibility::EligibilityError;
 pub use eligibility::EligibilityGate;
 pub use environment::Clock;
