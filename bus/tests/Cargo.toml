@@ -28,6 +28,7 @@ agentbus_writeonce = { version = "0.1.0", path = "../impls/writeonce" }
 anyhow = "1.0.104"
 async-trait = "0.1.92"
 bytes = { version = "1.12.1", features = ["serde"] }
+channeled_svc_agentbus = { version = "0.1.0", path = "../channeled/agentbus" }
 conformance = { version = "0.1.0", path = "../testing/conformance" }
 conformance_macros = { version = "0.1.0", path = "../testing/conformance_macros" }
 fbinit = { version = "0.2.0", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "main" }

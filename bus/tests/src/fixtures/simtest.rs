@@ -23,6 +23,7 @@ use agentbus_simple::InMemoryAgentBus;
 use agentbus_writeonce::ObservableWriteOnceSpace;
 use agentbus_writeonce::WriteOnceAgentBus;
 use anyhow::Result;
+use channeled_svc_agentbus::ChanneledAgentBus as ChanneledSvcAgentBus;
 use conformance::ConformanceFixture;
 use conformance::TestConfig;
 use rand::distr::Uniform;
@@ -198,6 +199,45 @@ impl SimulatorFixture for ChanneledAgentBusFixture {
         Ok(Self {
             agentbus: backend(agentbus, &env, config),
             env,
+        })
+    }
+}
+
+/// Runs each of another AgentBus fixture's buses behind its own
+/// `channeled_svc` `ChanneledAgentBus`.
+pub struct ChanneledSvcFixture<F> {
+    inner: F,
+}
+
+impl<F> ConformanceFixture for ChanneledSvcFixture<F>
+where
+    F: ConformanceFixture<Env = Simulator, Impl: agentbus_api::AgentBus + 'static>,
+{
+    type Env = Simulator;
+    type Impl = ChanneledSvcAgentBus;
+
+    fn get_env(&self) -> Rc<Self::Env> {
+        self.inner.get_env()
+    }
+
+    fn create_impl(&self) -> Self::Impl {
+        ChanneledSvcAgentBus::spawn_on(self.inner.get_env(), self.inner.create_impl())
+    }
+}
+
+impl<F> SimulatorFixture for ChanneledSvcFixture<F>
+where
+    F: SimulatorFixture
+        + ConformanceFixture<Env = Simulator, Impl: agentbus_api::AgentBus + 'static>,
+{
+    fn new(simulator: Simulator) -> Self {
+        Self::try_new_with_config(simulator, &TestConfig::default())
+            .expect("the default config should be valid")
+    }
+
+    fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        Ok(Self {
+            inner: F::try_new_with_config(simulator, config)?,
         })
     }
 }
@@ -531,6 +571,7 @@ impl<F: ConformanceFixture, M> ConformanceFixture for FaultFixture<F, M> {
 // preserves per-client FIFO).
 pub type BusSimpleMemory = FaultInjectingFixture<SimpleMemoryFixture>;
 pub type BusChanneled = FaultInjectingFixture<ChanneledAgentBusFixture>;
+pub type BusChanneledSvc = FaultInjectingFixture<ChanneledSvcFixture<SimpleMemoryFixture>>;
 pub type BusChained = FaultInjectingFixture<ChainedAgentBusFixture>;
 pub type SpaceInMemory = WriteOnceAgentBusGenericFixture<
     FaultInjectingWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture>,
