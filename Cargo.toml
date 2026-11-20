@@ -28,6 +28,7 @@ members = [
   "bus/voters/rule-based",
   "bus/voters/rule-based/proto",
   "logact/commit_service/api",
+  "logact/commit_service/channeled",
   "logact/commit_service/cli",
   "logact/commit_service/core",
   "logact/commit_service/grpc",

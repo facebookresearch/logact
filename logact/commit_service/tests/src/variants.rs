@@ -52,6 +52,24 @@ macro_rules! commit_service_fixtures {
             ]
             $(, $ctx)?
         );
+        // The same over the `channeled_svc` frontend, and in the production
+        // topology with the bus behind its own `channeled_svc` channel.
+        $cb!(
+            [
+                $crate::fixtures::ChanneledSvcCommitServiceFixture<CommitServiceV1Fixture<FaultInjectingFixture<SimpleMemoryFixture>>>,
+                channeled_svc_v1_simple_memory,
+                sim
+            ]
+            $(, $ctx)?
+        );
+        $cb!(
+            [
+                $crate::fixtures::ChanneledSvcCommitServiceFixture<CommitServiceV1Fixture<agentbus_tests::fixtures::simtest::BusChanneledSvc>>,
+                channeled_svc_v1_channeled_svc_bus,
+                sim
+            ]
+            $(, $ctx)?
+        );
         $cb!(
             [
                 $crate::fixtures::BufferingCommitServiceFixture<CommitServiceV1Fixture<FaultInjectingFixture<SimpleMemoryFixture>>>,

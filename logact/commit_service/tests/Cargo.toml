@@ -27,6 +27,7 @@ conformance_macros = { version = "0.1.0", path = "../../../bus/testing/conforman
 fbinit = { version = "0.2.0", git = "https://github.com/facebookexperimental/rust-shed.git", branch = "main" }
 futures = { version = "0.3.34", features = ["async-await", "compat"] }
 logact_commit_service_api = { version = "0.1.0", path = "../api" }
+logact_commit_service_channeled = { version = "0.1.0", path = "../channeled" }
 logact_commit_service_core = { version = "0.1.0", path = "../core" }
 logact_commit_service_engine = { version = "0.1.0", path = "../impls/v1/engine" }
 logact_commit_service_engine_tests = { version = "0.1.0", path = "../impls/v1/engine/tests" }
