@@ -69,6 +69,8 @@ pub use observable_applicator::Observability;
 pub use observable_applicator::ObservableApplicator;
 pub use observable_applicator::ObservedDeciderFactory;
 pub use observable_storage::ObservableStorage;
+pub use observable_storage::storage_error_code;
+pub use observable_storage::storage_error_message;
 pub use policy::apply_policy_entry;
 pub use policy::installed_policy;
 pub use policy::plan as plan_policy_batch;

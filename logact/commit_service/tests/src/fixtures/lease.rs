@@ -13,19 +13,17 @@ use std::time::Duration;
 use agent_bus_proto_rust::agent_bus::DeciderPolicy;
 use agentbus_api::Environment;
 use agentbus_simulator::Simulator;
-use logact_commit_service_api::PolicyState;
 use logact_commit_service_engine::InMemoryStorage;
-use logact_commit_service_engine::validate_voter_configs;
 use logact_commit_service_policy_register::LeaseBasedPolicyRegister;
 use logact_commit_service_policy_register::PolicyLeaseConfig;
 use logact_commit_service_policy_register::PolicyRegister;
 use logact_commit_service_policy_register::PolicyRegisterError;
 use logact_commit_service_policy_register::RegisterPolicyProvider;
 use logact_commit_service_policy_register::StoragePolicyRegister;
-use logact_commit_service_v1::DelegatingVoterFactory;
 
 use crate::fixtures::SettableDeciderPolicy;
 use crate::fixtures::TestPolicyProvider;
+use crate::fixtures::register_provider_for_test;
 
 type TestLeaseRegister =
     LeaseBasedPolicyRegister<StoragePolicyRegister<InMemoryStorage>, Simulator>;
@@ -43,26 +41,11 @@ impl TestPolicyProvider for LeaseBasedTestPolicyProvider {
             drift_allowance: Duration::from_millis(2),
             recovery_grace: Duration::from_millis(2),
         };
-        let voter_factory = DelegatingVoterFactory::default();
-        let register = LeaseBasedPolicyRegister::new(
+        register_provider_for_test(LeaseBasedPolicyRegister::new(
             StoragePolicyRegister::new(Rc::new(InMemoryStorage::new()), "test-lease-policy"),
             environment,
             config,
-        );
-        futures::executor::block_on(register.set_policy(
-            &PolicyState {
-                decider_policy: Some(DeciderPolicy::OnByDefault as i32),
-                ..Default::default()
-            },
-            None,
         ))
-        .expect("test lease register should initialize");
-        (
-            RegisterPolicyProvider::new(register.clone(), move |policy| {
-                validate_voter_configs(&voter_factory, policy)
-            }),
-            register,
-        )
     }
 }
 

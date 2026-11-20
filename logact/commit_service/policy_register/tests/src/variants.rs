@@ -32,5 +32,19 @@ macro_rules! policy_register_fixtures {
             lease_sqlite_file,
             integration
         ]);
+        $cb!([
+            $crate::fixtures::ObservablePolicyRegisterFixture<
+                $crate::fixtures::InMemoryPolicyRegisterFixture,
+            >,
+            observable_in_memory,
+            sim
+        ]);
+        $cb!([
+            $crate::fixtures::ObservablePolicyRegisterFixture<
+                $crate::fixtures::LeaseBasedPolicyRegisterFixture<$crate::fixtures::InMemoryPolicyRegisterFixture>,
+            >,
+            observable_lease_in_memory,
+            sim
+        ]);
     };
 }

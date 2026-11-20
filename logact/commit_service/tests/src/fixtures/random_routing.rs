@@ -52,6 +52,7 @@ use crate::fixtures::CheckpointFixture;
 use crate::fixtures::CommitServiceV1Fixture;
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::DeciderPolicyFixture;
+use crate::fixtures::ObservableTestPolicyProvider;
 use crate::fixtures::SimulatorFixture;
 use crate::simulator::Simulator;
 
@@ -228,7 +229,7 @@ pub type RandomRoutingCommitServiceFixture<
 /// shared scoped engine storage.
 pub type CommitServiceV1ProductionShape = RandomRoutingCommitServiceFixture<
     agentbus_tests::BusProductionShape,
-    SynchronousRegisterProvider<InMemoryStorage>,
+    ObservableTestPolicyProvider,
     ScopedStorageFixture,
 >;
 

@@ -24,22 +24,20 @@ use logact_commit_service_api::CommitSvc;
 use logact_commit_service_core::BufferingCommitService;
 use logact_commit_service_core::ChanneledCommitService;
 use logact_commit_service_engine::CachingStorage;
-use logact_commit_service_engine::InMemoryStorage;
 use logact_commit_service_engine::load_engine_state;
 use logact_commit_service_engine_tests::fixtures::EnvStorageFixture;
 use logact_commit_service_engine_tests::fixtures::ScopedStorageFixture;
-use logact_commit_service_policy_register::StoragePolicyRegister;
 use logact_commit_service_replay::BackgroundCheckpoints;
 use logact_commit_service_replay::CheckpointStore as _;
 use logact_commit_service_replay::ReplayCommitService;
 use logact_commit_service_replay::StorageCheckpoints;
 use logact_commit_service_v1::DelegatingVoterFactory;
-use logact_commit_service_v1::SynchronousRegisterProvider;
 
 use crate::fixtures::CheckpointFixture;
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::DeciderPolicyFixture;
 use crate::fixtures::ENGINE_CACHE;
+use crate::fixtures::ObservableTestPolicyProvider;
 use crate::fixtures::RandomRoutingFixture;
 use crate::fixtures::SimulatorFixture;
 use crate::fixtures::TestPolicyProvider;
@@ -48,7 +46,8 @@ use crate::simulator::Simulator;
 
 type Bus = <BusProductionShape as ConformanceFixture>::Impl;
 type EngineStorage = <ScopedStorageFixture as ConformanceFixture>::Impl;
-type PolicyProvider = SynchronousRegisterProvider<InMemoryStorage>;
+type PolicyProvider = ObservableTestPolicyProvider;
+type PolicyController = <PolicyProvider as TestPolicyProvider>::Controller;
 type VoterFactory = DelegatingVoterFactory<NoopLogger, RealEnvironment>;
 
 /// Requests routed across replicas, as production routes them.
@@ -61,7 +60,7 @@ pub struct FeatureFlagProductionFixture {
     bus_fixture: BusProductionShape,
     storage: Rc<EngineStorage>,
     policy: PolicyProvider,
-    policy_controller: StoragePolicyRegister<InMemoryStorage>,
+    policy_controller: PolicyController,
 }
 
 /// Runs the service `make_service` builds behind a channel, serializing commit
@@ -174,7 +173,7 @@ impl CheckpointFixture for FeatureFlagProductionFixture {
 }
 
 impl DeciderPolicyFixture for FeatureFlagProductionFixture {
-    type Controller = StoragePolicyRegister<InMemoryStorage>;
+    type Controller = PolicyController;
 
     fn policy_controller(&self) -> Self::Controller {
         self.policy_controller.clone()

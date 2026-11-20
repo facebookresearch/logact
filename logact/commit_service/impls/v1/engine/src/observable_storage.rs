@@ -71,7 +71,8 @@ fn base_row(method: &str, key: &str, elapsed: Duration) -> LogRow {
         .add_string_field("resource_id", key)
 }
 
-fn storage_error_code(error: &StorageError) -> &'static str {
+/// The row error code for a [`StorageError`] category.
+pub fn storage_error_code(error: &StorageError) -> &'static str {
     match error {
         StorageError::InvalidPosition(_) => "InvalidPosition",
         StorageError::TransactionConflict(_) => "TransactionConflict",
@@ -81,7 +82,8 @@ fn storage_error_code(error: &StorageError) -> &'static str {
     }
 }
 
-fn storage_error_message(error: &StorageError) -> String {
+/// The row error message for a [`StorageError`], including its source chain.
+pub fn storage_error_message(error: &StorageError) -> String {
     let source = match error {
         StorageError::InvalidPosition(_) => return error.to_string(),
         StorageError::TransactionConflict(source)
