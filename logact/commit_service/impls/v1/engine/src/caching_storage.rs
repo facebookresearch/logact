@@ -46,13 +46,13 @@ struct Cache {
 }
 
 impl Cache {
-    fn get(&mut self, key: &str) -> Option<CachedValue> {
+    fn pop(&mut self, key: &str) -> Option<CachedValue> {
         let removed = self.values.pop(key)?;
         self.value_bytes -= removed.value.len();
         Some(removed)
     }
 
-    fn insert(&mut self, key: &str, value: CachedValue) {
+    fn insert_if_newer(&mut self, key: &str, value: CachedValue) {
         if self
             .values
             .peek(key)
@@ -60,7 +60,7 @@ impl Cache {
         {
             return;
         }
-        self.get(key);
+        self.pop(key);
         if self.config.max_entries == 0
             || self.config.max_value_bytes == 0
             || value.value.len() > self.config.max_value_bytes
@@ -128,7 +128,7 @@ impl<S: Storage, E: Environment> Storage for CachingStorage<S, E> {
                 if !self.is_expired(cached) {
                     return Ok(Some((cached.value.clone(), cached.position)));
                 }
-                cache.get(key);
+                cache.pop(key);
             }
         }
         let expires_at =
@@ -136,7 +136,7 @@ impl<S: Storage, E: Environment> Storage for CachingStorage<S, E> {
         let stored = self.inner.get(key).await?;
         let mut cache = self.cache.borrow_mut();
         if let Some((value, position)) = &stored {
-            cache.insert(
+            cache.insert_if_newer(
                 key,
                 CachedValue {
                     value: value.clone(),
@@ -176,7 +176,7 @@ impl<S: Storage, E: Environment> Storage for CachingStorage<S, E> {
         }
         let expires_at =
             self.environment.with_clock(Clock::monotonic_time) + self.cache.borrow().config.ttl;
-        self.cache.borrow_mut().insert(
+        self.cache.borrow_mut().insert_if_newer(
             key,
             CachedValue {
                 value: value.clone(),
