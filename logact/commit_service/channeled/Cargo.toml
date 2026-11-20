@@ -12,3 +12,6 @@ license = "MIT"
 agentbus_api = { version = "0.1.0", path = "../../../bus/api" }
 channeled_svc = { version = "0.1.0", path = "../../../bus/channeled" }
 logact_commit_service_api = { version = "0.1.0", path = "../api" }
+
+[dev-dependencies]
+anyhow = "1.0.104"

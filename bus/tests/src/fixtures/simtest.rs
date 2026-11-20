@@ -12,6 +12,7 @@ use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::time::Duration;
 
+use agentbus_api::ExtremelyUnsafeNoOpGate;
 use agentbus_api::InMemoryMetrics;
 use agentbus_api::NoopLogger;
 use agentbus_api::NoopMetrics;
@@ -221,7 +222,11 @@ where
     }
 
     fn create_impl(&self) -> Self::Impl {
-        ChanneledSvcAgentBus::spawn_on(self.inner.get_env(), self.inner.create_impl())
+        ChanneledSvcAgentBus::spawn_on(
+            self.inner.get_env(),
+            self.inner.create_impl(),
+            ExtremelyUnsafeNoOpGate,
+        )
     }
 }
 

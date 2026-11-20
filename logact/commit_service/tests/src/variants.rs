@@ -70,6 +70,24 @@ macro_rules! commit_service_fixtures {
             ]
             $(, $ctx)?
         );
+        // Replay behind the `channeled_svc` frontend, with shared checkpoint
+        // storage, over the same two buses.
+        $cb!(
+            [
+                $crate::fixtures::ChanneledSvcCommitServiceFixture<$crate::fixtures::ReplayCommitServiceFixture<FaultInjectingFixture<SimpleMemoryFixture>, $crate::fixtures::replay::SharedStorage>>,
+                channeled_svc_replay_shared_simple_memory,
+                sim
+            ]
+            $(, $ctx)?
+        );
+        $cb!(
+            [
+                $crate::fixtures::ChanneledSvcCommitServiceFixture<$crate::fixtures::ReplayCommitServiceFixture<agentbus_tests::fixtures::simtest::BusChanneledSvc, $crate::fixtures::replay::SharedStorage>>,
+                channeled_svc_replay_shared_channeled_svc_bus,
+                sim
+            ]
+            $(, $ctx)?
+        );
         $cb!(
             [
                 $crate::fixtures::BufferingCommitServiceFixture<CommitServiceV1Fixture<FaultInjectingFixture<SimpleMemoryFixture>>>,

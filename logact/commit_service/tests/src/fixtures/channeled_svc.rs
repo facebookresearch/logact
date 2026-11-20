@@ -10,6 +10,7 @@
 
 use std::rc::Rc;
 
+use agentbus_api::ExtremelyUnsafeNoOpGate;
 use anyhow::Result;
 use conformance::TestConfig;
 use logact_commit_service_api::CommitSvc;
@@ -74,7 +75,12 @@ where
     fn from_inner(inner: CF) -> Self {
         let service = inner.create_impl();
         let bus = service.agent_bus().clone();
-        let channeled = ChanneledCommitService::spawn_on(inner.get_env(), bus, service);
+        let channeled = ChanneledCommitService::spawn_on(
+            inner.get_env(),
+            bus,
+            service,
+            ExtremelyUnsafeNoOpGate,
+        );
         Self { channeled, inner }
     }
 }
