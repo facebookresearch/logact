@@ -9,12 +9,15 @@ repository = "https://github.com/facebookresearch/logact"
 license = "MIT"
 
 [dependencies]
+agentbus_api = { version = "0.1.0", path = "../../api" }
 agentbus_conditional_write_space = { version = "0.1.0", path = "../../impls/conditional_write_space" }
 agentbus_core = { version = "0.1.0", path = ".." }
 agentbus_sqlite = { version = "0.1.0", path = "../../impls/sqlite" }
 agentbus_writeonce = { version = "0.1.0", path = "../../impls/writeonce" }
 anyhow = "1.0.104"
+channeled_svc_agentbus = { version = "0.1.0", path = "../../channeled/agentbus" }
 tonic = { version = "0.14.9", features = ["codegen", "gzip", "tls-native-roots", "tls-ring", "tls-webpki-roots", "transport"] }
 
 [dev-dependencies]
+tempfile = "3.27.0"
 tokio = { version = "1.54.1", features = ["full", "test-util", "tracing"] }
