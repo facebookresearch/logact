@@ -2,6 +2,7 @@
 members = [
   "bus/api",
   "bus/appserver_proto",
+  "bus/channeled",
   "bus/cli",
   "bus/core",
   "bus/core/factory",
