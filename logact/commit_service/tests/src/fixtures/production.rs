@@ -50,6 +50,11 @@ type PolicyProvider = ObservableTestPolicyProvider;
 type PolicyController = <PolicyProvider as TestPolicyProvider>::Controller;
 type VoterFactory = DelegatingVoterFactory<NoopLogger, RealEnvironment>;
 
+/// This fixture builds the legacy channels, so it rejects the flags that select
+/// the `channeled_svc` channels instead of ignoring them.
+const LEGACY_CHANNELS_ONLY: &str = "CommitServiceProductionShape builds the legacy channels; \
+    it does not run with enable_channeled_svc or enable_eligibility_under_channel";
+
 /// Requests routed across replicas, as production routes them.
 pub type CommitServiceProductionShape = RandomRoutingFixture<FeatureFlagProductionFixture>;
 
@@ -97,7 +102,13 @@ impl ConformanceFixture for FeatureFlagProductionFixture {
             enable_commit_buffering: buffering,
             disable_direct_agentbus_appends: _,
             enable_leased_policy_reads: _,
+            enable_channeled_svc,
+            enable_eligibility_under_channel,
         } = env.feature_flags();
+        assert!(
+            !enable_channeled_svc && !enable_eligibility_under_channel,
+            "{LEGACY_CHANNELS_ONLY}"
+        );
         let bus = self.bus_fixture.create_impl();
         let storage = self.storage.clone();
         let policy = self.policy.clone();
@@ -139,6 +150,11 @@ impl SimulatorFixture for FeatureFlagProductionFixture {
     }
 
     fn try_new_with_config(simulator: Simulator, config: &TestConfig) -> Result<Self> {
+        let flags = simulator.feature_flags();
+        anyhow::ensure!(
+            !flags.enable_channeled_svc && !flags.enable_eligibility_under_channel,
+            "{LEGACY_CHANNELS_ONLY}: {flags:?}"
+        );
         let bus_fixture = BusProductionShape::try_new_with_config(simulator, config)?;
         let storage = ScopedStorageFixture::try_new_on_env(bus_fixture.get_env(), config)?;
         let (policy, policy_controller) = PolicyProvider::for_test(bus_fixture.get_env());
