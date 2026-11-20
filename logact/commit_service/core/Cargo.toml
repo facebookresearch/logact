@@ -11,7 +11,9 @@ license = "MIT"
 [dependencies]
 agentbus_api = { version = "0.1.0", path = "../../../bus/api" }
 anyhow = "1.0.104"
+async-trait = "0.1.92"
 futures-intrusive = "0.5.0"
 logact_commit_service_api = { version = "0.1.0", path = "../api" }
+logact_commit_service_channeled = { version = "0.1.0", path = "../channeled" }
 lru = { version = "0.19.0", default-features = false }
 tokio = { version = "1.54.1", features = ["full", "test-util", "tracing"] }

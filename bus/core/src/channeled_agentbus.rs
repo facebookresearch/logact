@@ -6,7 +6,11 @@
  */
 
 use std::rc::Rc;
+use std::sync::Arc;
 
+use agentbus_api::RequestContext;
+use async_trait::async_trait;
+use channeled_svc_agentbus::ChanneledAgentBus as GatedAgentBus;
 use futures::StreamExt;
 use futures::channel::mpsc;
 use futures::channel::mpsc::UnboundedReceiver;
@@ -46,9 +50,28 @@ type BlockingPollCall = (
 /// Cloneable channel-backed frontend for any single-threaded `AgentBus`.
 ///
 /// `new_on_environment()` runs the underlying bus on the caller's local
-/// executor so callers can share an `Rc`-based implementation directly.
+/// executor so callers can share an `Rc`-based implementation directly. A
+/// gated `channeled_svc` bus converts into one with `From`; its requests run
+/// as the caller bound with [`ChanneledAgentBus::for_caller`].
 #[derive(Clone)]
-pub struct ChanneledAgentBus {
+pub struct ChanneledAgentBus(Arc<dyn Channel>);
+
+/// The channel behind a [`ChanneledAgentBus`].
+#[async_trait]
+trait Channel: Send + Sync {
+    async fn append(&self, request: AppendRequest) -> BusResult<AppendResponse>;
+    async fn poll(&self, request: PollRequest) -> BusResult<PollResponse>;
+    async fn read_next(&self, request: ReadNextRequest) -> BusResult<ReadNextResponse>;
+    async fn check_tail(&self, request: CheckTailRequest) -> BusResult<CheckTailResponse>;
+    async fn blocking_poll(&self, request: BlockingPollRequest) -> BusResult<BlockingPollResponse>;
+
+    /// This channel making its requests as `caller()`, or `None` if its
+    /// requests carry no caller.
+    fn for_caller(&self, caller: &dyn Fn() -> RequestContext) -> Option<Arc<dyn Channel>>;
+}
+
+/// The worker channels `new_on_environment()` creates.
+struct WorkerChannels {
     append_tx: UnboundedSender<AppendCall>,
     poll_tx: UnboundedSender<PollCall>,
     read_next_tx: UnboundedSender<ReadNextCall>,
@@ -104,13 +127,21 @@ impl ChanneledAgentBus {
 
         spawn_worker(append_rx, poll_rx, read_next_rx, tail_rx, blocking_poll_rx);
 
-        Self {
+        Self(Arc::new(WorkerChannels {
             append_tx,
             poll_tx,
             read_next_tx,
             tail_tx,
             blocking_poll_tx,
-        }
+        }))
+    }
+
+    /// The same bus, making its requests as `caller()`. The worker channels
+    /// carry no caller, so they never call it.
+    pub fn for_caller(&self, caller: impl Fn() -> RequestContext) -> Self {
+        self.0
+            .for_caller(&caller)
+            .map_or_else(|| self.clone(), Self)
     }
 
     /// Worker task that processes messages from all channels.
@@ -168,7 +199,9 @@ impl ChanneledAgentBus {
             }
         }
     }
+}
 
+impl WorkerChannels {
     async fn call<Req, Resp>(
         tx: &UnboundedSender<(Req, oneshot::Sender<BusResult<Resp>>)>,
         request: Req,
@@ -186,7 +219,8 @@ impl ChanneledAgentBus {
     }
 }
 
-impl AgentBus for ChanneledAgentBus {
+#[async_trait]
+impl Channel for WorkerChannels {
     async fn append(&self, request: AppendRequest) -> BusResult<AppendResponse> {
         Self::call(&self.append_tx, request, "append").await
     }
@@ -205,6 +239,65 @@ impl AgentBus for ChanneledAgentBus {
 
     async fn blocking_poll(&self, request: BlockingPollRequest) -> BusResult<BlockingPollResponse> {
         Self::call(&self.blocking_poll_tx, request, "blocking_poll").await
+    }
+
+    fn for_caller(&self, _caller: &dyn Fn() -> RequestContext) -> Option<Arc<dyn Channel>> {
+        None
+    }
+}
+
+#[async_trait]
+impl Channel for GatedAgentBus {
+    async fn append(&self, request: AppendRequest) -> BusResult<AppendResponse> {
+        AgentBus::append(self, request).await
+    }
+
+    async fn poll(&self, request: PollRequest) -> BusResult<PollResponse> {
+        AgentBus::poll(self, request).await
+    }
+
+    async fn read_next(&self, request: ReadNextRequest) -> BusResult<ReadNextResponse> {
+        AgentBus::read_next(self, request).await
+    }
+
+    async fn check_tail(&self, request: CheckTailRequest) -> BusResult<CheckTailResponse> {
+        AgentBus::check_tail(self, request).await
+    }
+
+    async fn blocking_poll(&self, request: BlockingPollRequest) -> BusResult<BlockingPollResponse> {
+        AgentBus::blocking_poll(self, request).await
+    }
+
+    fn for_caller(&self, caller: &dyn Fn() -> RequestContext) -> Option<Arc<dyn Channel>> {
+        Some(Arc::new(GatedAgentBus::for_caller(self, caller())))
+    }
+}
+
+impl From<GatedAgentBus> for ChanneledAgentBus {
+    fn from(bus: GatedAgentBus) -> Self {
+        Self(Arc::new(bus))
+    }
+}
+
+impl AgentBus for ChanneledAgentBus {
+    async fn append(&self, request: AppendRequest) -> BusResult<AppendResponse> {
+        self.0.append(request).await
+    }
+
+    async fn poll(&self, request: PollRequest) -> BusResult<PollResponse> {
+        self.0.poll(request).await
+    }
+
+    async fn read_next(&self, request: ReadNextRequest) -> BusResult<ReadNextResponse> {
+        self.0.read_next(request).await
+    }
+
+    async fn check_tail(&self, request: CheckTailRequest) -> BusResult<CheckTailResponse> {
+        self.0.check_tail(request).await
+    }
+
+    async fn blocking_poll(&self, request: BlockingPollRequest) -> BusResult<BlockingPollResponse> {
+        self.0.blocking_poll(request).await
     }
 }
 

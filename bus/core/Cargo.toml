@@ -15,6 +15,7 @@ agentbus_api = { version = "0.1.0", path = "../api" }
 agentbus_observable = { version = "0.1.0", path = "../impls/observable" }
 anyhow = "1.0.104"
 async-trait = "0.1.92"
+channeled_svc_agentbus = { version = "0.1.0", path = "../channeled/agentbus" }
 clap = { version = "4.6.2", features = ["derive", "env", "string", "unicode", "wrap_help"] }
 futures = { version = "0.3.34", features = ["async-await", "compat"] }
 llm-voter-proto-rust = { path = "../voters/llm/proto" }

@@ -10,18 +10,25 @@
 //! Transport handlers must be safe to call from their server runtimes, while
 //! commit service implementations may own `Rc` state and start per-bus loops
 //! with `spawn_local()`. This module keeps the state behind a cloneable channel
-//! handle, following the channeled AgentBus pattern.
+//! handle, following the channeled AgentBus pattern. The handle is backed by
+//! the worker channel `new_on_environment()` creates, or by a gated
+//! `channeled_svc` channel from `new_gated_on_environment()`.
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use agentbus_api::AgentBus;
 use agentbus_api::Environment;
+use agentbus_api::RequestContext;
+use agentbus_api::RequestGate;
+use async_trait::async_trait;
 use logact_commit_service_api::CommitError;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
 use logact_commit_service_api::CommitResult;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_api::CreateBusCommand;
+use logact_commit_service_channeled::ChanneledCommitServiceHandle as GatedHandle;
 use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::mpsc::unbounded_channel;
@@ -47,7 +54,24 @@ pub struct ChanneledCommitService<B> {
 
 /// Cloneable transport handle for commit-service operations.
 #[derive(Clone)]
-pub struct ChanneledCommitServiceHandle {
+pub struct ChanneledCommitServiceHandle(Arc<dyn Channel>);
+
+/// The channel behind a [`ChanneledCommitServiceHandle`].
+#[async_trait]
+trait Channel: Send + Sync {
+    async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()>;
+    async fn commit_intention(
+        &self,
+        request: CommitIntentionCommand,
+    ) -> CommitResult<CommitIntentionOutcome>;
+
+    /// This channel making its requests as `caller()`, or `None` if its
+    /// requests carry no caller.
+    fn for_caller(&self, caller: &dyn Fn() -> RequestContext) -> Option<Arc<dyn Channel>>;
+}
+
+/// The worker channel `new_on_environment()` creates.
+struct WorkerChannel {
     tx: UnboundedSender<Op>,
 }
 
@@ -70,8 +94,47 @@ impl<B> ChanneledCommitService<B> {
         });
 
         Self {
-            commit: ChanneledCommitServiceHandle { tx },
+            commit: ChanneledCommitServiceHandle(Arc::new(WorkerChannel { tx })),
             bus,
+        }
+    }
+
+    /// Like `new_on_environment()`, but behind a gated `channeled_svc` channel
+    /// that admits each commit-service operation through `gate`.
+    pub fn new_gated_on_environment<S, E, G, Factory>(
+        env: Rc<E>,
+        bus: B,
+        gate: G,
+        factory: Factory,
+    ) -> Self
+    where
+        S: CommitSvc + 'static,
+        E: Environment + 'static,
+        G: RequestGate + 'static,
+        B: AgentBus + Clone + 'static,
+        Factory: FnOnce(B) -> S + 'static,
+    {
+        let service = factory(bus.clone());
+        let gated = logact_commit_service_channeled::ChanneledCommitService::spawn_on(
+            env,
+            bus.clone(),
+            service,
+            gate,
+        );
+        Self {
+            commit: ChanneledCommitServiceHandle(Arc::new(gated.into_commit_handle())),
+            bus,
+        }
+    }
+
+    /// The same service, making its commit-service requests as `caller()`.
+    pub fn for_caller(&self, caller: impl Fn() -> RequestContext) -> Self
+    where
+        B: Clone,
+    {
+        Self {
+            commit: self.commit.for_caller(caller),
+            bus: self.bus.clone(),
         }
     }
 
@@ -110,6 +173,28 @@ impl<B> ChanneledCommitService<B> {
 
 impl ChanneledCommitServiceHandle {
     pub async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
+        self.0.create_bus(request).await
+    }
+
+    pub async fn commit_intention(
+        &self,
+        request: CommitIntentionCommand,
+    ) -> CommitResult<CommitIntentionOutcome> {
+        self.0.commit_intention(request).await
+    }
+
+    /// The same handle, making its requests as `caller()`. The worker channel
+    /// carries no caller, so it never calls it.
+    pub fn for_caller(&self, caller: impl Fn() -> RequestContext) -> Self {
+        self.0
+            .for_caller(&caller)
+            .map_or_else(|| self.clone(), Self)
+    }
+}
+
+#[async_trait]
+impl Channel for WorkerChannel {
+    async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.tx
             .send(Op::CreateBus {
@@ -120,7 +205,7 @@ impl ChanneledCommitServiceHandle {
         reply_rx.await.map_err(|_| worker_terminated())?
     }
 
-    pub async fn commit_intention(
+    async fn commit_intention(
         &self,
         request: CommitIntentionCommand,
     ) -> CommitResult<CommitIntentionOutcome> {
@@ -133,6 +218,28 @@ impl ChanneledCommitServiceHandle {
             .map_err(|_| worker_terminated())?;
 
         reply_rx.await.map_err(|_| worker_terminated())?
+    }
+
+    fn for_caller(&self, _caller: &dyn Fn() -> RequestContext) -> Option<Arc<dyn Channel>> {
+        None
+    }
+}
+
+#[async_trait]
+impl Channel for GatedHandle {
+    async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
+        GatedHandle::create_bus(self, request).await
+    }
+
+    async fn commit_intention(
+        &self,
+        request: CommitIntentionCommand,
+    ) -> CommitResult<CommitIntentionOutcome> {
+        GatedHandle::commit_intention(self, request).await
+    }
+
+    fn for_caller(&self, caller: &dyn Fn() -> RequestContext) -> Option<Arc<dyn Channel>> {
+        Some(Arc::new(GatedHandle::for_caller(self, caller())))
     }
 }
 
