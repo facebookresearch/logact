@@ -5,18 +5,21 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-//! An [`EligibilityGate`] that remembers its decisions.
+//! A [`RequestGate`] that remembers an eligibility gate's decisions.
 
+use std::cell::Cell;
 use std::cell::RefCell;
+use std::fmt;
 use std::num::NonZeroUsize;
+use std::rc::Rc;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use lru::LruCache;
 
-use super::EligibilityError;
-use super::EligibilityGate;
 use super::caller_unixname;
+use super::warn_caller;
 use crate::AuthorizationError;
 use crate::Clock;
 use crate::Environment;
@@ -24,92 +27,146 @@ use crate::MonotonicInstant;
 use crate::RequestContext;
 use crate::RequestGate;
 
-#[derive(Clone, Copy)]
+/// The caller identity an eligibility gate decides on: its only unixname and
+/// its service identities.
+#[derive(Clone, Eq, Hash, PartialEq)]
+struct Caller {
+    unixname: String,
+    /// Sorted and deduplicated, so the key does not depend on their order.
+    services: Vec<String>,
+}
+
+impl Caller {
+    fn of(ctx: &RequestContext) -> Option<Self> {
+        let unixname = caller_unixname(ctx).ok()?.to_owned();
+        let mut services = ctx.services.clone();
+        services.sort_unstable();
+        services.dedup();
+        Some(Self { unixname, services })
+    }
+}
+
+#[derive(Clone)]
 struct CachedDecision {
-    eligible: bool,
+    denial: Option<Arc<anyhow::Error>>,
     expires_at: MonotonicInstant,
 }
 
-/// Remembers an [`EligibilityGate`]'s allow and deny decisions by caller
-/// unixname in a bounded LRU. A decision expires a fixed `ttl` after the request
-/// that made it started, and hits do not extend it. Unavailable decisions are
-/// not remembered, and exempt callers and callers without exactly one unixname
-/// always reach the gate. Concurrent misses each reach the gate, and a decision
-/// from an earlier request never replaces one from a later request. This is the
-/// retention the [eligibility gate contract](super) permits.
-pub struct CachingEligibilityGate<E> {
-    inner: EligibilityGate<E>,
-    decisions: RefCell<LruCache<String, CachedDecision>>,
-    ttl: Duration,
+/// A cached denial, displayed with the same message and sources as the
+/// gate's original error.
+#[derive(Debug)]
+struct CachedDenial(Arc<anyhow::Error>);
+
+impl fmt::Display for CachedDenial {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
 }
 
-impl<E> CachingEligibilityGate<E> {
-    pub fn new(inner: EligibilityGate<E>, capacity: NonZeroUsize, ttl: Duration) -> Self {
+impl std::error::Error for CachedDenial {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.0.source()
+    }
+}
+
+/// Remembers the allow and deny decisions of a gate that follows the
+/// [eligibility gate contract](super), by caller unixname and service
+/// identities, in a bounded LRU; a caller presenting several sets of service
+/// identities takes one entry per set. A decision expires a fixed `ttl` after
+/// the request that made it started, and hits do not extend it; a cached denial
+/// repeats the gate's original error and is logged, rate-limited, as the
+/// eligibility gate logs its denials. Unavailable decisions are not remembered,
+/// and callers without exactly one unixname always reach the gate. Concurrent
+/// misses each reach the gate, and a decision from an earlier request never
+/// replaces one from a later request. This is the retention the contract
+/// permits.
+pub struct CachingRequestGate<G, E> {
+    inner: G,
+    env: Rc<E>,
+    decisions: RefCell<LruCache<Caller, CachedDecision>>,
+    ttl: Duration,
+    last_warning: Cell<Option<MonotonicInstant>>,
+}
+
+impl<G, E> CachingRequestGate<G, E> {
+    pub fn new(inner: G, env: Rc<E>, capacity: NonZeroUsize, ttl: Duration) -> Self {
         Self {
             inner,
+            env,
             decisions: RefCell::new(LruCache::new(capacity)),
             ttl,
+            last_warning: Cell::new(None),
         }
     }
 }
 
 #[async_trait(?Send)]
-impl<E: Environment> RequestGate for CachingEligibilityGate<E> {
+impl<G: RequestGate, E: Environment> RequestGate for CachingRequestGate<G, E> {
     async fn admit(
         &self,
         ctx: &RequestContext,
         method: &'static str,
         agent_bus_id: &str,
     ) -> Result<(), AuthorizationError> {
-        let unixname = match caller_unixname(ctx) {
-            Ok(unixname) if !self.inner.is_exempt(ctx) => unixname,
-            _ => return self.inner.admit(ctx, method, agent_bus_id).await,
+        let Some(caller) = Caller::of(ctx) else {
+            return self.inner.admit(ctx, method, agent_bus_id).await;
         };
-        let started = self.inner.env.with_clock(|clock| clock.monotonic_time());
-        match self.cached(unixname, started) {
-            Some(true) => return Ok(()),
-            Some(false) => {
-                let error = EligibilityError::Ineligible {
-                    unixname: unixname.to_owned(),
-                };
-                return Err(self.inner.reject(ctx, method, agent_bus_id, error));
-            }
-            None => {}
+        let started = self.env.with_clock(|clock| clock.monotonic_time());
+        if let Some(decision) = self.cached(&caller, started) {
+            let Some(denial) = decision.denial else {
+                return Ok(());
+            };
+            let denial = CachedDenial(denial);
+            warn_caller(
+                &self.last_warning,
+                started,
+                ctx,
+                method,
+                agent_bus_id,
+                &denial,
+                true,
+            );
+            return Err(AuthorizationError::Denied(denial.into()));
         }
 
         let result = self.inner.admit(ctx, method, agent_bus_id).await;
-        let eligible = match &result {
-            Ok(()) => true,
-            Err(AuthorizationError::Denied(_)) => false,
-            Err(AuthorizationError::Unavailable(_)) => return result,
+        let (result, denial) = match result {
+            Ok(()) => (Ok(()), None),
+            Err(AuthorizationError::Denied(error)) => {
+                let denial = Arc::new(error);
+                let error = CachedDenial(denial.clone()).into();
+                (Err(AuthorizationError::Denied(error)), Some(denial))
+            }
+            Err(AuthorizationError::Unavailable(error)) => {
+                return Err(AuthorizationError::Unavailable(error));
+            }
         };
-        self.remember(unixname, eligible, started + self.ttl);
+        self.remember(caller, denial, started + self.ttl);
         result
     }
 }
 
-impl<E> CachingEligibilityGate<E> {
-    fn cached(&self, unixname: &str, now: MonotonicInstant) -> Option<bool> {
+impl<G, E> CachingRequestGate<G, E> {
+    fn cached(&self, caller: &Caller, now: MonotonicInstant) -> Option<CachedDecision> {
         self.decisions
             .borrow_mut()
-            .get(unixname)
+            .get(caller)
             .filter(|decision| now < decision.expires_at)
-            .map(|decision| decision.eligible)
+            .cloned()
     }
 
-    fn remember(&self, unixname: &str, eligible: bool, expires_at: MonotonicInstant) {
+    fn remember(
+        &self,
+        caller: Caller,
+        denial: Option<Arc<anyhow::Error>>,
+        expires_at: MonotonicInstant,
+    ) {
         let mut decisions = self.decisions.borrow_mut();
         if decisions
-            .peek(unixname)
+            .peek(&caller)
             .is_none_or(|newest| newest.expires_at <= expires_at)
         {
-            decisions.put(
-                unixname.to_owned(),
-                CachedDecision {
-                    eligible,
-                    expires_at,
-                },
-            );
+            decisions.put(caller, CachedDecision { denial, expires_at });
         }
     }
 }

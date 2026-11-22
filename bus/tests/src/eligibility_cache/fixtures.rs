@@ -11,7 +11,7 @@ use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::time::Duration;
 
-use agentbus_api::CachingEligibilityGate;
+use agentbus_api::CachingRequestGate;
 use agentbus_api::EligibilityGate;
 use agentbus_api::RequestGate;
 use conformance::ConformanceFixture;
@@ -147,7 +147,7 @@ impl SimulatorFixture for ControlledEligibilityGateFixture {
     }
 }
 
-/// Fixture for a `CachingEligibilityGate` over `ControlledEligibilityGateFixture`'s
+/// Fixture for a `CachingRequestGate` over `ControlledEligibilityGateFixture`'s
 /// gate. Each `create_impl` is a new cache.
 pub struct ControlledCachingEligibilityGateFixture {
     inner: ControlledEligibilityGateFixture,
@@ -155,7 +155,7 @@ pub struct ControlledCachingEligibilityGateFixture {
 
 impl ConformanceFixture for ControlledCachingEligibilityGateFixture {
     type Env = Simulator;
-    type Impl = Rc<CachingEligibilityGate<Simulator>>;
+    type Impl = Rc<CachingRequestGate<EligibilityGate<Simulator>, Simulator>>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.inner.get_env()
@@ -175,8 +175,9 @@ impl EligibilityCacheTestFixture for ControlledCachingEligibilityGateFixture {
     }
 
     fn create_with_config(&self, capacity: NonZeroUsize, ttl: Duration) -> Self::Impl {
-        Rc::new(CachingEligibilityGate::new(
+        Rc::new(CachingRequestGate::new(
             self.inner.gate(),
+            self.inner.env.clone(),
             capacity,
             ttl,
         ))

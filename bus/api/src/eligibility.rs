@@ -49,7 +49,7 @@ use crate::RequestGate;
 
 mod cache;
 
-pub use self::cache::CachingEligibilityGate;
+pub use self::cache::CachingRequestGate;
 
 const WARNING_INTERVAL: Duration = Duration::from_secs(5);
 
@@ -169,23 +169,45 @@ impl<E: Environment> EligibilityGate<E> {
         error: &EligibilityError,
     ) {
         let now = self.env.with_clock(|clock| clock.monotonic_time());
-        if self
-            .last_warning
-            .get()
-            .is_some_and(|last| now.duration_since(last) < WARNING_INTERVAL)
-        {
-            return;
-        }
-        self.last_warning.set(Some(now));
-        tracing::warn!(
+        warn_caller(
+            &self.last_warning,
+            now,
+            ctx,
             method,
             agent_bus_id,
-            users = ?ctx.users,
-            services = ?ctx.services,
-            ?error,
-            "caller eligibility warning"
+            error,
+            false,
         );
     }
+}
+
+/// Logs a failed eligibility check, at most once per `WARNING_INTERVAL` per
+/// `last_warning`.
+fn warn_caller(
+    last_warning: &Cell<Option<MonotonicInstant>>,
+    now: MonotonicInstant,
+    ctx: &RequestContext,
+    method: &str,
+    agent_bus_id: &str,
+    error: &dyn std::fmt::Debug,
+    cached: bool,
+) {
+    if last_warning
+        .get()
+        .is_some_and(|last| now.duration_since(last) < WARNING_INTERVAL)
+    {
+        return;
+    }
+    last_warning.set(Some(now));
+    tracing::warn!(
+        method,
+        agent_bus_id,
+        users = ?ctx.users,
+        services = ?ctx.services,
+        ?error,
+        cached,
+        "caller eligibility warning"
+    );
 }
 
 /// The caller's only unixname, ignoring numeric user IDs.

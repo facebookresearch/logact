@@ -11,7 +11,7 @@ use std::num::NonZeroUsize;
 use std::rc::Rc;
 use std::time::Duration;
 
-use agentbus_api::CachingEligibilityGate;
+use agentbus_api::CachingRequestGate;
 use agentbus_api::EligibilityGate;
 use agentbus_api::RequestGate;
 use agentbus_api::RetryConfig;
@@ -150,8 +150,9 @@ impl SimulatorFixture for EligibilityGateFixture {
     }
 }
 
-/// Fixture for a `CachingEligibilityGate` over `EligibilityGateFixture`'s gate.
-/// Each `create_impl` is a new cache, as each process has its own cache.
+/// Fixture for a `CachingRequestGate` over `EligibilityGateFixture`'s gate, so
+/// only cache misses pay the injected latency and retries. Each `create_impl`
+/// is a new cache, as each process has its own cache.
 pub struct CachingEligibilityGateFixture {
     inner: EligibilityGateFixture,
 }
@@ -162,19 +163,19 @@ impl CachingEligibilityGateFixture {
 
 impl ConformanceFixture for CachingEligibilityGateFixture {
     type Env = Simulator;
-    type Impl = Backend<CachingEligibilityGate<Simulator>>;
+    type Impl = CachingRequestGate<Backend<EligibilityGate<Simulator>>, Simulator>;
 
     fn get_env(&self) -> Rc<Self::Env> {
         self.inner.get_env()
     }
 
     fn create_impl(&self) -> Self::Impl {
-        let gate = CachingEligibilityGate::new(
-            self.inner.gate(),
+        CachingRequestGate::new(
+            self.inner.create_impl(),
+            self.inner.env.clone(),
             NonZeroUsize::new(1024).expect("capacity should be nonzero"),
             Self::CACHE_TTL,
-        );
-        backend(gate, &self.inner.env, self.inner.retry)
+        )
     }
 }
 

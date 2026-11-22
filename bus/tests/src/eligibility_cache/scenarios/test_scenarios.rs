@@ -10,6 +10,7 @@ mod defs {
     use std::num::NonZeroUsize;
     use std::time::Duration;
 
+    use agentbus_api::AuthorizationError;
     use agentbus_api::Environment;
     use agentbus_api::RequestContext;
     use agentbus_api::RequestGate;
@@ -224,6 +225,31 @@ mod defs {
             !lookup(&service, &inner, "alice", Ok(false)).await?,
             "an exempt admission was cached for its unixname"
         );
+        Ok(())
+    }
+
+    /// A cached denial repeats the gate's error, message and sources.
+    #[scenario(sim_only)]
+    pub async fn run_cached_denials_repeat_the_gate_error<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let service = fixture.create_with_config(CAPACITY, TTL);
+        let inner = fixture.lookup_controller();
+        let ctx = RequestContext::default().with_user("bob");
+        let mut first = Box::pin(service.admit(&ctx, "probe", "test-bus"));
+        anyhow::ensure!((&mut first).now_or_never().is_none());
+        inner.wait_for_lookup("bob").await;
+        inner.answer("bob", Ok(false));
+        let denial = |result| match result {
+            Err(AuthorizationError::Denied(error)) => Ok(format!("{error:#}")),
+            other => Err(anyhow::anyhow!("expected a denial: {other:?}")),
+        };
+        let looked_up = denial(first.await)?;
+        let cached = service
+            .admit(&ctx, "probe", "test-bus")
+            .now_or_never()
+            .ok_or_else(|| anyhow::anyhow!("a cache hit must not look up"))?;
+        anyhow::ensure!(denial(cached)? == looked_up);
         Ok(())
     }
 
