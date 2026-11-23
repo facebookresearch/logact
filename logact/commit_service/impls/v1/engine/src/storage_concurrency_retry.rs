@@ -20,10 +20,8 @@ pub(crate) struct ConcurrencyRetryPolicy {
 impl ConcurrencyRetryPolicy {
     pub(crate) fn decide(&mut self, error: &ConcurrencyError) -> RetryDecision {
         if is_cas_rejection(error) {
-            // human: a rejected CAS means a competing write has already
-            // completed, so a single immediate retry should reconcile with it.
             if self.cas_retry_attempted {
-                return RetryDecision::Stop;
+                return RetryDecision::RetryWithBackoff;
             }
             self.cas_retry_attempted = true;
             return RetryDecision::RetryImmediately;
@@ -75,7 +73,7 @@ mod tests {
         let error = concurrency_error(None);
 
         assert_eq!(policy.decide(&error), RetryDecision::RetryImmediately);
-        assert_eq!(policy.decide(&error), RetryDecision::Stop);
+        assert_eq!(policy.decide(&error), RetryDecision::RetryWithBackoff);
     }
 
     #[test]
@@ -91,7 +89,7 @@ mod tests {
             policy.decide(&transaction_conflict),
             RetryDecision::RetryWithBackoff
         );
-        assert_eq!(policy.decide(&cas), RetryDecision::Stop);
+        assert_eq!(policy.decide(&cas), RetryDecision::RetryWithBackoff);
     }
 
     #[test]
