@@ -48,6 +48,11 @@ impl HookArgs {
         matches!(self.event, HookEvent::PreToolUse)
     }
 
+    /// Return whether this invocation creates the bus.
+    pub fn is_session_start(&self) -> bool {
+        matches!(self.event, HookEvent::SessionStart)
+    }
+
     /// Stable observability label for this event.
     pub fn event_label(&self) -> &'static str {
         self.event_kind().event_label()
