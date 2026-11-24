@@ -21,7 +21,10 @@ mod in_memory_write_once_space;
 mod in_memory_write_once_space_state;
 mod observable_write_once_space;
 mod retrying_write_once_space;
+mod sequencer;
+mod simple_sequencer;
 mod write_once_agentbus;
+mod write_once_agentbus_v2;
 
 pub use caching_write_once_space::CachingWriteOnceSpace;
 pub use channeled_write_once_space::ChanneledWriteOnceSpace;
@@ -29,7 +32,10 @@ pub use channeled_write_once_space::ChanneledWriteOnceSpaceBackend;
 pub use in_memory_write_once_space::InMemoryWriteOnceSpace;
 pub use observable_write_once_space::ObservableWriteOnceSpace;
 pub use retrying_write_once_space::RetryingWriteOnceSpace;
+pub use sequencer::Sequencer;
+pub use simple_sequencer::SimpleSequencer;
 pub use write_once_agentbus::WriteOnceAgentBus;
+pub use write_once_agentbus_v2::WriteOnceAgentBusV2;
 
 fn write_once_error_message(error: &WriteOnceError) -> String {
     match error {

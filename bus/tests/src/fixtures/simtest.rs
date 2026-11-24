@@ -22,6 +22,7 @@ use agentbus_core::ChanneledAgentBus;
 use agentbus_observable::ObservableAgentBus;
 use agentbus_simple::InMemoryAgentBus;
 use agentbus_writeonce::ObservableWriteOnceSpace;
+use agentbus_writeonce::Sequencer;
 use agentbus_writeonce::WriteOnceAgentBus;
 use anyhow::Result;
 use channeled_svc_agentbus::ChanneledAgentBus as ChanneledSvcAgentBus;
@@ -31,6 +32,7 @@ use rand::distr::Uniform;
 
 use super::SimulatorFixture;
 use super::WriteOnceAgentBusGenericFixture;
+use super::WriteOnceAgentBusV2GenericFixture;
 use crate::common::fault_config::FaultConfig;
 use crate::impls::chained_agentbus::ChainedAgentBus;
 use crate::impls::chained_agentbus::ChainedMode;
@@ -501,6 +503,34 @@ where
     }
 }
 
+impl<F, Q> WithFaultConfig
+    for WriteOnceAgentBusV2GenericFixture<FaultInjectingWriteOnceSpaceFixture<F>, Q>
+where
+    Q: Sequencer<Simulator> + 'static,
+    F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace> + SimulatorFixture + 'static,
+    F::Impl: Clone + 'static,
+{
+    fn with_fault_config(simulator: Simulator, config: FaultConfig) -> Self {
+        Self::new_with_config(simulator, config)
+    }
+}
+
+impl<F, Q> WithFaultConfig
+    for WriteOnceAgentBusV2GenericFixture<
+        CachingWriteOnceSpaceFixture<FaultInjectingWriteOnceSpaceFixture<F>>,
+        Q,
+    >
+where
+    Q: Sequencer<Simulator> + 'static,
+    F: ConformanceFixture<Env = Simulator, Impl: WriteOnceSpace> + SimulatorFixture + 'static,
+    F::Impl: Clone + 'static,
+{
+    fn with_fault_config(simulator: Simulator, config: FaultConfig) -> Self {
+        let inner = FaultInjectingWriteOnceSpaceFixture::<F>::new_with_config(simulator, config);
+        Self::new(Rc::new(CachingWriteOnceSpaceFixture::from_fixture(inner)))
+    }
+}
+
 /// A fault mix encoded as a type, so it can be a `#[scenario_for]` pin parameter.
 pub trait FaultMix {
     const CONFIG: FaultConfig;
@@ -601,5 +631,22 @@ pub type SpaceAmbiguousWriteEmpty = WriteOnceAgentBusGenericFixture<
     AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, false>,
 >;
 pub type SpaceAmbiguousWriteOccupied = WriteOnceAgentBusGenericFixture<
+    AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, true>,
+>;
+pub type SpaceInMemoryV2 = WriteOnceAgentBusV2GenericFixture<
+    FaultInjectingWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture>,
+>;
+pub type SpaceCachingV2 = WriteOnceAgentBusV2GenericFixture<
+    CachingWriteOnceSpaceFixture<
+        FaultInjectingWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture>,
+    >,
+>;
+pub type SpaceChanneledV2 = WriteOnceAgentBusV2GenericFixture<
+    FaultInjectingWriteOnceSpaceFixture<ChanneledWriteOnceSpaceFixture>,
+>;
+pub type SpaceAmbiguousWriteEmptyV2 = WriteOnceAgentBusV2GenericFixture<
+    AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, false>,
+>;
+pub type SpaceAmbiguousWriteOccupiedV2 = WriteOnceAgentBusV2GenericFixture<
     AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, true>,
 >;

@@ -11,6 +11,7 @@ mod defs {
     //! always succeed, and appends land at most once.
 
     use std::collections::HashMap;
+    use std::rc::Rc;
     use std::time::Duration;
 
     use agent_bus_proto_rust::agent_bus::*;
@@ -128,14 +129,39 @@ mod defs {
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator>,
     {
-        const CLIENTS: usize = 4;
+        appends_under_loss_land_at_most_once(fixture, 4, 4).await
+    }
+
+    // Clients share servers, so appends through one server run concurrently.
+    #[scenario(sim_only, latency_ms = 65000, zipf = 1.2, loss = 0.05, retry)]
+    pub async fn run_test_concurrent_appends_under_loss_land_at_most_once<F>(
+        fixture: &F,
+    ) -> Result<()>
+    where
+        F: AgentBusTestFixture + ConformanceFixture<Env = Simulator>,
+    {
+        appends_under_loss_land_at_most_once(fixture, 8, 2).await
+    }
+
+    /// Each of `clients` appends through one of `servers` bus instances.
+    async fn appends_under_loss_land_at_most_once<F>(
+        fixture: &F,
+        clients: usize,
+        servers: usize,
+    ) -> Result<()>
+    where
+        F: AgentBusTestFixture + ConformanceFixture<Env = Simulator>,
+    {
         const APPENDS: usize = 16;
         let env = fixture.get_env();
         let bus_id = format!("retry-{}", env.with_rng(|rng| rng.random::<u64>()));
+        let servers: Vec<_> = (0..servers)
+            .map(|_| Rc::new(fixture.create_impl()))
+            .collect();
 
-        let clients: Vec<_> = (0..CLIENTS)
+        let tasks: Vec<_> = (0..clients)
             .map(|client| {
-                let (bus, bus_id) = (fixture.create_impl(), bus_id.clone());
+                let (bus, bus_id) = (servers[client % servers.len()].clone(), bus_id.clone());
                 env.spawn(async move {
                     let mut acked = Vec::new();
                     for i in 0..APPENDS {
@@ -158,8 +184,8 @@ mod defs {
             })
             .collect();
         let mut acked = Vec::new();
-        for client in clients {
-            acked.extend(client.await?);
+        for task in tasks {
+            acked.extend(task.await?);
         }
 
         env.latency_injector().disable();
@@ -169,10 +195,10 @@ mod defs {
             read_linearizable_snapshot(&bus, bus_id.clone(), 0, None, &*env, None).await;
         let log = texts(&entries);
         assert_eq!(log.len() as i64, tail, "the log should have no holes");
-        let positions: HashMap<&str, usize> = log
+        let positions: HashMap<&str, i64> = log
             .iter()
             .enumerate()
-            .map(|(position, text)| (text.as_str(), position))
+            .map(|(position, text)| (text.as_str(), position as i64))
             .collect();
         assert_eq!(
             positions.len(),
@@ -181,10 +207,10 @@ mod defs {
         );
         for text in &log {
             let (client, i) = text.split_once('-').expect("an appended payload");
-            assert!(client.parse::<usize>()? < CLIENTS && i.parse::<usize>()? < APPENDS);
+            assert!(client.parse::<usize>()? < clients && i.parse::<usize>()? < APPENDS);
         }
         for (text, position) in &acked {
-            assert_eq!(positions.get(text.as_str()), Some(&(*position as usize)));
+            assert_eq!(positions.get(text.as_str()), Some(position));
         }
 
         let position = append_string_intention(&bus, bus_id, "after".to_owned()).await;
