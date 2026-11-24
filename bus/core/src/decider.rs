@@ -212,8 +212,9 @@ impl<T: AgentBus> Decider<T> {
                 | Some(payload::Payload::ActionOutput(_))
                 | Some(payload::Payload::AgentInput(_))
                 | Some(payload::Payload::AgentOutput(_))
-                | Some(payload::Payload::Mail(_)) => {
-                    // Inference logging, action output, agent I/O, and mail entries don't affect decider logic
+                | Some(payload::Payload::Mail(_))
+                | Some(payload::Payload::Junk(_)) => {
+                    // Inference logging, action output, agent I/O, mail, and junk entries don't affect decider logic
                 }
                 None => {
                     // Missing or unknown payload

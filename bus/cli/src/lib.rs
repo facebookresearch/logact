@@ -578,6 +578,9 @@ fn print_entry(entry: &BusEntry) {
                 };
                 println!("\t{}", body.white().on_black());
             }
+            Some(payload::Payload::Junk(_)) => {
+                println!("{}", "JUNK".bright_black());
+            }
             None => {
                 println!("{}", "UNKNOWN".bright_black());
             }

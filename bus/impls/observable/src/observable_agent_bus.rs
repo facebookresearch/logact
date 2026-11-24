@@ -99,6 +99,7 @@ fn payload_type_name(payload: &Payload) -> &'static str {
         Some(payload::Payload::AgentInput(_)) => "agent_input",
         Some(payload::Payload::AgentOutput(_)) => "agent_output",
         Some(payload::Payload::Mail(_)) => "mail",
+        Some(payload::Payload::Junk(_)) => "junk",
         None => "unknown",
     }
 }

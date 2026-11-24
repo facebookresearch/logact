@@ -308,6 +308,7 @@ pub fn payload_to_selective_poll_type(payload: &Payload) -> i32 {
             payload::Payload::AgentInput(_) => SelectivePollType::AgentInput as i32,
             payload::Payload::AgentOutput(_) => SelectivePollType::AgentOutput as i32,
             payload::Payload::Mail(_) => SelectivePollType::Mail as i32,
+            payload::Payload::Junk(_) => panic!("Junk has no SelectivePollType"),
         }
     } else {
         panic!("Cannot map missing or unknown payload to SelectivePollType")

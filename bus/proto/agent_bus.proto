@@ -59,6 +59,7 @@ message Payload {
     AgentInput agent_input = 11; // input to the agent
     AgentOutput agent_output = 12; // output from the agent
     Mail mail = 13; // inter-agent mail message
+    Junk junk = 14; // fills the position of a failed or cancelled append
   }
 }
 
@@ -185,6 +186,10 @@ message Reply {
   Message message = 1; // the reply body and its own message_id
   string in_reply_to = 2; // message_id this is responding to
 }
+
+// Fills a position whose append failed or was cancelled, so that the entries
+// after it can be read. Readers skip it.
+message Junk {}
 
 // Inter-agent mail message.
 // Appended to the recipient's bus — the recipient is implicit (it's their bus).

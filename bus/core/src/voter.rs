@@ -171,7 +171,7 @@ impl<T: AgentBus, E: Environment> VoterLoop<T, E> {
                 | Some(payload::Payload::AgentOutput(_)) => {
                     return Err(VoterError::UnknownPayloadType(log_position));
                 }
-                Some(payload::Payload::Mail(_)) => {}
+                Some(payload::Payload::Mail(_)) | Some(payload::Payload::Junk(_)) => {}
                 None => return Err(VoterError::UnknownPayloadType(log_position)),
             }
         }

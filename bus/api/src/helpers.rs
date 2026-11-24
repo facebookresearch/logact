@@ -24,7 +24,8 @@ use serde_json;
 use crate::environment::Clock;
 use crate::environment::Environment;
 
-/// Returns the SelectivePollType for a payload, or None if the payload is empty.
+/// Returns the SelectivePollType for a payload, or None if the payload is empty
+/// or junk.
 pub fn get_payload_type(payload: &Payload) -> Option<i32> {
     match &payload.payload {
         Some(payload::Payload::Intention(_)) => Some(SelectivePollType::Intention as i32),
@@ -42,14 +43,18 @@ pub fn get_payload_type(payload: &Payload) -> Option<i32> {
         Some(payload::Payload::AgentInput(_)) => Some(SelectivePollType::AgentInput as i32),
         Some(payload::Payload::AgentOutput(_)) => Some(SelectivePollType::AgentOutput as i32),
         Some(payload::Payload::Mail(_)) => Some(SelectivePollType::Mail as i32),
-        None => None,
+        Some(payload::Payload::Junk(_)) | None => None,
     }
 }
 
 /// Checks if a payload matches the given filter.
-/// Returns true if filter is None (no filtering) or if the payload type is in the filter.
+/// Returns false for junk, which readers skip.
+/// Otherwise returns true if filter is None (no filtering) or if the payload type is in the filter.
 /// Returns false if the payload has no type or doesn't match the filter.
 pub fn payload_matches_filter(payload: &Payload, filter: &Option<Vec<i32>>) -> bool {
+    if let Some(payload::Payload::Junk(_)) = payload.payload {
+        return false;
+    }
     match filter {
         None => true,
         Some(types) => match get_payload_type(payload) {
@@ -334,6 +339,10 @@ pub fn parse_entry(entry: &BusEntry) -> ParsedEntry {
                 .to_string(),
             }
         }
+        payload::Payload::Junk(_) => ParsedEntry {
+            entry_type: "junk",
+            content: String::new(),
+        },
     }
 }
 
@@ -440,5 +449,24 @@ pub async fn blocking_poll_default<B: crate::AgentBus, E: Environment>(
         }
         let interval = interval.unwrap_or(DEFAULT_POLL_INTERVAL);
         env.sleep(interval.min(deadline - now)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn junk_matches_no_filter() {
+        let payload = |payload| Payload {
+            payload: Some(payload),
+        };
+        let junk = payload(payload::Payload::Junk(Default::default()));
+        let mail = payload(payload::Payload::Mail(Default::default()));
+        assert!(!payload_matches_filter(&junk, &None), "readers skip junk");
+        assert!(
+            payload_matches_filter(&mail, &None),
+            "no filter matches the rest"
+        );
     }
 }
