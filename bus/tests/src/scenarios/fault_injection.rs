@@ -16,10 +16,11 @@
 //! - single-fate tests force one fate (lost / commit-then-error / error-then-commit)
 //!   and assert the resulting append/poll outcome;
 //! - one-shot ambiguous-write tests cover reporting an unknown append outcome
-//!   whether the write applied or not;
+//!   whether the write applied or not, or recovering the append (V2);
 //! - permutation tests run the mixed-fault workload and assert the exact set of
 //!   legal commit orderings, which differs by injection layer (16 at the bus layer,
-//!   12 at the space layer, where per-client FIFO is preserved).
+//!   12 at the space layer, where per-client FIFO is preserved, and for V2, which
+//!   writes a failed entry again, 9 plus rare ones that need a lost append).
 
 #[conformance_macros::scenarios(agentbus_fault_injection_list)]
 mod defs {
@@ -27,6 +28,8 @@ mod defs {
 
     use crate::fault_injection_helpers::BUS_LEVEL_OUTCOMES;
     use crate::fault_injection_helpers::SPACE_LEVEL_OUTCOMES;
+    use crate::fault_injection_helpers::V2_RARE_SPACE_LEVEL_OUTCOMES;
+    use crate::fault_injection_helpers::V2_SPACE_LEVEL_OUTCOMES;
     use crate::fault_injection_helpers::run_fault_test;
     use crate::fault_injection_helpers::run_permutations_with_faults_test;
     use crate::fixtures::AgentBusTestFixture;
@@ -53,7 +56,6 @@ mod defs {
     }
 
     #[scenario_for(agentbus_tests::SpaceAmbiguousWriteEmpty, suffix = empty_slot, sim_only)]
-    #[scenario_for(agentbus_tests::SpaceAmbiguousWriteEmptyV2, suffix = empty_slot_v2, sim_only)]
     pub async fn run_ambiguous_write_without_commit<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -81,6 +83,16 @@ mod defs {
             true,
             Some("write outcome unknown"),
         );
+        Ok(())
+    }
+
+    // V2 writes the entry again, which lands.
+    #[scenario_for(agentbus_tests::SpaceAmbiguousWriteEmptyV2, suffix = empty_slot_v2, sim_only)]
+    pub async fn run_ambiguous_write_recovers<F>(fixture: &F) -> Result<()>
+    where
+        F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
+    {
+        run_fault_test(fixture.create_impl(), fixture.get_env(), true, true, None);
         Ok(())
     }
 
@@ -168,17 +180,15 @@ mod defs {
             fixture.create_impl(),
             fixture.get_env(),
             &BUS_LEVEL_OUTCOMES,
+            &[],
         );
         Ok(())
     }
 
     // Mixed faults at the space layer: per-client FIFO preserved, so 12 orderings.
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemory, agentbus_tests::Mixed>, suffix = space_in_memory, sim_only)]
-    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemoryV2, agentbus_tests::Mixed>, suffix = space_in_memory_v2, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneled, agentbus_tests::Mixed>, suffix = space_channeled, sim_only)]
-    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneledV2, agentbus_tests::Mixed>, suffix = space_channeled_v2, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCaching, agentbus_tests::Mixed>, suffix = space_caching, sim_only)]
-    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCachingV2, agentbus_tests::Mixed>, suffix = space_caching_v2, sim_only)]
     pub async fn run_fi_permutations_space<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -187,6 +197,24 @@ mod defs {
             fixture.create_impl(),
             fixture.get_env(),
             &SPACE_LEVEL_OUTCOMES,
+            &[],
+        );
+        Ok(())
+    }
+
+    // Mixed faults at the space layer under V2: 9 orderings, plus 3 rare ones.
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemoryV2, agentbus_tests::Mixed>, suffix = space_in_memory_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneledV2, agentbus_tests::Mixed>, suffix = space_channeled_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCachingV2, agentbus_tests::Mixed>, suffix = space_caching_v2, sim_only)]
+    pub async fn run_fi_permutations_space_v2<F>(fixture: &F) -> Result<()>
+    where
+        F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
+    {
+        run_permutations_with_faults_test(
+            fixture.create_impl(),
+            fixture.get_env(),
+            &V2_SPACE_LEVEL_OUTCOMES,
+            &V2_RARE_SPACE_LEVEL_OUTCOMES,
         );
         Ok(())
     }

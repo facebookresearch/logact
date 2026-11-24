@@ -140,10 +140,23 @@ pub const SPACE_LEVEL_OUTCOMES: [&str; 12] = [
     "abc", "acb", "cab", //
 ];
 
+/// 9 orderings expected under V2, which writes a failed entry again, plus
+/// `V2_RARE_SPACE_LEVEL_OUTCOMES`.
+pub const V2_SPACE_LEVEL_OUTCOMES: [&str; 9] = [
+    "a", "c", //
+    "ab", "ac", "ca", "cb", //
+    "abc", "acb", "cab", //
+];
+
+/// Orderings that need a lost "a" or "c", which takes several lost writes, so
+/// they are legal but too rare to wait for.
+pub const V2_RARE_SPACE_LEVEL_OUTCOMES: [&str; 3] = ["", "b", "bc"];
+
 pub fn run_permutations_with_faults_test<Impl>(
     agentbus: Impl,
     env: Rc<Simulator>,
     expected_outcomes: &[&str],
+    rare_outcomes: &[&str],
 ) where
     Impl: AgentBus + Clone + 'static,
 {
@@ -154,8 +167,12 @@ pub fn run_permutations_with_faults_test<Impl>(
     let mut observed_counts = HashMap::new();
     let mut bus_id = 0;
 
-    // Run until we see all variants or hit the max
-    while observed_counts.len() < expected_outcomes.len() && bus_id < MAX_RUNS {
+    // Run until we see all expected variants or hit the max
+    while !expected_outcomes
+        .iter()
+        .all(|expected| observed_counts.contains_key(*expected))
+        && bus_id < MAX_RUNS
+    {
         let bus_id_str = format!("bus-{}", bus_id);
 
         // Client 1 for bus_id: append "a", await, then append "b"
@@ -227,7 +244,7 @@ pub fn run_permutations_with_faults_test<Impl>(
     // Print all counts
     eprintln!("\nRan {} iterations", bus_id);
     eprintln!("All outcomes:");
-    for expected in expected_outcomes {
+    for expected in expected_outcomes.iter().chain(rare_outcomes) {
         let count = observed_counts.get(*expected).unwrap_or(&0);
         let display = if expected.is_empty() {
             "(empty)"
@@ -237,18 +254,13 @@ pub fn run_permutations_with_faults_test<Impl>(
         eprintln!("  {}: {} times", display, count);
     }
 
-    // Verify we observed all expected outcomes
-    assert_eq!(
-        observed_counts.len(),
-        expected_outcomes.len(),
-        "Should observe exactly {} distinct outcomes, but only saw {}. Missing: {:?}",
-        expected_outcomes.len(),
-        observed_counts.len(),
-        expected_outcomes
-            .iter()
-            .filter(|&&e| !observed_counts.contains_key(e))
-            .collect::<Vec<_>>()
-    );
+    for observed in observed_counts.keys() {
+        assert!(
+            expected_outcomes.contains(&observed.as_str())
+                || rare_outcomes.contains(&observed.as_str()),
+            "Unexpected outcome '{observed}'"
+        );
+    }
     for &expected in expected_outcomes {
         assert!(
             observed_counts.contains_key(expected),

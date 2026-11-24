@@ -36,6 +36,8 @@ use crate::sequencer::Sequencer;
 use crate::simple_sequencer::SimpleSequencer;
 
 const MAX_POLL_ENTRIES: usize = 64;
+// An append gives up after this many failed rewrites of its entry.
+const MAX_REWRITES: usize = 3;
 const DEFAULT_BLOCKING_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(50);
 const SPACE_PREFIX: &str = "bus/";
 const DEFAULT_NEXT_POSITIONS_CACHE_CAPACITY: NonZeroUsize =
@@ -155,7 +157,7 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
         let sequencer = self.sequencer(&bus_id).await?;
 
         // Get the space and environment, releasing the borrow before await
-        let (mut space, environment) = {
+        let (space, environment) = {
             let state = self.state.borrow();
             (state.space.clone(), state.environment.clone())
         };
@@ -171,11 +173,7 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
             let claim = sequencer.claim().await;
             let position = claim.position();
             let entry = serialize_entry(&payload, position as i64, rt_timestamp_ms);
-            let result = space
-                .write(&prefixed_space_id(&bus_id), position, entry)
-                .await;
-            claim.set(written(&result));
-            let error = match result {
+            let error = match self.write_claimed(&bus_id, claim, entry).await {
                 Ok(()) => {
                     debug!(
                         agent_bus_id = bus_id,
@@ -404,6 +402,38 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
             .sequencers
             .get_or_insert(bus_id.to_string(), || Rc::new(Q::new(tail, environment)))
             .clone())
+    }
+
+    /// Writes `entry` at the claimed position, and while its writes fail, since a
+    /// failed write may still land, writes it again up to `MAX_REWRITES` times.
+    async fn write_claimed(
+        &self,
+        bus_id: &str,
+        claim: Q::Claim<'_>,
+        entry: Bytes,
+    ) -> WriteOnceResult<()> {
+        let mut space = self.state.borrow().space.clone();
+        let space_id = prefixed_space_id(bus_id);
+        let mut rewrites = 0;
+        let result = loop {
+            let result = space
+                .write(&space_id, claim.position(), entry.clone())
+                .await;
+            if written(&result) || rewrites == MAX_REWRITES {
+                break result;
+            }
+            rewrites += 1;
+        };
+        claim.set(written(&result));
+
+        match result {
+            // The position holds either this entry, from an earlier write that
+            // landed late, or another instance's.
+            Err(WriteOnceError::AddressAlreadyExists(address)) if rewrites > 0 => {
+                Err(WriteOnceError::AmbiguousWrite(address))
+            }
+            result => result,
+        }
     }
 
     /// Read filtered entries from [start_position, end_position) in the write-once space.
