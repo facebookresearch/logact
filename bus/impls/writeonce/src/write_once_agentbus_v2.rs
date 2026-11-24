@@ -74,6 +74,7 @@ struct WriteOnceAgentBusState<W: WriteOnceSpace, E: Environment, Q: Sequencer<E>
     // Evicting a sequencer that is still in use lets a later append claim its positions.
     sequencers: LruCache<String, Rc<Q>>,
     blocking_poll_interval: std::time::Duration,
+    tail_window_size: u64,
 }
 
 /// WriteOnceAgentBusV2 - AgentBus backed by a write-once address space.
@@ -138,8 +139,28 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment, Q: Sequencer<E>>
                 sequencers: LruCache::new(next_positions_capacity),
                 blocking_poll_interval: blocking_poll_interval
                     .unwrap_or(DEFAULT_BLOCKING_POLL_INTERVAL),
+                tail_window_size: Q::TAIL_WINDOW_SIZE,
             })),
         }
+    }
+
+    /// Looks for the tail `tail_window_size` positions back instead of the
+    /// sequencer's `TAIL_WINDOW_SIZE`. Every bus instance on a space must look
+    /// at least as far back as any instance writing to it may leave positions
+    /// unwritten, so instances that write one at a time look as far back as
+    /// windowed ones before any start writing.
+    pub fn with_tail_window_size(self, tail_window_size: u64) -> Self {
+        assert!(
+            tail_window_size >= Q::TAIL_WINDOW_SIZE,
+            "tail window {tail_window_size} is smaller than the sequencer's {}",
+            Q::TAIL_WINDOW_SIZE
+        );
+        self.state.borrow_mut().tail_window_size = tail_window_size;
+        self
+    }
+
+    fn tail_window_size(&self) -> u64 {
+        self.state.borrow().tail_window_size
     }
 }
 
@@ -213,7 +234,7 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
                 }
                 (Err(WriteOnceError::AddressAlreadyExists(_)), false) => {
                     let new_position = space
-                        .tail(&prefixed_space_id(&bus_id), Q::TAIL_WINDOW_SIZE)
+                        .tail(&prefixed_space_id(&bus_id), self.tail_window_size())
                         .await
                         .map_err(tail_error_to_bus)?;
                     debug!(
@@ -270,7 +291,7 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
         // Use tail() to find the first unwritten position
         let space = { self.state.borrow().space.clone() };
         let end_position = space
-            .tail(&prefixed_space_id(&bus_id), Q::TAIL_WINDOW_SIZE)
+            .tail(&prefixed_space_id(&bus_id), self.tail_window_size())
             .await
             .map_err(tail_error_to_bus)?;
 
@@ -381,7 +402,7 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
         let bus_id = bus_id.agent_bus_id.as_str();
         let space = { self.state.borrow().space.clone() };
         let tail_position = space
-            .tail(&prefixed_space_id(bus_id), Q::TAIL_WINDOW_SIZE)
+            .tail(&prefixed_space_id(bus_id), self.tail_window_size())
             .await
             .map_err(tail_error_to_bus)?;
         let sequencer = self.state.borrow_mut().sequencers.peek(bus_id).cloned();
@@ -419,7 +440,7 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
             return Ok(sequencer);
         }
         let tail = space
-            .tail(&prefixed_space_id(bus_id), Q::TAIL_WINDOW_SIZE)
+            .tail(&prefixed_space_id(bus_id), self.tail_window_size())
             .await
             .map_err(tail_error_to_bus)?;
         let environment = self.state.borrow().environment.clone();

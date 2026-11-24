@@ -38,6 +38,7 @@ pub mod integration;
 pub mod simtest;
 pub mod write_once_agentbus_fixture;
 pub mod write_once_agentbus_v2_fixture;
+pub mod write_once_mixed_version_fixture;
 
 pub use write_once_agentbus_fixture::WriteOnceAgentBusGenericFixture;
 pub use write_once_agentbus_v2_fixture::WriteOnceAgentBusV2GenericFixture;

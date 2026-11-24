@@ -27,6 +27,7 @@ mod simple_sequencer;
 mod windowed_sequencer;
 mod write_once_agentbus;
 mod write_once_agentbus_v2;
+mod write_once_bus_version;
 
 pub use caching_write_once_space::CachingWriteOnceSpace;
 pub use channeled_write_once_space::ChanneledWriteOnceSpace;
@@ -39,6 +40,8 @@ pub use simple_sequencer::SimpleSequencer;
 pub use windowed_sequencer::WindowedSequencer;
 pub use write_once_agentbus::WriteOnceAgentBus;
 pub use write_once_agentbus_v2::WriteOnceAgentBusV2;
+pub use write_once_bus_version::WriteOnceBusConsumer;
+pub use write_once_bus_version::WriteOnceBusVersion;
 
 fn write_once_error_message(error: &WriteOnceError) -> String {
     match error {

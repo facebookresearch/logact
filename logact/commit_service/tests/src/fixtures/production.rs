@@ -105,6 +105,8 @@ impl ConformanceFixture for FeatureFlagProductionFixture {
             enable_policy_lease_keepalive: _,
             enable_channeled_svc,
             enable_eligibility_under_channel,
+            enable_wobusv2_simple_bigtailwindow: _,
+            enable_wobusv2_windowed: _,
         } = env.feature_flags();
         assert!(
             !enable_channeled_svc && !enable_eligibility_under_channel,

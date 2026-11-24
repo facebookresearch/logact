@@ -30,6 +30,7 @@ use crate::AgentBusHandler;
 use crate::AgentBusMetrics;
 use crate::AgentBusServiceServer;
 use crate::ChanneledAgentBus;
+use crate::FeatureFlags;
 use crate::RealEnvironment;
 
 /// Parsed backend URL scheme.
@@ -168,7 +169,21 @@ async fn run_grpc_service(handler: AgentBusHandler, host: &str, port: u16) -> Re
 /// This is the main entry point for AgentBus server frontends.
 /// The `make_bus` closure creates the storage backend on the server's
 /// environment and local executor.
-pub fn run_server<F, M>(args: &CommonServerArgs, _metrics: M, make_bus: F) -> Result<()>
+pub fn run_server<F, M>(args: &CommonServerArgs, metrics: M, make_bus: F) -> Result<()>
+where
+    F: FnOnce(Rc<RealEnvironment>) -> Result<ChanneledAgentBus>,
+    M: AgentBusMetrics + Send,
+{
+    run_server_with_feature_flags(args, metrics, FeatureFlags::default(), make_bus)
+}
+
+/// [`run_server`] on an environment with `feature_flags`.
+pub fn run_server_with_feature_flags<F, M>(
+    args: &CommonServerArgs,
+    _metrics: M,
+    feature_flags: FeatureFlags,
+    make_bus: F,
+) -> Result<()>
 where
     F: FnOnce(Rc<RealEnvironment>) -> Result<ChanneledAgentBus>,
     M: AgentBusMetrics + Send,
@@ -181,7 +196,9 @@ where
     let runtime = tokio::runtime::Runtime::new()?;
     let local = tokio::task::LocalSet::new();
     local.block_on(&runtime, async move {
-        let handler = AgentBusHandler::new(make_bus(Rc::new(RealEnvironment::new()))?);
+        let handler = AgentBusHandler::new(make_bus(Rc::new(
+            RealEnvironment::with_feature_flags(feature_flags),
+        ))?);
         run_grpc_service(handler, &host, port).await
     })
 }

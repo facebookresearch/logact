@@ -10,6 +10,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use agentbus_api::RequestGate;
+use agentbus_api::WriteOnceSpace;
+use agentbus_api::environment::Environment;
 use agentbus_conditional_write_space::WriteOnceSpaceAdapter;
 use agentbus_core::AgentBus;
 use agentbus_core::AgentBusMetrics;
@@ -22,7 +24,8 @@ use agentbus_sqlite::SqliteConditionalWriteSpace;
 use agentbus_sqlite::SqliteDb;
 use agentbus_writeonce::InMemoryWriteOnceSpace;
 use agentbus_writeonce::ObservableWriteOnceSpace;
-use agentbus_writeonce::WriteOnceAgentBus;
+use agentbus_writeonce::WriteOnceBusConsumer;
+use agentbus_writeonce::WriteOnceBusVersion;
 use anyhow::Result;
 use channeled_svc_agentbus::ChanneledAgentBus as GatedAgentBus;
 
@@ -99,8 +102,12 @@ impl CoreAgentBusFactory {
                     logger_factory()?,
                     env.clone(),
                 );
-                let bus = WriteOnceAgentBus::new(space, env.clone(), blocking_poll_interval);
-                Ok(wrap.wrap(env, bus))
+                Ok(build_write_once_bus(
+                    space,
+                    env,
+                    blocking_poll_interval,
+                    wrap,
+                ))
             }
             ParsedBackend::Http(grpc_url) => {
                 let endpoint = tonic::transport::Channel::from_shared(grpc_url)?;
@@ -115,8 +122,12 @@ impl CoreAgentBusFactory {
                     logger_factory()?,
                     env.clone(),
                 );
-                let bus = WriteOnceAgentBus::new(space, env.clone(), blocking_poll_interval);
-                Ok(wrap.wrap(env, bus))
+                Ok(build_write_once_bus(
+                    space,
+                    env,
+                    blocking_poll_interval,
+                    wrap,
+                ))
             }
             ParsedBackend::Other(url) => {
                 anyhow::bail!(
@@ -150,6 +161,39 @@ pub trait MigrationSwitchAgentBusWrapper {
     fn wrap<T: AgentBus + 'static>(self, env: Rc<RealEnvironment>, bus: T) -> Self::Output;
 }
 
+/// Builds the write-once bus `env`'s feature flags select over `space` and
+/// puts it behind the channel `wrap` chooses.
+pub fn build_write_once_bus<S, W>(
+    space: S,
+    env: Rc<RealEnvironment>,
+    blocking_poll_interval: Option<Duration>,
+    wrap: W,
+) -> W::Output
+where
+    S: WriteOnceSpace + Clone + 'static,
+    W: MigrationSwitchAgentBusWrapper,
+{
+    WriteOnceBusVersion::from_feature_flags(&env.feature_flags()).build(
+        space,
+        env.clone(),
+        blocking_poll_interval,
+        WrapOn { env, wrap },
+    )
+}
+
+struct WrapOn<W> {
+    env: Rc<RealEnvironment>,
+    wrap: W,
+}
+
+impl<W: MigrationSwitchAgentBusWrapper> WriteOnceBusConsumer for WrapOn<W> {
+    type Output = W::Output;
+
+    fn consume<B: AgentBus + 'static>(self, bus: B) -> W::Output {
+        self.wrap.wrap(self.env, bus)
+    }
+}
+
 /// The legacy `ChanneledAgentBus`, as `build_on` returns.
 pub struct LegacyChannel;
 
@@ -178,6 +222,7 @@ mod tests {
     use std::cell::Cell;
 
     use agentbus_api::EligibilityGate;
+    use agentbus_api::FeatureFlags;
     use agentbus_api::RequestContext;
     use agentbus_core::AgentBus;
     use agentbus_core::AgentBusError;
@@ -331,6 +376,35 @@ mod tests {
                     "both channels should observe the backend the same way"
                 );
                 assert_eq!(legacy_builds.get(), 2, "one metrics and one logger handle");
+            })
+            .await;
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn write_once_flags_read_each_others_appends() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let dir = tempfile::tempdir().unwrap();
+                let path = dir.path().join("bus.db").display().to_string();
+                let stages = [(false, false), (true, false), (true, true)];
+                for (earlier, (enable_wobusv2_simple_bigtailwindow, enable_wobusv2_windowed)) in
+                    stages.into_iter().enumerate()
+                {
+                    let env = Rc::new(RealEnvironment::with_feature_flags(FeatureFlags {
+                        enable_wobusv2_simple_bigtailwindow,
+                        enable_wobusv2_windowed,
+                        ..Default::default()
+                    }));
+                    let bus = factory(&Rc::default())
+                        .build_on(env, ParsedBackend::Sqlite(path.clone()))
+                        .unwrap();
+                    assert_eq!(
+                        bus.poll(poll()).await.unwrap().entries.len(),
+                        earlier,
+                        "stage {earlier} should read every earlier stage's append"
+                    );
+                    bus.append(append()).await.unwrap();
+                }
             })
             .await;
     }

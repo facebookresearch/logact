@@ -35,6 +35,9 @@ use super::SimulatorFixture;
 use super::TailWindowFixture;
 use super::WriteOnceAgentBusGenericFixture;
 use super::WriteOnceAgentBusV2GenericFixture;
+use super::write_once_mixed_version_fixture::SimpleBigTailWindowAndWindowed;
+use super::write_once_mixed_version_fixture::V1AndSimpleBigTailWindow;
+use super::write_once_mixed_version_fixture::WriteOnceMixedVersionFixture;
 use crate::common::fault_config::FaultConfig;
 use crate::impls::chained_agentbus::ChainedAgentBus;
 use crate::impls::chained_agentbus::ChainedMode;
@@ -706,4 +709,12 @@ pub type SpaceAmbiguousWriteEmptyV2Windowed = WriteOnceAgentBusV2GenericFixture<
 pub type SpaceAmbiguousWriteOccupiedV2Windowed = WriteOnceAgentBusV2GenericFixture<
     AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, true>,
     WindowedSequencer,
+>;
+pub type SpaceInMemoryV1AndSimpleBigTailWindow = WriteOnceMixedVersionFixture<
+    FaultInjectingWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture>,
+    V1AndSimpleBigTailWindow,
+>;
+pub type SpaceInMemorySimpleBigTailWindowAndWindowed = WriteOnceMixedVersionFixture<
+    FaultInjectingWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture>,
+    SimpleBigTailWindowAndWindowed,
 >;

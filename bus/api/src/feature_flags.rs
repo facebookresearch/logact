@@ -36,6 +36,14 @@ pub struct FeatureFlags {
     /// Check caller eligibility inside the `channeled_svc` channels instead of
     /// the Thrift authorizer. Requires `enable_channeled_svc`.
     pub enable_eligibility_under_channel: bool,
+    /// Serve write-once buses with `WriteOnceAgentBusV2` and `SimpleSequencer`,
+    /// looking for the tail as far back as `WindowedSequencer` (8 positions).
+    pub enable_wobusv2_simple_bigtailwindow: bool,
+    /// Serve write-once buses with `WriteOnceAgentBusV2` and `WindowedSequencer`
+    /// (8 positions). Overrides `enable_wobusv2_simple_bigtailwindow`. Enable it
+    /// on a bus only once every server of that bus runs
+    /// `enable_wobusv2_simple_bigtailwindow`.
+    pub enable_wobusv2_windowed: bool,
 }
 
 impl Default for FeatureFlags {
@@ -50,6 +58,8 @@ impl Default for FeatureFlags {
             enable_policy_lease_keepalive: false,
             enable_channeled_svc: false,
             enable_eligibility_under_channel: false,
+            enable_wobusv2_simple_bigtailwindow: false,
+            enable_wobusv2_windowed: false,
         }
     }
 }

@@ -36,6 +36,8 @@ macro_rules! agentbus_fixtures {
         $cb!([$crate::fixtures::simtest::SpaceInMemoryV2Windowed, bus_write_once_v2_windowed_in_memory, sim] $(, $ctx)?);
         $cb!([$crate::fixtures::simtest::SpaceChanneledV2Windowed, bus_write_once_v2_windowed_channeled, sim] $(, $ctx)?);
         $cb!([$crate::fixtures::simtest::SpaceCachingV2Windowed, bus_write_once_v2_windowed_caching, sim] $(, $ctx)?);
+        $cb!([$crate::fixtures::simtest::SpaceInMemoryV1AndSimpleBigTailWindow, bus_write_once_mixed_v1_simple_bigtailwindow, sim] $(, $ctx)?);
+        $cb!([$crate::fixtures::simtest::SpaceInMemorySimpleBigTailWindowAndWindowed, bus_write_once_mixed_simple_bigtailwindow_windowed, sim] $(, $ctx)?);
         $cb!([$crate::fixtures::integration::SqliteAgentBusFixture, bus_write_once_sqlite, integration] $(, $ctx)?);
         $cb!([$crate::fixtures::integration::IntegrationTestFixture, integration, integration] $(, $ctx)?);
     };
