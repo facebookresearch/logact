@@ -22,6 +22,7 @@ use rand::distr::Uniform;
 
 use super::IntegrationFixture;
 use super::SimulatorFixture;
+use super::TailWindowFixture;
 use crate::common::fault_config::FaultConfig;
 use crate::simulator::Simulator;
 use crate::write_once_space::fixtures::WriteOnceSpaceTestFixture;
@@ -65,6 +66,13 @@ where
         let environment = self.space_fixture.get_env();
         WriteOnceAgentBus::new(space, environment, None)
     }
+}
+
+impl<WOF: WriteOnceSpaceTestFixture + 'static> TailWindowFixture
+    for WriteOnceAgentBusGenericFixture<WOF>
+where
+    WOF::Impl: Clone + 'static,
+{
 }
 
 impl<WOF> SimulatorFixture for WriteOnceAgentBusGenericFixture<WOF>

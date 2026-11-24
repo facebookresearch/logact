@@ -104,6 +104,10 @@ where
     fn is_checkpoint_durable(&self) -> bool {
         self._inner.is_checkpoint_durable()
     }
+
+    fn tail_window_size(&self) -> u64 {
+        self._inner.tail_window_size()
+    }
 }
 
 impl<CF> DeciderPolicyFixture for ChanneledCommitServiceFixture<CF>

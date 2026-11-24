@@ -15,6 +15,7 @@ use agentbus_api::NoopLogger;
 use agentbus_api::RealEnvironment;
 use agentbus_tests::fixtures::AgentBusTestFixture;
 use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
+use agentbus_tests::fixtures::TailWindowFixture;
 use anyhow::Context as _;
 use anyhow::Result;
 use conformance::TestConfig;
@@ -207,7 +208,7 @@ where
 
 impl<BF, C> CheckpointFixture for ReplayCommitServiceFixture<BF, C>
 where
-    BF: AgentBusTestFixture,
+    BF: TailWindowFixture,
     C: TestCheckpoints<BF::Impl>,
 {
     async fn checkpoint_position(&self, service: &Self::Impl, bus_id: &str) -> Result<i64> {
@@ -217,6 +218,10 @@ where
 
     fn is_checkpoint_durable(&self) -> bool {
         C::DURABLE
+    }
+
+    fn tail_window_size(&self) -> u64 {
+        self.bus_fixture.tail_window_size()
     }
 }
 

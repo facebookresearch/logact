@@ -20,7 +20,7 @@ mod defs {
     use rand::RngExt as _;
 
     use crate::common::helpers::append_string_intention;
-    use crate::fixtures::AgentBusTestFixture;
+    use crate::fixtures::TailWindowFixture;
 
     fn positions(entries: &[BusEntry]) -> Vec<i64> {
         entries
@@ -30,18 +30,20 @@ mod defs {
     }
 
     #[scenario(sim_only, ttl_ms = 1000)]
-    pub async fn run_test_expired_entries_are_not_found<F: AgentBusTestFixture>(
+    pub async fn run_test_expired_entries_are_not_found<F: TailWindowFixture>(
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
         let bus = fixture.create_impl();
         let bus_id = format!("ttl-{}", env.with_rng(|rng| rng.random::<u64>()));
-        for value in ["0", "1", "2"] {
-            append_string_intention(&bus, bus_id.clone(), value.to_owned()).await;
+        for position in 0..3 {
+            append_string_intention(&bus, bus_id.clone(), position.to_string()).await;
         }
         env.sleep(Duration::from_millis(600)).await;
-        for value in ["3", "4"] {
-            append_string_intention(&bus, bus_id.clone(), value.to_owned()).await;
+        // A tail window of entries survives, so the bus finds the tail above them.
+        let surviving = 3..3 + fixture.tail_window_size() as i64;
+        for position in surviving.clone() {
+            append_string_intention(&bus, bus_id.clone(), position.to_string()).await;
         }
         env.sleep(Duration::from_millis(600)).await;
 
@@ -52,7 +54,7 @@ mod defs {
             .check_tail(CheckTailRequest { bus_id: id.clone() })
             .await?
             .tail_position;
-        assert_eq!(tail, 5);
+        assert_eq!(tail, surviving.end);
         for filter in [
             None,
             Some(PayloadTypeFilter {
@@ -97,62 +99,61 @@ mod defs {
         let read = bus
             .read_next(ReadNextRequest {
                 bus_id: id.clone(),
-                start_log_position: 3,
+                start_log_position: surviving.start,
                 end_log_position: tail,
                 max_entries: 10,
                 ..Default::default()
             })
             .await?;
-        assert_eq!(positions(&read.entries), [3, 4]);
+        assert_eq!(positions(&read.entries), Vec::from_iter(surviving.clone()));
         assert_eq!(read.next_start_position, tail);
         let polled = bus
             .poll(PollRequest {
                 bus_id: id,
-                start_log_position: 3,
+                start_log_position: surviving.start,
                 max_entries: 10,
                 ..Default::default()
             })
             .await?;
-        assert_eq!(positions(&polled.entries), [3, 4]);
+        assert_eq!(positions(&polled.entries), Vec::from_iter(surviving));
         assert_eq!(
-            append_string_intention(&bus, bus_id, "5".to_owned()).await,
-            5
+            append_string_intention(&bus, bus_id, tail.to_string()).await,
+            tail
         );
         Ok(())
     }
 
     #[scenario(sim_only, ttl_ms = 1000)]
-    pub async fn run_test_append_discovers_surviving_tail_after_expiry<F: AgentBusTestFixture>(
+    pub async fn run_test_append_discovers_surviving_tail_after_expiry<F: TailWindowFixture>(
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
         let bus = fixture.create_impl();
+        let append = async |bus: &F::Impl, bus_id: &str, position: i64| {
+            append_string_intention(bus, bus_id.to_owned(), position.to_string()).await
+        };
         for position in 0..2 {
-            assert_eq!(
-                append_string_intention(&bus, "a".to_owned(), position.to_string()).await,
-                position
-            );
+            assert_eq!(append(&bus, "a", position).await, position);
         }
         env.sleep(Duration::from_millis(600)).await;
-        assert_eq!(
-            append_string_intention(&bus, "a".to_owned(), "2".to_owned()).await,
-            2
-        );
+        // A tail window of entries survives, so the bus finds the tail above them.
+        let surviving = 2..2 + fixture.tail_window_size() as i64;
+        for position in surviving.clone() {
+            assert_eq!(append(&bus, "a", position).await, position);
+        }
         env.sleep(Duration::from_millis(600)).await;
 
         let fresh = fixture.create_impl();
+        let tail = surviving.end;
         assert_eq!(
-            append_string_intention(&fresh, "a".to_owned(), "3".to_owned()).await,
-            3,
+            append(&fresh, "a", tail).await,
+            tail,
             "a fresh writer must discover the surviving suffix before writing"
         );
+        assert_eq!(append(&bus, "b", 0).await, 0);
         assert_eq!(
-            append_string_intention(&bus, "b".to_owned(), "0".to_owned()).await,
-            0
-        );
-        assert_eq!(
-            append_string_intention(&bus, "a".to_owned(), "4".to_owned()).await,
-            4,
+            append(&bus, "a", tail + 1).await,
+            tail + 1,
             "a writer must follow the surviving tail without reclaiming expired positions"
         );
         assert!(matches!(
@@ -173,13 +174,16 @@ mod defs {
                 bus_id: Some(BusId {
                     agent_bus_id: "a".to_owned(),
                 }),
-                start_log_position: 2,
-                end_log_position: 5,
-                max_entries: 3,
+                start_log_position: surviving.start,
+                end_log_position: tail + 2,
+                max_entries: 10,
                 ..Default::default()
             })
             .await?;
-        assert_eq!(positions(&read.entries), [2, 3, 4]);
+        assert_eq!(
+            positions(&read.entries),
+            Vec::from_iter(surviving.start..tail + 2)
+        );
         Ok(())
     }
 }

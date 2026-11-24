@@ -31,6 +31,7 @@ use conformance::TestConfig;
 use rand::distr::Uniform;
 
 use super::SimulatorFixture;
+use super::TailWindowFixture;
 use super::WriteOnceAgentBusGenericFixture;
 use super::WriteOnceAgentBusV2GenericFixture;
 use crate::common::fault_config::FaultConfig;
@@ -165,6 +166,8 @@ impl SimulatorFixture for SimpleMemoryFixture {
     }
 }
 
+impl TailWindowFixture for SimpleMemoryFixture {}
+
 /// Fixture for testing ChanneledAgentBus (wrapper around InMemoryAgentBus)
 pub struct ChanneledAgentBusFixture {
     agentbus: Backend<ChanneledAgentBus>,
@@ -205,6 +208,8 @@ impl SimulatorFixture for ChanneledAgentBusFixture {
         })
     }
 }
+
+impl TailWindowFixture for ChanneledAgentBusFixture {}
 
 /// Runs each of another AgentBus fixture's buses behind its own
 /// `channeled_svc` `ChanneledAgentBus`.
@@ -249,6 +254,15 @@ where
     }
 }
 
+impl<F> TailWindowFixture for ChanneledSvcFixture<F>
+where
+    F: TailWindowFixture<Env = Simulator>,
+{
+    fn tail_window_size(&self) -> u64 {
+        self.inner.tail_window_size()
+    }
+}
+
 /// Runs each of another AgentBus fixture's buses behind its own
 /// `ChanneledAgentBus`, as each production server does.
 pub struct ChanneledFixture<F> {
@@ -269,6 +283,15 @@ where
     fn create_impl(&self) -> Self::Impl {
         let inner = self.inner.clone();
         ChanneledAgentBus::new_on_environment(self.inner.get_env(), move || inner.create_impl())
+    }
+}
+
+impl<F> TailWindowFixture for ChanneledFixture<F>
+where
+    F: TailWindowFixture<Env = Simulator> + 'static,
+{
+    fn tail_window_size(&self) -> u64 {
+        self.inner.tail_window_size()
     }
 }
 
@@ -402,6 +425,15 @@ where
     }
 }
 
+impl<F> TailWindowFixture for FaultInjectingFixture<F>
+where
+    F: SimulatorFixture + TailWindowFixture<Env = Simulator>,
+{
+    fn tail_window_size(&self) -> u64 {
+        self.inner.tail_window_size()
+    }
+}
+
 /// Generic fixture for testing ChainedAgentBus with configurable mode
 pub struct ChainedAgentBusGenericFixture<const MODE: u8> {
     agentbus: Backend<ChainedAgentBus>,
@@ -444,6 +476,8 @@ impl<const MODE: u8> SimulatorFixture for ChainedAgentBusGenericFixture<MODE> {
         })
     }
 }
+
+impl<const MODE: u8> TailWindowFixture for ChainedAgentBusGenericFixture<MODE> {}
 
 /// Correct chain replication mode
 pub type ChainedAgentBusFixture = ChainedAgentBusGenericFixture<0>;

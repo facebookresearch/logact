@@ -163,6 +163,12 @@ pub trait CheckpointFixture: CommitServiceTestFixture {
     /// Whether checkpoints are kept independently of the log, so the entries
     /// they cover can expire.
     fn is_checkpoint_durable(&self) -> bool;
+
+    /// How far back its services' buses look for the tail, as
+    /// `TailWindowFixture::tail_window_size`.
+    fn tail_window_size(&self) -> u64 {
+        1
+    }
 }
 
 /// A `PolicyProvider` and its test-only controller, constructed together.

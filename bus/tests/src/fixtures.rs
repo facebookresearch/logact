@@ -25,6 +25,15 @@ pub use conformance::SimulatorFixture;
 pub trait AgentBusTestFixture: ConformanceFixture<Impl: agentbus_api::AgentBus + 'static> {}
 impl<F: ConformanceFixture<Impl: agentbus_api::AgentBus + 'static>> AgentBusTestFixture for F {}
 
+/// A fixture whose buses look for the tail `tail_window_size` positions back,
+/// so they may take for the tail an unwritten position up to that far below the
+/// highest written one, including one whose entry expired.
+pub trait TailWindowFixture: AgentBusTestFixture {
+    fn tail_window_size(&self) -> u64 {
+        1
+    }
+}
+
 pub mod integration;
 pub mod simtest;
 pub mod write_once_agentbus_fixture;

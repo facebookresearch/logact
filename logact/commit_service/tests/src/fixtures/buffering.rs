@@ -72,6 +72,10 @@ where
     fn is_checkpoint_durable(&self) -> bool {
         self.inner.is_checkpoint_durable()
     }
+
+    fn tail_window_size(&self) -> u64 {
+        self.inner.tail_window_size()
+    }
 }
 
 impl<CF> DeciderPolicyFixture for BufferingCommitServiceFixture<CF>

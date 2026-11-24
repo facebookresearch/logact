@@ -41,6 +41,21 @@ mod defs {
         }
     }
 
+    /// An abort of no intention, as a filler entry.
+    fn abort(bus_id: &str) -> AppendRequest {
+        AppendRequest {
+            bus_id: Some(BusId {
+                agent_bus_id: bus_id.to_owned(),
+            }),
+            payload: Some(Payload {
+                payload: Some(payload::Payload::Abort(Abort {
+                    intention_id: -1,
+                    ..Default::default()
+                })),
+            }),
+        }
+    }
+
     async fn tail<S: CommitSvc>(service: &S, bus_id: &str) -> Result<i64> {
         Ok(service
             .agent_bus()
@@ -132,21 +147,20 @@ mod defs {
                 .approved
         );
         env.sleep(Duration::from_millis(600)).await;
-        assert!(
-            service
-                .commit_intention(command(&bus_id, "b"))
+        let outcome = service.commit_intention(command(&bus_id, "b")).await?;
+        assert!(outcome.approved);
+        // A tail window of entries survives, so a fresh server finds the tail
+        // above them. Aborts fill the window without a commit's replay.
+        let surviving_end = outcome.log_position + fixture.tail_window_size() as i64;
+        let mut tail_before = tail(&service, &bus_id).await?;
+        while tail_before < surviving_end {
+            tail_before = service
+                .agent_bus()
+                .append(abort(&bus_id))
                 .await?
-                .approved
-        );
-        let tail_before = service
-            .agent_bus()
-            .check_tail(CheckTailRequest {
-                bus_id: Some(BusId {
-                    agent_bus_id: bus_id.clone(),
-                }),
-            })
-            .await?
-            .tail_position;
+                .log_position
+                + 1;
+        }
         env.sleep(Duration::from_millis(600)).await;
         let fresh = fixture.create_impl();
         assert!(matches!(
@@ -204,27 +218,27 @@ mod defs {
                 bus_id: bus_id.clone(),
             })
             .await?;
-        let append = AppendRequest {
-            bus_id: Some(BusId {
-                agent_bus_id: bus_id.clone(),
-            }),
-            payload: Some(Payload {
-                payload: Some(payload::Payload::Abort(Abort {
-                    intention_id: -1,
-                    ..Default::default()
-                })),
-            }),
-        };
         assert_eq!(
             service
                 .agent_bus()
-                .append(append.clone())
+                .append(abort(&bus_id))
                 .await?
                 .log_position,
             1
         );
         env.sleep(Duration::from_millis(1200)).await;
-        assert_eq!(service.agent_bus().append(append).await?.log_position, 2);
+        // A tail window of entries survives, so the bus finds the tail above them.
+        let surviving = 2..2 + fixture.tail_window_size() as i64;
+        for position in surviving.clone() {
+            assert_eq!(
+                service
+                    .agent_bus()
+                    .append(abort(&bus_id))
+                    .await?
+                    .log_position,
+                position
+            );
+        }
         let result = service
             .commit_intention(command(&bus_id, "after expiry"))
             .await;
@@ -241,10 +255,11 @@ mod defs {
         // intention is appended.
         match result {
             Err(CommitError::BusDataLoss(_)) => assert!(
-                tail == 4 || (!fixture.is_checkpoint_durable() && tail == 3),
+                tail == surviving.end + 1
+                    || (!fixture.is_checkpoint_durable() && tail == surviving.end),
                 "data loss must not append a fallback abort"
             ),
-            Err(CommitError::CheckpointStoreUnavailable(_)) => assert_eq!(tail, 3),
+            Err(CommitError::CheckpointStoreUnavailable(_)) => assert_eq!(tail, surviving.end),
             other => {
                 anyhow::bail!("expected BusDataLoss or CheckpointStoreUnavailable, got {other:?}")
             }

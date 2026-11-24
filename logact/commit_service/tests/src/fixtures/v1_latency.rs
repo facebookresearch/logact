@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use agentbus_tests::common::fault_config::FaultConfig;
 use agentbus_tests::fixtures::SimulatorFixture;
+use agentbus_tests::fixtures::TailWindowFixture;
 use agentbus_tests::fixtures::simtest::FaultInjectingFixture;
 use agentbus_tests::fixtures::simtest::SimpleMemoryFixture;
 use agentbus_tests::simulator::Simulator;
@@ -50,6 +51,12 @@ impl ConformanceFixture for FixedLatencyBusFixture {
 
     fn create_impl(&self) -> Self::Impl {
         self.0.create_impl()
+    }
+}
+
+impl TailWindowFixture for FixedLatencyBusFixture {
+    fn tail_window_size(&self) -> u64 {
+        self.0.tail_window_size()
     }
 }
 

@@ -14,6 +14,7 @@ use std::rc::Rc;
 use agentbus_api::Environment as _;
 use agentbus_tests::fixtures::AgentBusTestFixture;
 use agentbus_tests::fixtures::SimulatorFixture as BusSimulatorFixture;
+use agentbus_tests::fixtures::TailWindowFixture;
 use anyhow::Context as _;
 use anyhow::Result;
 use conformance::TestConfig;
@@ -212,7 +213,7 @@ where
 
 impl<BF> CheckpointFixture for HybridCommitServiceFixture<BF>
 where
-    BF: AgentBusTestFixture<Env = Simulator>,
+    BF: TailWindowFixture<Env = Simulator>,
     BF::Impl: Clone + 'static,
 {
     async fn checkpoint_position(&self, service: &Self::Impl, bus_id: &str) -> Result<i64> {
@@ -237,6 +238,10 @@ where
     /// A fresh server may have a store that isn't durable.
     fn is_checkpoint_durable(&self) -> bool {
         false
+    }
+
+    fn tail_window_size(&self) -> u64 {
+        self.bus_fixture.tail_window_size()
     }
 }
 

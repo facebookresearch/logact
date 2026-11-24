@@ -25,6 +25,7 @@ use rand::distr::Uniform;
 
 use super::IntegrationFixture;
 use super::SimulatorFixture;
+use super::TailWindowFixture;
 use crate::common::fault_config::FaultConfig;
 use crate::simulator::Simulator;
 use crate::write_once_space::fixtures::WriteOnceSpaceTestFixture;
@@ -71,6 +72,16 @@ where
         let space = self.space_fixture.create_impl();
         let environment = self.space_fixture.get_env();
         WriteOnceAgentBusV2::new(space, environment, None)
+    }
+}
+
+impl<WOF: WriteOnceSpaceTestFixture + 'static, Q: Sequencer<WOF::Env> + 'static> TailWindowFixture
+    for WriteOnceAgentBusV2GenericFixture<WOF, Q>
+where
+    WOF::Impl: Clone + 'static,
+{
+    fn tail_window_size(&self) -> u64 {
+        Q::TAIL_WINDOW_SIZE
     }
 }
 
