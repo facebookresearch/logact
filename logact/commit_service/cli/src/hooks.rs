@@ -138,8 +138,8 @@ pub(crate) enum DispatchOutcome {
 /// Hard cap on the stdin read; past this we fail open rather than hang the turn.
 const STDIN_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
-pub(crate) async fn prepare() -> Result<PreparedHook, PrepareError> {
-    let body = read_hook_payload().await?;
+/// Parse a hook payload that the caller read with [`read_hook_payload`].
+pub(crate) fn prepare(body: String) -> Result<PreparedHook, PrepareError> {
     let user_name = std::env::var("USER").map_err(|_| PrepareError::UserUnset)?;
     prepare_body(&user_name, body)
 }
@@ -204,7 +204,7 @@ pub(crate) async fn dispatch<C: CommitSvc + ?Sized>(
 /// Read the hook payload from stdin under a timeout. The blocking read runs on a
 /// separate thread so the timer can fire; on timeout it is abandoned and dies
 /// with the process.
-async fn read_hook_payload() -> Result<String, PrepareError> {
+pub async fn read_hook_payload() -> Result<String, PrepareError> {
     let read = tokio::task::spawn_blocking(|| {
         let mut body = String::new();
         std::io::stdin().read_to_string(&mut body)?;

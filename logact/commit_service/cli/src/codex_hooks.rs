@@ -83,11 +83,12 @@ struct HookSpecificOutput {
 pub async fn run<C: CommitSvc + ?Sized>(
     commit_client: &C,
     args: HookArgs,
+    body: String,
     agent_id_prefix: &str,
     enforced: bool,
 ) -> Result<(), HookRunError> {
     let hook_event = args.event_kind();
-    let prepared = hooks::prepare().await?;
+    let prepared = hooks::prepare(body)?;
     let outcome = hooks::dispatch(
         commit_client,
         hook_event,

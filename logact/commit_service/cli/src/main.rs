@@ -16,6 +16,7 @@ use clap::Parser;
 use clap::Subcommand;
 use logact_commit_cli_lib::claude_hooks;
 use logact_commit_cli_lib::codex_hooks;
+use logact_commit_cli_lib::hooks;
 use logact_commit_cli_lib::manual;
 use logact_commit_cli_lib::muse_hooks;
 use logact_commit_service_grpc::GrpcCommitSvcClient;
@@ -86,15 +87,24 @@ async fn run(cli: Cli) -> Result<()> {
     match cli.cmd {
         Cmd::CreateBus(args) => manual::run_create_bus(&client, args).await,
         Cmd::Commit(args) => manual::run(&client, args).await,
-        Cmd::ClaudeHook(args) => claude_hooks::run(&client, args, "claude_code", true)
-            .await
-            .map_err(Into::into),
-        Cmd::CodexHook(args) => codex_hooks::run(&client, args, "codex", true)
-            .await
-            .map_err(Into::into),
-        Cmd::MuseHook(args) => muse_hooks::run(&client, args, "muse", true)
-            .await
-            .map_err(Into::into),
+        Cmd::ClaudeHook(args) => {
+            let body = hooks::read_hook_payload().await?;
+            claude_hooks::run(&client, args, body, "claude_code", true)
+                .await
+                .map_err(Into::into)
+        }
+        Cmd::CodexHook(args) => {
+            let body = hooks::read_hook_payload().await?;
+            codex_hooks::run(&client, args, body, "codex", true)
+                .await
+                .map_err(Into::into)
+        }
+        Cmd::MuseHook(args) => {
+            let body = hooks::read_hook_payload().await?;
+            muse_hooks::run(&client, args, body, "muse", true)
+                .await
+                .map_err(Into::into)
+        }
     }
 }
 
