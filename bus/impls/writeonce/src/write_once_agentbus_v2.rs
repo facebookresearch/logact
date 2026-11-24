@@ -170,11 +170,28 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
         // 2. Contention: when multiple instances share the same WriteOnceSpace,
         //    they race to claim slots and retry on conflict
         loop {
-            let claim = sequencer.claim().await;
+            let claim = sequencer
+                .claim(None)
+                .await
+                .expect("a claim without a bound claims a position");
             let position = claim.position();
             let entry = serialize_entry(&payload, position as i64, rt_timestamp_ms);
             let error = match self.write_claimed(&bus_id, claim, entry).await {
-                Ok(()) => {
+                (Ok(()), _) => {
+                    // Polls stop at the first unwritten position.
+                    if let Err(error) = self.fill_unwritten(&sequencer, &bus_id, position).await {
+                        let error = AgentBusError::Timeout(
+                            anyhow::Error::new(error)
+                                .context("positions before the appended entry are unwritten"),
+                        );
+                        error!(
+                            agent_bus_id = bus_id,
+                            position = position,
+                            error = %format!("{error:#}"),
+                            "Positions before the appended entry are unwritten"
+                        );
+                        return Err(error);
+                    }
                     debug!(
                         agent_bus_id = bus_id,
                         position = position,
@@ -186,7 +203,15 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
                         log_position: position as i64,
                     });
                 }
-                Err(WriteOnceError::AddressAlreadyExists(_)) => {
+                // The position holds either this entry, from an earlier write that
+                // landed late, or another instance's.
+                (Err(WriteOnceError::AddressAlreadyExists(address)), true) => {
+                    AgentBusError::Timeout(
+                        anyhow::Error::new(WriteOnceError::AmbiguousWrite(address))
+                            .context("WriteOnceSpace write outcome unknown"),
+                    )
+                }
+                (Err(WriteOnceError::AddressAlreadyExists(_)), false) => {
                     let new_position = space
                         .tail(&prefixed_space_id(&bus_id), Q::TAIL_WINDOW_SIZE)
                         .await
@@ -198,17 +223,19 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
                     sequencer.advance(new_position);
                     continue;
                 }
-                Err(error @ WriteOnceError::Timeout(_)) => AgentBusError::Timeout(
+                (Err(error @ WriteOnceError::Timeout(_)), _) => AgentBusError::Timeout(
                     anyhow::Error::new(error).context("WriteOnceSpace write failed"),
                 ),
                 // The entry may or may not be at `position`; the append's outcome is unknown.
-                Err(error @ WriteOnceError::AmbiguousWrite(_)) => AgentBusError::Timeout(
+                (Err(error @ WriteOnceError::AmbiguousWrite(_)), _) => AgentBusError::Timeout(
                     anyhow::Error::new(error).context("WriteOnceSpace write outcome unknown"),
                 ),
-                Err(error @ WriteOnceError::BackendUnavailable(_)) => AgentBusError::Unavailable(
-                    anyhow::Error::new(error).context("WriteOnceSpace write failed"),
-                ),
-                Err(error @ WriteOnceError::InternalError(_)) => AgentBusError::Internal(
+                (Err(error @ WriteOnceError::BackendUnavailable(_)), _) => {
+                    AgentBusError::Unavailable(
+                        anyhow::Error::new(error).context("WriteOnceSpace write failed"),
+                    )
+                }
+                (Err(error @ WriteOnceError::InternalError(_)), _) => AgentBusError::Internal(
                     anyhow::Error::new(error).context("WriteOnceSpace write failed"),
                 ),
             };
@@ -406,12 +433,13 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
 
     /// Writes `entry` at the claimed position, and while its writes fail, since a
     /// failed write may still land, writes it again up to `MAX_REWRITES` times.
+    /// Returns the last write's result, and whether it was a rewrite.
     async fn write_claimed(
         &self,
         bus_id: &str,
         claim: Q::Claim<'_>,
         entry: Bytes,
-    ) -> WriteOnceResult<()> {
+    ) -> (WriteOnceResult<()>, bool) {
         let mut space = self.state.borrow().space.clone();
         let space_id = prefixed_space_id(bus_id);
         let mut rewrites = 0;
@@ -425,15 +453,24 @@ impl<W: WriteOnceSpace + Clone + 'static, E: Environment + 'static, Q: Sequencer
             rewrites += 1;
         };
         claim.set(written(&result));
+        (result, rewrites > 0)
+    }
 
-        match result {
-            // The position holds either this entry, from an earlier write that
-            // landed late, or another instance's.
-            Err(WriteOnceError::AddressAlreadyExists(address)) if rewrites > 0 => {
-                Err(WriteOnceError::AmbiguousWrite(address))
+    /// Waits until every position before `end` is written, filling with junk each
+    /// one its claim left unwritten, and gives up when a junk write still fails
+    /// after its rewrites.
+    async fn fill_unwritten(&self, sequencer: &Q, bus_id: &str, end: u64) -> WriteOnceResult<()> {
+        let environment = self.state.borrow().environment.clone();
+        let rt_timestamp_ms = environment.with_clock(|c| c.unsafe_wall_time().as_millis() as i64);
+        while let Some(claim) = sequencer.claim(Some(end)).await {
+            let junk = serialize_junk(claim.position() as i64, rt_timestamp_ms);
+            // Any entry fills the position, whoever wrote it.
+            let (result, _) = self.write_claimed(bus_id, claim, junk).await;
+            if !written(&result) {
+                return result;
             }
-            result => result,
         }
+        Ok(())
     }
 
     /// Read filtered entries from [start_position, end_position) in the write-once space.
@@ -534,12 +571,28 @@ fn serialize_entry(payload: &Payload, log_position: i64, rt_timestamp_ms: i64) -
     Bytes::from(ProstMessage::encode_to_vec(&entry))
 }
 
+/// Junk, which readers skip, filling a position whose append failed in place of
+/// its entry.
+fn serialize_junk(log_position: i64, rt_timestamp_ms: i64) -> Bytes {
+    let entry = BusEntry {
+        header: Some(Header {
+            log_position,
+            rt_timestamp_ms,
+        }),
+        payload: Some(Payload {
+            payload: Some(payload::Payload::Junk(Junk {})),
+        }),
+    };
+    Bytes::from(ProstMessage::encode_to_vec(&entry))
+}
+
 fn deserialize_entry(bytes: &Bytes) -> Option<BusEntry> {
     <BusEntry as ProstMessage>::decode(&bytes[..]).ok()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::HashSet;
     use std::future::Future;
     use std::pin::Pin;
@@ -554,6 +607,7 @@ mod tests {
 
     use super::*;
     use crate::InMemoryWriteOnceSpace;
+    use crate::windowed_sequencer::WindowedSequencer;
 
     /// Fails a write with `AmbiguousWrite` while another write to the same
     /// address is in flight, as ZippyDB reports a transaction conflict.
@@ -605,27 +659,120 @@ mod tests {
         }
     }
 
+    // The sequencer's loop is a local task, which needs a `LocalSet`.
     #[tokio::test]
     async fn concurrent_appends_to_one_bus_take_distinct_positions() {
-        let bus: WriteOnceAgentBusV2<_, _> = WriteOnceAgentBusV2::new(
-            OverlapConflictSpace::default(),
-            Rc::new(RealEnvironment::new()),
-            None,
-        );
-        let append = || {
-            bus.append(AppendRequest {
-                bus_id: Some(BusId {
-                    agent_bus_id: "bus".to_owned(),
-                }),
-                payload: Some(Payload::default()),
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let bus: WriteOnceAgentBusV2<_, _, WindowedSequencer> = WriteOnceAgentBusV2::new(
+                    OverlapConflictSpace::default(),
+                    Rc::new(RealEnvironment::new()),
+                    None,
+                );
+                let append = || {
+                    bus.append(AppendRequest {
+                        bus_id: Some(BusId {
+                            agent_bus_id: "bus".to_owned(),
+                        }),
+                        payload: Some(Payload::default()),
+                    })
+                };
+                let (first, second) = futures::join!(append(), append());
+                let mut positions = [
+                    first.expect("first append").log_position,
+                    second.expect("second append").log_position,
+                ];
+                positions.sort();
+                assert_eq!(positions, [0, 1]);
             })
-        };
-        let (first, second) = futures::join!(append(), append());
-        let mut positions = [
-            first.expect("first append").log_position,
-            second.expect("second append").log_position,
-        ];
-        positions.sort();
-        assert_eq!(positions, [0, 1]);
+            .await;
+    }
+
+    /// Fails the first `failures` writes to address 0 with `BackendUnavailable`.
+    #[derive(Clone)]
+    struct UnavailableAtZeroSpace {
+        inner: InMemoryWriteOnceSpace,
+        failures: Rc<Cell<usize>>,
+    }
+
+    impl TailableSpace for UnavailableAtZeroSpace {
+        async fn tail(&self, space_id: &str, window_size: u64) -> TailResult<u64> {
+            self.inner.tail(space_id, window_size).await
+        }
+    }
+
+    impl WriteOnceSpace for UnavailableAtZeroSpace {
+        async fn write(
+            &mut self,
+            space_id: &str,
+            address: u64,
+            value: Bytes,
+        ) -> WriteOnceResult<()> {
+            YieldOnce(false).await;
+            if address == 0 && self.failures.get() > 0 {
+                self.failures.set(self.failures.get() - 1);
+                return Err(WriteOnceError::BackendUnavailable(anyhow::anyhow!(
+                    "unavailable"
+                )));
+            }
+            self.inner.write(space_id, address, value).await
+        }
+
+        async fn read(&self, space_id: &str, address: u64) -> WriteOnceResult<Option<Bytes>> {
+            self.inner.read(space_id, address).await
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_append_below_a_written_one_is_filled_with_junk() {
+        tokio::task::LocalSet::new()
+            .run_until(async {
+                let bus: WriteOnceAgentBusV2<_, _, WindowedSequencer> = WriteOnceAgentBusV2::new(
+                    UnavailableAtZeroSpace {
+                        inner: InMemoryWriteOnceSpace::default(),
+                        failures: Rc::new(Cell::new(MAX_REWRITES + 1)),
+                    },
+                    Rc::new(RealEnvironment::new()),
+                    None,
+                );
+                let bus_id = || {
+                    Some(BusId {
+                        agent_bus_id: "bus".to_owned(),
+                    })
+                };
+                let append = || {
+                    bus.append(AppendRequest {
+                        bus_id: bus_id(),
+                        payload: Some(Payload::default()),
+                    })
+                };
+                let (first, second) = futures::join!(append(), append());
+                assert!(
+                    matches!(first, Err(AgentBusError::Unavailable(_))),
+                    "every write of the first append fails: {first:?}"
+                );
+                assert_eq!(second.expect("second append").log_position, 1);
+
+                let poll = bus
+                    .poll(PollRequest {
+                        bus_id: bus_id(),
+                        start_log_position: 0,
+                        max_entries: 10,
+                        filter: None,
+                    })
+                    .await
+                    .expect("poll");
+                let positions: Vec<_> = poll
+                    .entries
+                    .iter()
+                    .map(|entry| entry.header.as_ref().expect("header").log_position)
+                    .collect();
+                assert_eq!(
+                    positions,
+                    [1],
+                    "junk fills position 0 in place of the failed entry"
+                );
+            })
+            .await;
     }
 }

@@ -30,6 +30,7 @@ mod defs {
     use crate::fault_injection_helpers::SPACE_LEVEL_OUTCOMES;
     use crate::fault_injection_helpers::V2_RARE_SPACE_LEVEL_OUTCOMES;
     use crate::fault_injection_helpers::V2_SPACE_LEVEL_OUTCOMES;
+    use crate::fault_injection_helpers::WINDOWED_RARE_SPACE_LEVEL_OUTCOMES;
     use crate::fault_injection_helpers::run_fault_test;
     use crate::fault_injection_helpers::run_permutations_with_faults_test;
     use crate::fixtures::AgentBusTestFixture;
@@ -43,10 +44,13 @@ mod defs {
     #[scenario_for(agentbus_tests::BusChained, suffix = bus_chained, sim_only)]
     #[scenario_for(agentbus_tests::SpaceInMemory, suffix = space_in_memory, sim_only)]
     #[scenario_for(agentbus_tests::SpaceInMemoryV2, suffix = space_in_memory_v2, sim_only)]
+    #[scenario_for(agentbus_tests::SpaceInMemoryV2Windowed, suffix = space_in_memory_v2_windowed, sim_only)]
     #[scenario_for(agentbus_tests::SpaceChanneled, suffix = space_channeled, sim_only)]
     #[scenario_for(agentbus_tests::SpaceChanneledV2, suffix = space_channeled_v2, sim_only)]
+    #[scenario_for(agentbus_tests::SpaceChanneledV2Windowed, suffix = space_channeled_v2_windowed, sim_only)]
     #[scenario_for(agentbus_tests::SpaceCaching, suffix = space_caching, sim_only)]
     #[scenario_for(agentbus_tests::SpaceCachingV2, suffix = space_caching_v2, sim_only)]
+    #[scenario_for(agentbus_tests::SpaceCachingV2Windowed, suffix = space_caching_v2_windowed, sim_only)]
     pub async fn run_fi_success<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -72,6 +76,7 @@ mod defs {
 
     #[scenario_for(agentbus_tests::SpaceAmbiguousWriteOccupied, suffix = occupied_slot, sim_only)]
     #[scenario_for(agentbus_tests::SpaceAmbiguousWriteOccupiedV2, suffix = occupied_slot_v2, sim_only)]
+    #[scenario_for(agentbus_tests::SpaceAmbiguousWriteOccupiedV2Windowed, suffix = occupied_slot_v2_windowed, sim_only)]
     pub async fn run_ambiguous_write_with_commit<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -88,6 +93,7 @@ mod defs {
 
     // V2 writes the entry again, which lands.
     #[scenario_for(agentbus_tests::SpaceAmbiguousWriteEmptyV2, suffix = empty_slot_v2, sim_only)]
+    #[scenario_for(agentbus_tests::SpaceAmbiguousWriteEmptyV2Windowed, suffix = empty_slot_v2_windowed, sim_only)]
     pub async fn run_ambiguous_write_recovers<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -102,10 +108,13 @@ mod defs {
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::BusChained, agentbus_tests::Lost>, suffix = bus_chained, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemory, agentbus_tests::Lost>, suffix = space_in_memory, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemoryV2, agentbus_tests::Lost>, suffix = space_in_memory_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemoryV2Windowed, agentbus_tests::Lost>, suffix = space_in_memory_v2_windowed, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneled, agentbus_tests::Lost>, suffix = space_channeled, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneledV2, agentbus_tests::Lost>, suffix = space_channeled_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneledV2Windowed, agentbus_tests::Lost>, suffix = space_channeled_v2_windowed, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCaching, agentbus_tests::Lost>, suffix = space_caching, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCachingV2, agentbus_tests::Lost>, suffix = space_caching_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCachingV2Windowed, agentbus_tests::Lost>, suffix = space_caching_v2_windowed, sim_only)]
     pub async fn run_fi_lost<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -126,10 +135,13 @@ mod defs {
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::BusChained, agentbus_tests::CommitThenError>, suffix = bus_chained, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemory, agentbus_tests::CommitThenError>, suffix = space_in_memory, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemoryV2, agentbus_tests::CommitThenError>, suffix = space_in_memory_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemoryV2Windowed, agentbus_tests::CommitThenError>, suffix = space_in_memory_v2_windowed, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneled, agentbus_tests::CommitThenError>, suffix = space_channeled, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneledV2, agentbus_tests::CommitThenError>, suffix = space_channeled_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneledV2Windowed, agentbus_tests::CommitThenError>, suffix = space_channeled_v2_windowed, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCaching, agentbus_tests::CommitThenError>, suffix = space_caching, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCachingV2, agentbus_tests::CommitThenError>, suffix = space_caching_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCachingV2Windowed, agentbus_tests::CommitThenError>, suffix = space_caching_v2_windowed, sim_only)]
     pub async fn run_fi_commit_then_error<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -150,10 +162,13 @@ mod defs {
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::BusChained, agentbus_tests::ErrorThenCommit>, suffix = bus_chained, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemory, agentbus_tests::ErrorThenCommit>, suffix = space_in_memory, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemoryV2, agentbus_tests::ErrorThenCommit>, suffix = space_in_memory_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemoryV2Windowed, agentbus_tests::ErrorThenCommit>, suffix = space_in_memory_v2_windowed, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneled, agentbus_tests::ErrorThenCommit>, suffix = space_channeled, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneledV2, agentbus_tests::ErrorThenCommit>, suffix = space_channeled_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneledV2Windowed, agentbus_tests::ErrorThenCommit>, suffix = space_channeled_v2_windowed, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCaching, agentbus_tests::ErrorThenCommit>, suffix = space_caching, sim_only)]
     #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCachingV2, agentbus_tests::ErrorThenCommit>, suffix = space_caching_v2, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCachingV2Windowed, agentbus_tests::ErrorThenCommit>, suffix = space_caching_v2_windowed, sim_only)]
     pub async fn run_fi_error_then_commit<F>(fixture: &F) -> Result<()>
     where
         F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
@@ -215,6 +230,23 @@ mod defs {
             fixture.get_env(),
             &V2_SPACE_LEVEL_OUTCOMES,
             &V2_RARE_SPACE_LEVEL_OUTCOMES,
+        );
+        Ok(())
+    }
+
+    // Mixed faults at the space layer under `WindowedSequencer`: 9 orderings, plus 4 rare ones.
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceInMemoryV2Windowed, agentbus_tests::Mixed>, suffix = space_in_memory, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceChanneledV2Windowed, agentbus_tests::Mixed>, suffix = space_channeled, sim_only)]
+    #[scenario_for(agentbus_tests::FaultFixture<agentbus_tests::SpaceCachingV2Windowed, agentbus_tests::Mixed>, suffix = space_caching, sim_only)]
+    pub async fn run_fi_permutations_space_windowed<F>(fixture: &F) -> Result<()>
+    where
+        F: AgentBusTestFixture + ConformanceFixture<Env = Simulator, Impl: Clone>,
+    {
+        run_permutations_with_faults_test(
+            fixture.create_impl(),
+            fixture.get_env(),
+            &V2_SPACE_LEVEL_OUTCOMES,
+            &WINDOWED_RARE_SPACE_LEVEL_OUTCOMES,
         );
         Ok(())
     }

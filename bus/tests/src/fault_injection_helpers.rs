@@ -152,6 +152,10 @@ pub const V2_SPACE_LEVEL_OUTCOMES: [&str; 9] = [
 /// they are legal but too rare to wait for.
 pub const V2_RARE_SPACE_LEVEL_OUTCOMES: [&str; 3] = ["", "b", "bc"];
 
+/// Under `WindowedSequencer`, "b" can also take the position of a lost "c" ahead
+/// of a failed "a" that lands late.
+pub const WINDOWED_RARE_SPACE_LEVEL_OUTCOMES: [&str; 4] = ["", "b", "ba", "bc"];
+
 pub fn run_permutations_with_faults_test<Impl>(
     agentbus: Impl,
     env: Rc<Simulator>,

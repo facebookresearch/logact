@@ -28,8 +28,10 @@ pub trait Sequencer<E: Environment> {
     /// back the tail must be looked for.
     const TAIL_WINDOW_SIZE: u64;
 
-    /// Waits for a position to append at and claims it.
-    async fn claim(&self) -> Self::Claim<'_>;
+    /// Waits for an unwritten position to append at and claims it. With a
+    /// `bound`, claims only below it, and returns `None` once every position
+    /// before it is written.
+    async fn claim(&self, bound: Option<u64>) -> Option<Self::Claim<'_>>;
 
     /// Moves past `tail`, below which every position is written.
     fn advance(&self, tail: u64);

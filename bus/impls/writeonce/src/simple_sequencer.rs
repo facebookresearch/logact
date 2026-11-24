@@ -45,13 +45,21 @@ impl<E: Environment> Sequencer<E> for SimpleSequencer {
     // A window of 1 appends after the highest surviving entry, including after TTL expiry.
     const TAIL_WINDOW_SIZE: u64 = 1;
 
-    async fn claim(&self) -> SimpleClaim<'_> {
+    async fn claim(&self, bound: Option<u64>) -> Option<SimpleClaim<'_>> {
+        let filled = || bound.is_some_and(|bound| self.next.get() >= bound);
+        if filled() {
+            return None;
+        }
         let turn = self.turn.acquire(1).await;
-        SimpleClaim {
+        // With the turn, no write is in flight, so `next` is unwritten.
+        if filled() {
+            return None;
+        }
+        Some(SimpleClaim {
             position: self.next.get(),
             next: &self.next,
             _turn: turn,
-        }
+        })
     }
 
     fn advance(&self, tail: u64) {
@@ -79,7 +87,9 @@ mod tests {
     use super::*;
 
     fn claim(sequencer: &SimpleSequencer) -> Option<SimpleClaim<'_>> {
-        Sequencer::<RealEnvironment>::claim(sequencer).now_or_never()
+        Sequencer::<RealEnvironment>::claim(sequencer, None)
+            .now_or_never()
+            .flatten()
     }
 
     #[test]
@@ -95,5 +105,19 @@ mod tests {
         assert_eq!(second.position(), 0);
         second.set(true);
         assert_eq!(claim(&sequencer).expect("the turn is free").position(), 1);
+    }
+
+    #[test]
+    fn bounded_claim_returns_none_once_the_prefix_is_written() {
+        let sequencer = SimpleSequencer::new(0, Rc::new(RealEnvironment::new()));
+        let bounded = || {
+            Sequencer::<RealEnvironment>::claim(&sequencer, Some(1))
+                .now_or_never()
+                .expect("the turn is free")
+        };
+        let first = bounded().expect("position 0 is unwritten");
+        assert_eq!(first.position(), 0);
+        first.set(true);
+        assert!(bounded().is_none(), "position 0 is written");
     }
 }

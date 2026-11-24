@@ -23,6 +23,7 @@ use agentbus_observable::ObservableAgentBus;
 use agentbus_simple::InMemoryAgentBus;
 use agentbus_writeonce::ObservableWriteOnceSpace;
 use agentbus_writeonce::Sequencer;
+use agentbus_writeonce::WindowedSequencer;
 use agentbus_writeonce::WriteOnceAgentBus;
 use anyhow::Result;
 use channeled_svc_agentbus::ChanneledAgentBus as ChanneledSvcAgentBus;
@@ -683,4 +684,26 @@ pub type SpaceAmbiguousWriteEmptyV2 = WriteOnceAgentBusV2GenericFixture<
 >;
 pub type SpaceAmbiguousWriteOccupiedV2 = WriteOnceAgentBusV2GenericFixture<
     AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, true>,
+>;
+pub type SpaceInMemoryV2Windowed = WriteOnceAgentBusV2GenericFixture<
+    FaultInjectingWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture>,
+    WindowedSequencer,
+>;
+pub type SpaceCachingV2Windowed = WriteOnceAgentBusV2GenericFixture<
+    CachingWriteOnceSpaceFixture<
+        FaultInjectingWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture>,
+    >,
+    WindowedSequencer,
+>;
+pub type SpaceChanneledV2Windowed = WriteOnceAgentBusV2GenericFixture<
+    FaultInjectingWriteOnceSpaceFixture<ChanneledWriteOnceSpaceFixture>,
+    WindowedSequencer,
+>;
+pub type SpaceAmbiguousWriteEmptyV2Windowed = WriteOnceAgentBusV2GenericFixture<
+    AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, false>,
+    WindowedSequencer,
+>;
+pub type SpaceAmbiguousWriteOccupiedV2Windowed = WriteOnceAgentBusV2GenericFixture<
+    AmbiguousOnceWriteOnceSpaceFixture<InMemoryWriteOnceSpaceFixture, true>,
+    WindowedSequencer,
 >;
