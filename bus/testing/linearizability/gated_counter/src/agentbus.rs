@@ -139,6 +139,7 @@ impl<T: AgentBus, E: Environment> AgentBusGatedCounter<T, E> {
         Ok(OperationResult {
             output: GatedCounterOutput::Gate(gate_open),
             tag: position,
+            completed_at: None,
         })
     }
 
@@ -156,6 +157,7 @@ impl<T: AgentBus, E: Environment> AgentBusGatedCounter<T, E> {
             return Ok(OperationResult {
                 output: GatedCounterOutput::Counter(Ok(counter.value())),
                 tag,
+                completed_at: None,
             });
         }
 
@@ -165,6 +167,7 @@ impl<T: AgentBus, E: Environment> AgentBusGatedCounter<T, E> {
         Ok(OperationResult {
             output: counter_write_output(decision.approved, counter.value()),
             tag: intention_position,
+            completed_at: None,
         })
     }
 
@@ -182,6 +185,7 @@ impl<T: AgentBus, E: Environment> AgentBusGatedCounter<T, E> {
                 Ok(OperationResult {
                     output: GatedCounterOutput::Gate(gate_open),
                     tag,
+                    completed_at: None,
                 })
             }
         }

@@ -83,7 +83,11 @@ impl LinearizableObject for TestToggle {
         self.value.set(output);
         let tag = self.next_tag.get();
         self.next_tag.set(tag + 1);
-        Some(OperationResult { output, tag })
+        Some(OperationResult {
+            output,
+            tag,
+            completed_at: None,
+        })
     }
 }
 

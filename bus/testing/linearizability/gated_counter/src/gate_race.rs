@@ -91,11 +91,13 @@ impl<const STALE_GATE_WRITE: bool> LinearizableObject for GateRaceCounter<STALE_
                 OperationResult {
                     output: GatedCounterOutput::Gate(open),
                     tag,
+                    completed_at: None,
                 }
             }
             GatedCounterOperation::Counter(CounterOperation::Read) => OperationResult {
                 output: GatedCounterOutput::Counter(Ok(state.counter)),
                 tag: self.tag(),
+                completed_at: None,
             },
             GatedCounterOperation::Counter(operation) => {
                 self.writers_ready.wait().await;
@@ -113,11 +115,13 @@ impl<const STALE_GATE_WRITE: bool> LinearizableObject for GateRaceCounter<STALE_
                 OperationResult {
                     output: GatedCounterOutput::Counter(Ok(state.counter)),
                     tag,
+                    completed_at: None,
                 }
             }
             GatedCounterOperation::ReadGate => OperationResult {
                 output: GatedCounterOutput::Gate(state.gate_open),
                 tag: self.tag(),
+                completed_at: None,
             },
         })
     }

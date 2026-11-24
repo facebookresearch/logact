@@ -32,6 +32,7 @@ fn records_outputs_timing_and_tags() {
                     Some(OperationResult {
                         output: operation * 10,
                         tag: id.sequence,
+                        completed_at: None,
                     })
                 }
             })

@@ -229,6 +229,7 @@ impl<S: CommitSvc> CommitServiceCounter<S> {
                                 Ok(value)
                             },
                             tag: response.log_position,
+                            completed_at: None,
                         });
                     }
                 }
@@ -536,6 +537,7 @@ mod tests {
             end_time: agentbus_api::MonotonicInstant::from_duration_since_clock_origin(
                 Duration::ZERO,
             ),
+            completed_at: None,
             completed: linearizability::history::CompletedOperation {
                 operation: command.operation,
                 output: Ok(1),

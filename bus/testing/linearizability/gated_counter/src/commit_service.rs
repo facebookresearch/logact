@@ -20,6 +20,7 @@ use agent_bus_proto_rust::agent_bus::control;
 use agent_bus_proto_rust::agent_bus::intention;
 use agent_bus_proto_rust::agent_bus::payload;
 use agentbus_api::AgentBus;
+use agentbus_api::Clock as _;
 use agentbus_api::Environment;
 use agentbus_simulator::Simulator;
 use agentbus_tests::common::helpers::read_linearizable_snapshot;
@@ -224,11 +225,13 @@ where
             }
             self.environment.sleep(Duration::from_millis(1)).await;
         };
+        let completed_at = self.environment.with_clock(|clock| clock.monotonic_time());
 
         let value = self.replay_through(response.log_position).await?;
         Ok(OperationResult {
             output: counter_output(outcome, value)?,
             tag: PolicyTag::AgentBusPosition(response.log_position),
+            completed_at: Some(completed_at),
         })
     }
 
@@ -269,6 +272,7 @@ where
                 Ok(OperationResult {
                     output: GatedCounterOutput::Gate(open),
                     tag: PolicyTag::RegisterVersion(version),
+                    completed_at: None,
                 })
             }
             GatedCounterOperation::ReadGate => {
@@ -276,6 +280,7 @@ where
                 Ok(OperationResult {
                     output: GatedCounterOutput::Gate(policy == DeciderPolicy::OnByDefault),
                     tag: PolicyTag::Unanchored,
+                    completed_at: None,
                 })
             }
         }

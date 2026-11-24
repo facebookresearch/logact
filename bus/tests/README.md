@@ -99,7 +99,8 @@ with `#[scenario_for]` to `CommitServiceProductionShape`, which builds the
 commit service as production servers do from the simulator's feature flags.
 `run_benchmark_independent_buses_concurrent` runs four counter clients on each
 of three buses, with up to 50 ms injected per storage hop and 0.99 stickiness,
-and prints the completed operations' mean and p99 latency. CI runs it with
+and prints the completed operations' mean and p99 latency, measured to each
+commit's response rather than to the read that computes the counter's value. CI runs it with
 production's default flags.
 
 `logact/commit_service/tests:sim_benchmark` runs any gated-counter scenario on

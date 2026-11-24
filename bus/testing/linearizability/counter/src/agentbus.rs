@@ -234,6 +234,7 @@ impl<T: AgentBus, E: Environment> AgentBusCounter<T, E> {
                 (watched_intention == Some(position)).then_some(OperationResult {
                     output: Ok(value),
                     tag: position,
+                    completed_at: None,
                 }),
             );
         }
@@ -262,6 +263,7 @@ impl<T: AgentBus, E: Environment> AgentBusCounter<T, E> {
                         return Ok(Some(OperationResult {
                             output: Ok(value),
                             tag: position,
+                            completed_at: None,
                         }));
                     }
                 }
@@ -272,6 +274,7 @@ impl<T: AgentBus, E: Environment> AgentBusCounter<T, E> {
                     return Ok(Some(OperationResult {
                         output: Err(CounterError::Denied),
                         tag: position,
+                        completed_at: None,
                     }));
                 }
             }
@@ -321,6 +324,7 @@ impl<T: AgentBus, E: Environment> AgentBusCounter<T, E> {
             return Ok(OperationResult {
                 output: Ok(state.counter.value()),
                 tag: state.last_log_position,
+                completed_at: None,
             });
         }
 
@@ -813,6 +817,7 @@ mod tests {
             id,
             start_time: MonotonicInstant::from_duration_since_clock_origin(Duration::ZERO),
             end_time: MonotonicInstant::from_duration_since_clock_origin(Duration::from_millis(1)),
+            completed_at: None,
             completed: CompletedOperation {
                 operation,
                 output,

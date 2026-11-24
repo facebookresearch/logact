@@ -113,7 +113,7 @@ where
 }
 
 /// [`run_linearizability_test`], returning each completed operation's latency,
-/// from invocation to response.
+/// from invocation to response, or to its `completed_at` if it reported one.
 pub async fn run_linearizability_test_timed<Workload, Implementation>(
     workload: Workload,
     implementation: Rc<Implementation>,
@@ -175,7 +175,9 @@ where
     let latencies = history
         .observations()
         .iter()
-        .map(|observation| observation.end_time - observation.start_time)
+        .map(|observation| {
+            observation.completed_at.unwrap_or(observation.end_time) - observation.start_time
+        })
         .collect();
     let candidate = implementation.candidate(&history).await?;
     history.verify(

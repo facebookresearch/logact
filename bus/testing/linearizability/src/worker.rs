@@ -84,6 +84,7 @@ where
                     id,
                     start_time,
                     end_time,
+                    completed_at: result.completed_at,
                     completed: CompletedOperation {
                         operation,
                         output: result.output,

@@ -34,6 +34,8 @@ pub struct Observation<Operation, Output, Tag> {
     pub id: OperationId,
     pub start_time: MonotonicInstant,
     pub end_time: MonotonicInstant,
+    /// See [`crate::operation::OperationResult::completed_at`].
+    pub completed_at: Option<MonotonicInstant>,
     pub completed: CompletedOperation<Operation, Output, Tag>,
 }
 
@@ -326,6 +328,7 @@ mod tests {
             end_time: MonotonicInstant::from_duration_since_clock_origin(Duration::from_millis(
                 input.end_ms,
             )),
+            completed_at: None,
             completed: CompletedOperation {
                 operation: input.operation,
                 output: input.output,
