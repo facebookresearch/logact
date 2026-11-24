@@ -28,6 +28,8 @@ pub struct FeatureFlags {
     /// Serve commit-service policy reads from a lease over the policy register
     /// instead of reading the register on every commit.
     pub enable_leased_policy_reads: bool,
+    /// Poll the commit-service policy register in the background to renew its lease as it expires.
+    pub enable_policy_lease_keepalive: bool,
     /// Serve the commit service and its AgentBus through the `channeled_svc`
     /// channels instead of the legacy ones.
     pub enable_channeled_svc: bool,
@@ -45,6 +47,7 @@ impl Default for FeatureFlags {
             enable_commit_buffering: true,
             disable_direct_agentbus_appends: false,
             enable_leased_policy_reads: false,
+            enable_policy_lease_keepalive: false,
             enable_channeled_svc: false,
             enable_eligibility_under_channel: false,
         }

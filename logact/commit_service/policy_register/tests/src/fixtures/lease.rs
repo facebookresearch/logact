@@ -19,7 +19,7 @@ use logact_commit_service_policy_register::PolicyRegister;
 use crate::fixtures::ConformanceFixture;
 use crate::fixtures::SimulatorFixture;
 
-const CONFIG: PolicyLeaseConfig = PolicyLeaseConfig {
+pub(crate) const CONFIG: PolicyLeaseConfig = PolicyLeaseConfig {
     lease_duration: Duration::from_millis(10),
     drift_allowance: Duration::from_millis(2),
     recovery_grace: Duration::from_millis(2),

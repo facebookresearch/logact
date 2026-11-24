@@ -13,6 +13,7 @@
 use logact_commit_service_policy_register::PolicyRegister;
 
 pub mod in_memory;
+pub mod keepalive;
 pub mod lease;
 pub mod observable;
 pub mod sqlite;
@@ -20,6 +21,7 @@ pub mod sqlite;
 pub use conformance::ConformanceFixture;
 pub use conformance::SimulatorFixture;
 pub use in_memory::InMemoryPolicyRegisterFixture;
+pub use keepalive::KeepalivePolicyRegisterFixture;
 pub use lease::LeaseBasedPolicyRegisterFixture;
 pub use lease::LeasedFixture;
 pub use observable::ObservablePolicyRegisterFixture;

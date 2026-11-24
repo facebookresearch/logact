@@ -22,11 +22,13 @@ use logact_commit_service_api::VersionedPolicyState;
 use logact_commit_service_engine::StorageError;
 use thiserror::Error;
 
+pub mod keepalive;
 pub mod lease;
 pub mod observable;
 pub mod storage;
 pub mod synchronous_provider;
 
+pub use keepalive::KeepalivePolicyRegister;
 pub use lease::DEFAULT_POLICY_LEASE_CONFIG;
 pub use lease::LeaseBasedPolicyRegister;
 pub use lease::PolicyLeaseConfig;

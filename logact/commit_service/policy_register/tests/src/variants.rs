@@ -46,5 +46,12 @@ macro_rules! policy_register_fixtures {
             observable_lease_in_memory,
             sim
         ]);
+        $cb!([
+            $crate::fixtures::KeepalivePolicyRegisterFixture<
+                $crate::fixtures::LeaseBasedPolicyRegisterFixture<$crate::fixtures::InMemoryPolicyRegisterFixture>,
+            >,
+            keepalive_lease_in_memory,
+            sim
+        ]);
     };
 }

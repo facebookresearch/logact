@@ -344,6 +344,15 @@ mod defs {
         suffix = lease_in_memory,
         sim_only
     )]
+    #[scenario_for(
+        logact_commit_service_policy_register_tests::fixtures::KeepalivePolicyRegisterFixture<
+            logact_commit_service_policy_register_tests::fixtures::LeaseBasedPolicyRegisterFixture<
+                logact_commit_service_policy_register_tests::fixtures::InMemoryPolicyRegisterFixture,
+            >,
+        >,
+        suffix = keepalive_lease_in_memory,
+        sim_only
+    )]
     pub async fn run_test_reader_rolls_back_crashed_writer<F>(fixture: &F) -> Result<()>
     where
         F: LeasedFixture<Impl: PolicyRegister>,
@@ -391,6 +400,15 @@ mod defs {
             logact_commit_service_policy_register_tests::fixtures::InMemoryPolicyRegisterFixture,
         >,
         suffix = lease_in_memory,
+        sim_only
+    )]
+    #[scenario_for(
+        logact_commit_service_policy_register_tests::fixtures::KeepalivePolicyRegisterFixture<
+            logact_commit_service_policy_register_tests::fixtures::LeaseBasedPolicyRegisterFixture<
+                logact_commit_service_policy_register_tests::fixtures::InMemoryPolicyRegisterFixture,
+            >,
+        >,
+        suffix = keepalive_lease_in_memory,
         sim_only
     )]
     pub async fn run_test_unleased_register_is_not_cached<F>(fixture: &F) -> Result<()>
@@ -443,6 +461,15 @@ mod defs {
             logact_commit_service_policy_register_tests::fixtures::InMemoryPolicyRegisterFixture,
         >,
         suffix = lease_in_memory,
+        sim_only
+    )]
+    #[scenario_for(
+        logact_commit_service_policy_register_tests::fixtures::KeepalivePolicyRegisterFixture<
+            logact_commit_service_policy_register_tests::fixtures::LeaseBasedPolicyRegisterFixture<
+                logact_commit_service_policy_register_tests::fixtures::InMemoryPolicyRegisterFixture,
+            >,
+        >,
+        suffix = keepalive_lease_in_memory,
         sim_only
     )]
     #[scenario_for(

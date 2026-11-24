@@ -102,6 +102,7 @@ impl ConformanceFixture for FeatureFlagProductionFixture {
             enable_commit_buffering: buffering,
             disable_direct_agentbus_appends: _,
             enable_leased_policy_reads: _,
+            enable_policy_lease_keepalive: _,
             enable_channeled_svc,
             enable_eligibility_under_channel,
         } = env.feature_flags();
