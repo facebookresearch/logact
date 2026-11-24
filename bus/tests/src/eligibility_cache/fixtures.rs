@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use agentbus_api::CachingRequestGate;
 use agentbus_api::EligibilityGate;
+use agentbus_api::RefreshPolicy;
 use agentbus_api::RequestGate;
 use conformance::ConformanceFixture;
 use tokio::sync::Notify;
@@ -27,6 +28,14 @@ pub trait EligibilityCacheTestFixture:
 {
     fn lookup_controller(&self) -> ControlledEligibilityLookup;
     fn create_with_config(&self, capacity: NonZeroUsize, ttl: Duration) -> Self::Impl;
+    /// Like `create_with_config`, with each request starting a sweep of the
+    /// decisions `policy` selects unless one is running.
+    fn create_with_refresh(
+        &self,
+        capacity: NonZeroUsize,
+        ttl: Duration,
+        policy: RefreshPolicy,
+    ) -> Self::Impl;
 }
 
 type Reply = oneshot::Sender<anyhow::Result<bool>>;
@@ -181,6 +190,18 @@ impl EligibilityCacheTestFixture for ControlledCachingEligibilityGateFixture {
             capacity,
             ttl,
         ))
+    }
+
+    fn create_with_refresh(
+        &self,
+        capacity: NonZeroUsize,
+        ttl: Duration,
+        policy: RefreshPolicy,
+    ) -> Self::Impl {
+        Rc::new(
+            CachingRequestGate::new(self.inner.gate(), self.inner.env.clone(), capacity, ttl)
+                .with_refresh(policy),
+        )
     }
 }
 

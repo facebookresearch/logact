@@ -46,6 +46,7 @@ pub use conditional_write_space::VersionedValue;
 pub use eligibility::CachingRequestGate;
 pub use eligibility::EligibilityError;
 pub use eligibility::EligibilityGate;
+pub use eligibility::RefreshPolicy;
 pub use environment::Clock;
 pub use environment::Environment;
 pub use environment::MonotonicInstant;

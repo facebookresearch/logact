@@ -25,9 +25,11 @@
 //!   its source.
 //! - Decides the same way for every method and bus.
 //! - May retain allow and deny decisions for a fixed TTL measured from the
-//!   start of the request that looked them up. Serving a retained decision does
-//!   not extend it, and unavailable results are never retained. Without
-//!   retention, a changed eligibility applies to the next request.
+//!   start of the lookup that produced them, by a request or a background
+//!   refresh. Serving a retained decision does not extend it; a refresh that
+//!   decides replaces it and restarts its TTL. Unavailable results are never
+//!   retained and never replace a retained decision. Without retention, a
+//!   changed eligibility applies to the next request.
 //!
 //! [`ExtremelyUnsafeNoOpGate`]: crate::ExtremelyUnsafeNoOpGate
 
@@ -50,6 +52,7 @@ use crate::RequestGate;
 mod cache;
 
 pub use self::cache::CachingRequestGate;
+pub use self::cache::RefreshPolicy;
 
 const WARNING_INTERVAL: Duration = Duration::from_secs(5);
 

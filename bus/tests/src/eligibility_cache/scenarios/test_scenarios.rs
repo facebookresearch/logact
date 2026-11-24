@@ -12,6 +12,7 @@ mod defs {
 
     use agentbus_api::AuthorizationError;
     use agentbus_api::Environment;
+    use agentbus_api::RefreshPolicy;
     use agentbus_api::RequestContext;
     use agentbus_api::RequestGate;
     use anyhow::Result;
@@ -24,6 +25,8 @@ mod defs {
 
     const CAPACITY: NonZeroUsize = NonZeroUsize::new(2).unwrap();
     const TTL: Duration = Duration::from_secs(300);
+    const POLICY: RefreshPolicy = RefreshPolicy::ScanOrder;
+    const SETTLE: Duration = Duration::from_secs(1);
 
     #[derive(Debug, thiserror::Error)]
     #[error("GK unavailable")]
@@ -33,6 +36,24 @@ mod defs {
         gate_decision(service, unixname)
             .now_or_never()
             .unwrap_or_else(|| Err(anyhow::anyhow!("{unixname}: a cache hit must not look up")))
+    }
+
+    /// A request without a caller, which neither looks up nor changes the
+    /// cache but starts a sweep unless one is running.
+    fn request(service: &impl RequestGate) -> Result<()> {
+        service
+            .admit(&RequestContext::default(), "probe", "test-bus")
+            .now_or_never()
+            .ok_or_else(|| anyhow::anyhow!("a request without a caller looked up"))?
+            .err()
+            .ok_or_else(|| anyhow::anyhow!("a request without a caller was admitted"))?;
+        Ok(())
+    }
+
+    /// Answers the refresh lookup a sweep makes for `unixname`.
+    async fn refreshed(inner: &ControlledEligibilityLookup, unixname: &str, result: Result<bool>) {
+        inner.wait_for_lookup(unixname).await;
+        inner.answer(unixname, result);
     }
 
     async fn lookup(
@@ -250,6 +271,254 @@ mod defs {
             .now_or_never()
             .ok_or_else(|| anyhow::anyhow!("a cache hit must not look up"))?;
         anyhow::ensure!(denial(cached)? == looked_up);
+        Ok(())
+    }
+
+    /// Each request starts a sweep unless one is running; a sweep takes its
+    /// snapshot when it first runs, here when the scenario next waits. A sweep
+    /// refreshes, one at a time in the cache's scan order, the decisions cached
+    /// when it started, and a refresh that decides replaces the decision.
+    #[scenario(sim_only)]
+    pub async fn run_requests_start_sweeps_one_at_a_time<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let inner = fixture.lookup_controller();
+        anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+        anyhow::ensure!(!lookup(&service, &inner, "bob", Ok(false)).await?);
+
+        inner.wait_for_lookup("bob").await;
+        request(&service)?;
+        env.sleep(SETTLE).await;
+        anyhow::ensure!(
+            inner.waiting() == 1,
+            "refreshes and sweeps must be sequential"
+        );
+        inner.answer("bob", Ok(true));
+        refreshed(&inner, "alice", Ok(false)).await;
+        env.sleep(SETTLE).await;
+        anyhow::ensure!(inner.waiting() == 0, "a sweep refreshed a decision twice");
+        anyhow::ensure!(
+            cached(&service, "bob")?,
+            "a refresh did not replace bob's denial"
+        );
+        anyhow::ensure!(
+            !cached(&service, "alice")?,
+            "a refresh did not replace alice's allow"
+        );
+
+        refreshed(&inner, "alice", Ok(false)).await;
+        refreshed(&inner, "bob", Ok(true)).await;
+        Ok(())
+    }
+
+    /// A failed refresh keeps its allow or deny until it expires, and the sweep
+    /// moves on to the next caller without retrying it.
+    #[scenario(sim_only)]
+    pub async fn run_failed_refresh_keeps_decision_and_advances<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let inner = fixture.lookup_controller();
+        anyhow::ensure!(!lookup(&service, &inner, "bob", Ok(false)).await?);
+        anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+
+        for _ in 0..2 {
+            refreshed(&inner, "alice", Err(TypedLookupError.into())).await;
+            refreshed(&inner, "bob", Err(TypedLookupError.into())).await;
+            env.sleep(SETTLE).await;
+            anyhow::ensure!(inner.waiting() == 0, "a failed refresh was retried");
+            anyhow::ensure!(!cached(&service, "bob")?, "a failed refresh admitted bob");
+            anyhow::ensure!(cached(&service, "alice")?, "a failed refresh dropped alice");
+        }
+        refreshed(&inner, "alice", Err(TypedLookupError.into())).await;
+        refreshed(&inner, "bob", Err(TypedLookupError.into())).await;
+        env.sleep(TTL).await;
+        anyhow::ensure!(
+            !lookup(&service, &inner, "alice", Ok(false)).await?,
+            "a failed refresh extended alice's TTL"
+        );
+        refreshed(&inner, "alice", Ok(false)).await;
+        Ok(())
+    }
+
+    /// A refresh, deciding or failed, does not change a decision a request
+    /// replaced while the refresh was in flight.
+    #[scenario(sim_only)]
+    pub async fn run_refresh_cannot_change_reinserted_decisions<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let inner = fixture.lookup_controller();
+        for result in [Ok(true), Err(TypedLookupError.into())] {
+            let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+            anyhow::ensure!(lookup(&service, &inner, "bob", Ok(true)).await?);
+            anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+            inner.wait_for_lookup("alice").await;
+            anyhow::ensure!(cached(&service, "bob")?);
+            anyhow::ensure!(lookup(&service, &inner, "carol", Ok(true)).await?);
+            let mut replacement = Box::pin(gate_decision(&service, "alice"));
+            anyhow::ensure!((&mut replacement).now_or_never().is_none());
+            inner.answer_last("alice", Ok(false));
+            anyhow::ensure!(!replacement.await?);
+            inner.answer("alice", result);
+            refreshed(&inner, "bob", Ok(true)).await;
+            env.sleep(SETTLE).await;
+            anyhow::ensure!(
+                !cached(&service, "alice")?,
+                "a refresh changed a replacement"
+            );
+            anyhow::ensure!(cached(&service, "carol")?);
+            refreshed(&inner, "carol", Ok(true)).await;
+            refreshed(&inner, "alice", Ok(false)).await;
+        }
+        Ok(())
+    }
+
+    /// A refresh neither promotes a decision nor restores one evicted while its
+    /// refresh was in flight.
+    #[scenario(sim_only)]
+    pub async fn run_refresh_neither_promotes_nor_restores<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let inner = fixture.lookup_controller();
+        anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+        anyhow::ensure!(lookup(&service, &inner, "bob", Ok(true)).await?);
+        refreshed(&inner, "bob", Ok(true)).await;
+        refreshed(&inner, "alice", Ok(true)).await;
+        env.sleep(SETTLE).await;
+        anyhow::ensure!(lookup(&service, &inner, "carol", Ok(true)).await?);
+        anyhow::ensure!(
+            cached(&service, "bob")?,
+            "a refresh promoted alice past bob"
+        );
+
+        inner.wait_for_lookup("bob").await;
+        anyhow::ensure!(lookup(&service, &inner, "dave", Ok(true)).await?);
+        anyhow::ensure!(lookup(&service, &inner, "erin", Ok(true)).await?);
+        inner.answer("bob", Ok(true));
+        refreshed(&inner, "carol", Ok(true)).await;
+        env.sleep(SETTLE).await;
+        anyhow::ensure!(
+            !lookup(&service, &inner, "bob", Ok(false)).await?,
+            "a refresh restored bob"
+        );
+        refreshed(&inner, "bob", Ok(false)).await;
+        refreshed(&inner, "erin", Ok(true)).await;
+        Ok(())
+    }
+
+    /// A refresh that started before a request's lookup does not replace the
+    /// request's decision, even for an expired decision.
+    #[scenario(sim_only)]
+    pub async fn run_refresh_does_not_replace_newer_decisions<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let inner = fixture.lookup_controller();
+        for result in [Ok(true), Err(TypedLookupError.into())] {
+            let service = fixture.create_with_refresh(CAPACITY, SETTLE * 10, POLICY);
+            anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+            inner.wait_for_lookup("alice").await;
+            env.sleep(SETTLE * 10).await;
+            let mut newer = Box::pin(gate_decision(&service, "alice"));
+            anyhow::ensure!((&mut newer).now_or_never().is_none(), "alice had expired");
+            inner.answer_last("alice", Ok(false));
+            anyhow::ensure!(!newer.await?);
+            inner.answer("alice", result);
+            env.sleep(SETTLE).await;
+            anyhow::ensure!(
+                !cached(&service, "alice")?,
+                "an older refresh changed a newer decision"
+            );
+            refreshed(&inner, "alice", Ok(false)).await;
+        }
+        Ok(())
+    }
+
+    /// A sweep running when its gate is dropped finishes its snapshot and
+    /// releases the cache, and no other sweep starts.
+    #[scenario(sim_only)]
+    pub async fn run_dropped_gates_stop_refreshing<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let inner = fixture.lookup_controller();
+        anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+        anyhow::ensure!(lookup(&service, &inner, "bob", Ok(true)).await?);
+        inner.wait_for_lookup("bob").await;
+        drop(service);
+        inner.answer("bob", Ok(true));
+        refreshed(&inner, "alice", Ok(true)).await;
+
+        env.sleep(SETTLE).await;
+        anyhow::ensure!(inner.waiting() == 0, "a dropped gate refreshed");
+        Ok(())
+    }
+
+    /// A refresh restarts a decision's TTL from the refresh's start, not its
+    /// end.
+    #[scenario(sim_only)]
+    pub async fn run_refresh_restarts_ttl_from_its_start<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let inner = fixture.lookup_controller();
+        anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+        refreshed(&inner, "alice", Err(TypedLookupError.into())).await;
+        env.sleep(SETTLE * 100).await;
+        request(&service)?;
+        inner.wait_for_lookup("alice").await;
+        env.sleep(SETTLE * 10).await;
+        inner.answer("alice", Ok(true));
+
+        env.sleep(TTL - SETTLE * 11).await;
+        anyhow::ensure!(
+            cached(&service, "alice")?,
+            "a refresh did not restart alice's TTL"
+        );
+        refreshed(&inner, "alice", Err(TypedLookupError.into())).await;
+        env.sleep(SETTLE * 2).await;
+        anyhow::ensure!(
+            !lookup(&service, &inner, "alice", Ok(false)).await?,
+            "a refresh restarted alice's TTL from its end"
+        );
+        refreshed(&inner, "alice", Ok(false)).await;
+        Ok(())
+    }
+
+    /// A cache without refresh never refreshes, and sweeps skip expired
+    /// decisions.
+    #[scenario(sim_only)]
+    pub async fn run_no_refresh_without_refresh_or_for_expired_decisions<
+        F: EligibilityCacheTestFixture,
+    >(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let inner = fixture.lookup_controller();
+        let service = fixture.create_with_config(CAPACITY, TTL);
+        anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+        request(&service)?;
+        env.sleep(SETTLE).await;
+        anyhow::ensure!(inner.waiting() == 0, "a cache without refresh refreshed");
+
+        let service = fixture.create_with_refresh(CAPACITY, SETTLE, POLICY);
+        anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+        refreshed(&inner, "alice", Err(TypedLookupError.into())).await;
+        env.sleep(SETTLE * 2).await;
+        request(&service)?;
+        env.sleep(SETTLE).await;
+        anyhow::ensure!(
+            inner.waiting() == 0,
+            "a sweep refreshed an expired decision"
+        );
         Ok(())
     }
 
