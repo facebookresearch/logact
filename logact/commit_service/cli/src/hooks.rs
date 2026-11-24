@@ -22,6 +22,7 @@ use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitSvc;
 use logact_commit_service_api::CreateBusCommand;
 use serde::Deserialize;
+use serde_json::value::RawValue;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum EventKind {
@@ -205,15 +206,24 @@ pub(crate) async fn dispatch<C: CommitSvc + ?Sized>(
 /// separate thread so the timer can fire; on timeout it is abandoned and dies
 /// with the process.
 pub async fn read_hook_payload() -> Result<String, PrepareError> {
-    let read = tokio::task::spawn_blocking(|| {
-        let mut body = String::new();
-        std::io::stdin().read_to_string(&mut body)?;
-        anyhow::Ok(body)
-    });
+    let read = tokio::task::spawn_blocking(|| read_first_json(std::io::stdin().lock()));
     read_within(STDIN_READ_TIMEOUT, async move {
         read.await.context("stdin reader thread panicked")?
     })
     .await
+}
+
+/// Return the first JSON value on `reader` as soon as it is complete, without
+/// waiting for EOF. Some harnesses close stdin well after writing the payload,
+/// so reading to EOF would wait on the harness. The value's text is returned
+/// unchanged; surrounding whitespace and anything after it are not read.
+fn read_first_json<R: Read>(reader: R) -> Result<String> {
+    let value = serde_json::Deserializer::from_reader(reader)
+        .into_iter::<Box<RawValue>>()
+        .next()
+        .context("hook payload on stdin was empty")?
+        .context("invalid stdin JSON")?;
+    Ok(Box::<str>::from(value).into_string())
 }
 
 /// Resolve `read` within `timeout`. Split from `read_hook_payload` so the timeout
@@ -719,6 +729,75 @@ mod tests {
         }));
         let error = result.expect_err("a read failure must surface");
         assert!(matches!(error, PrepareError::Input(_)));
+    }
+
+    /// Stdin whose writer has sent `data` but not closed the pipe: reading past
+    /// the end would block on a real pipe, so here it panics.
+    struct OpenStdin {
+        data: &'static [u8],
+        position: usize,
+    }
+
+    impl OpenStdin {
+        fn new(data: &'static str) -> Self {
+            Self {
+                data: data.as_bytes(),
+                position: 0,
+            }
+        }
+    }
+
+    impl Read for OpenStdin {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            let rest = &self.data[self.position..];
+            assert!(!rest.is_empty(), "read past the payload, waiting for EOF");
+            let len = rest.len().min(buf.len());
+            buf[..len].copy_from_slice(&rest[..len]);
+            self.position += len;
+            Ok(len)
+        }
+    }
+
+    #[test]
+    fn first_json_returns_without_waiting_for_eof() {
+        assert_eq!(read_first_json(OpenStdin::new(PAYLOAD)).unwrap(), PAYLOAD);
+    }
+
+    #[test]
+    fn first_json_keeps_value_text_and_drops_surrounding_whitespace() {
+        let body = read_first_json("\n  {\"a\": 1,  \"b\" : [1, 2]}\n".as_bytes()).unwrap();
+        assert_eq!(
+            body, "{\"a\": 1,  \"b\" : [1, 2]}",
+            "inner spacing must be kept as sent"
+        );
+    }
+
+    #[test]
+    fn first_json_ignores_data_after_the_first_value() {
+        let body = read_first_json(r#"{"a":1}{"b":2}"#.as_bytes()).unwrap();
+        assert_eq!(body, r#"{"a":1}"#);
+    }
+
+    #[test]
+    fn first_json_rejects_empty_input() {
+        for input in ["", " \n"] {
+            let error = read_first_json(input.as_bytes()).unwrap_err();
+            assert!(
+                format!("{error:#}").contains("empty"),
+                "input {input:?}: {error:#}"
+            );
+        }
+    }
+
+    #[test]
+    fn first_json_rejects_invalid_or_truncated_input() {
+        for input in ["not JSON", r#"{"session_id":"#] {
+            let error = read_first_json(input.as_bytes()).unwrap_err();
+            assert!(
+                format!("{error:#}").contains("invalid stdin JSON"),
+                "input {input:?}: {error:#}"
+            );
+        }
     }
 
     #[test]
