@@ -13,6 +13,7 @@ use agentbus_tests::fixtures::simtest::FaultInjectingFixture;
 use agentbus_tests::fixtures::simtest::SimpleMemoryFixture;
 use logact_commit_service_tests::commit_service_sim_suite;
 use logact_commit_service_tests::fixtures::ChanneledCommitServiceFixture;
+use logact_commit_service_tests::fixtures::ChanneledSvcCommitServiceFixture;
 use logact_commit_service_tests::fixtures::CommitServiceV1CountingVoterFixture;
 use logact_commit_service_tests::fixtures::CommitServiceV1Fixture;
 use logact_commit_service_tests::fixtures::CommitServiceV1LatencyFixture;
@@ -20,6 +21,10 @@ use logact_commit_service_tests::fixtures::CommitServiceV1StorageConflictFixture
 use logact_commit_service_tests::fixtures::InMemCommitServiceFixture;
 use logact_commit_service_tests::fixtures::ObservableCommitServiceFixture;
 use logact_commit_service_tests::fixtures::RandomRoutingCommitServiceFixture;
+use logact_commit_service_tests::fixtures::ReplayCommitServiceFixture;
+use logact_commit_service_tests::fixtures::replay::BackgroundSharedStorage;
+use logact_commit_service_tests::fixtures::replay::NoStore;
+use logact_commit_service_tests::fixtures::replay::SharedStorage;
 use logact_commit_service_tests::scenarios::ThreadHeapCounter;
 use logact_commit_service_v1::StaticConfigPolicyProvider;
 

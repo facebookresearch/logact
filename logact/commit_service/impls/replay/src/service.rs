@@ -14,6 +14,7 @@ use agent_bus_proto_rust::agent_bus::SpeculativeDecision;
 use agent_bus_proto_rust::agent_bus::intention;
 use agent_bus_proto_rust::agent_bus::payload;
 use agentbus_api::AgentBus;
+use agentbus_api::validate_bus_id_string;
 use logact_commit_service_api::CommitError;
 use logact_commit_service_api::CommitIntentionCommand;
 use logact_commit_service_api::CommitIntentionOutcome;
@@ -108,6 +109,17 @@ where
     }
 
     async fn create_bus(&self, request: CreateBusCommand) -> CommitResult<()> {
+        validate_bus_id_string(&request.bus_id).map_err(CommitError::InvalidArgument)?;
+        let checkpoint = self
+            .checkpoints
+            .load(&request.bus_id)
+            .await
+            .map_err(CommitError::from)?;
+        if checkpoint
+            .is_some_and(|checkpoint| checkpoint.state.policy.applied_policy_version.is_some())
+        {
+            return Ok(());
+        }
         let desired = self.desired_policy(&request.bus_id).await?;
         let batch = plan_policy_batch(None, None, &desired)
             .map_err(CommitError::Internal)?

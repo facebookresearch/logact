@@ -22,6 +22,7 @@ mod defs {
     use agent_bus_proto_rust::agent_bus::AgentInput;
     use agent_bus_proto_rust::agent_bus::AppendRequest;
     use agent_bus_proto_rust::agent_bus::BusId;
+    use agent_bus_proto_rust::agent_bus::CheckTailRequest;
     use agent_bus_proto_rust::agent_bus::DeciderPolicy;
     use agent_bus_proto_rust::agent_bus::Payload;
     use agent_bus_proto_rust::agent_bus::PollRequest;
@@ -224,6 +225,60 @@ mod defs {
             &outcome,
         )
         .await
+    }
+
+    #[scenario_for(ReplayCommitServiceFixture<SimpleMemoryFixture, SharedStorage>, suffix = replay_shared_simple_memory, sim_only)]
+    #[scenario_for(ReplayCommitServiceFixture<SimpleMemoryFixture, BackgroundSharedStorage>, suffix = replay_shared_background_simple_memory, sim_only)]
+    #[scenario_for(ReplayCommitServiceFixture<SimpleMemoryFixture, NoStore>, suffix = replay_nostorage_simple_memory, sim_only)]
+    #[scenario_for(
+        ChanneledSvcCommitServiceFixture<ReplayCommitServiceFixture<SimpleMemoryFixture, SharedStorage>>,
+        suffix = channeled_svc_replay_shared_simple_memory,
+        sim_only
+    )]
+    pub async fn run_create_bus_skips_a_bus_with_a_checkpoint<F: CommitServiceTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let service = fixture.create_impl();
+        let bus_id = fresh_agent_id(fixture);
+        let create = || {
+            service.create_bus(CreateBusCommand {
+                bus_id: bus_id.clone(),
+            })
+        };
+        let tail = || async {
+            let response = service
+                .agent_bus()
+                .check_tail(CheckTailRequest {
+                    bus_id: Some(BusId {
+                        agent_bus_id: bus_id.clone(),
+                    }),
+                })
+                .await?;
+            anyhow::Ok(response.tail_position)
+        };
+
+        create().await?;
+        anyhow::ensure!(
+            tail().await? == 1,
+            "creating the bus should append its policy"
+        );
+        create().await?;
+        anyhow::ensure!(
+            tail().await? == 1,
+            "creating a bus with a checkpoint should append nothing"
+        );
+
+        let outcome = service
+            .commit_intention(intention(bus_id.clone(), "probe"))
+            .await?;
+        anyhow::ensure!(outcome.approved, "the bus should still be usable");
+        let tail_after_commit = tail().await?;
+        create().await?;
+        anyhow::ensure!(
+            tail().await? == tail_after_commit,
+            "creating a bus after a commit should append nothing"
+        );
+        Ok(())
     }
 
     #[scenario]
