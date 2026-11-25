@@ -30,6 +30,7 @@ mod write_once_agentbus_v2;
 mod write_once_bus_version;
 
 pub use caching_write_once_space::CachingWriteOnceSpace;
+pub use caching_write_once_space::WriteOnceCacheLimits;
 pub use channeled_write_once_space::ChanneledWriteOnceSpace;
 pub use channeled_write_once_space::ChanneledWriteOnceSpaceBackend;
 pub use in_memory_write_once_space::InMemoryWriteOnceSpace;

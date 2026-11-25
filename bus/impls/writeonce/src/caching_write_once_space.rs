@@ -39,6 +39,14 @@ struct CachedValue {
     expires_at: Option<MonotonicInstant>,
 }
 
+/// Limits for a [`CachingWriteOnceSpace`]. Any zero limit disables caching.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct WriteOnceCacheLimits {
+    pub max_entries: usize,
+    pub max_value_bytes: usize,
+    pub max_entry_value_bytes: usize,
+}
+
 struct WriteTtl {
     ttl: Duration,
     now: Rc<dyn Fn() -> MonotonicInstant>,
@@ -111,21 +119,23 @@ impl<W> CachingWriteOnceSpace<W> {
     pub fn new(inner: W, max_entries: usize, max_value_bytes: usize) -> Self {
         Self::new_with_entry_limit(
             inner,
-            max_entries,
-            max_value_bytes,
-            DEFAULT_MAX_ENTRY_VALUE_BYTES,
+            WriteOnceCacheLimits {
+                max_entries,
+                max_value_bytes,
+                max_entry_value_bytes: DEFAULT_MAX_ENTRY_VALUE_BYTES,
+            },
         )
     }
 
     /// Wrap `inner` with explicit entry-count, total-value-byte, and per-entry
     /// value-byte limits. Any zero limit disables caching. Oversized values
     /// bypass the cache without evicting existing entries.
-    pub fn new_with_entry_limit(
-        inner: W,
-        max_entries: usize,
-        max_value_bytes: usize,
-        max_entry_value_bytes: usize,
-    ) -> Self {
+    pub fn new_with_entry_limit(inner: W, limits: WriteOnceCacheLimits) -> Self {
+        let WriteOnceCacheLimits {
+            max_entries,
+            max_value_bytes,
+            max_entry_value_bytes,
+        } = limits;
         Self {
             inner,
             cache: Rc::new(RefCell::new(Cache {
@@ -496,11 +506,72 @@ mod tests {
         });
     }
 
+    /// Cached addresses from least to most recently used, after checking that
+    /// `value_bytes` is the sum of the cached values' lengths.
+    fn cached_addresses(space: &CachingWriteOnceSpace<CountingSpace>) -> Vec<u64> {
+        let cache = space.cache.borrow();
+        let bytes: usize = cache
+            .values
+            .iter()
+            .map(|(_, entry)| entry.value.len())
+            .sum();
+        assert_eq!(cache.value_bytes, bytes);
+        cache
+            .values
+            .iter()
+            .rev()
+            .map(|((_, address), _)| *address)
+            .collect()
+    }
+
+    #[test]
+    fn byte_limit_evicts_as_many_lru_values_as_needed() {
+        block_on(async {
+            let backing = CountingSpace::default();
+            let mut space = CachingWriteOnceSpace::new(backing.clone(), 16, 4);
+            for address in 0..4 {
+                space.write("a", address, Bytes::from("x")).await.unwrap();
+            }
+            space.read("a", 0).await.unwrap();
+            assert_eq!(cached_addresses(&space), [1, 2, 3, 0]);
+            space.write("a", 4, Bytes::from("yyy")).await.unwrap();
+            assert_eq!(cached_addresses(&space), [0, 4]);
+            space.write("a", 5, Bytes::from("zzzz")).await.unwrap();
+            assert_eq!(
+                cached_addresses(&space),
+                [5],
+                "a value of exactly the byte limit evicts everything else"
+            );
+            assert_eq!(backing.reads.get(), 0);
+        });
+    }
+
+    #[test]
+    fn byte_accounting_tracks_byte_and_entry_evictions() {
+        block_on(async {
+            let mut space = CachingWriteOnceSpace::new(CountingSpace::default(), 3, 8);
+            for (address, value) in [(0, "aaa"), (1, "bbb"), (2, "cc")] {
+                space.write("a", address, Bytes::from(value)).await.unwrap();
+            }
+            assert_eq!(cached_addresses(&space), [0, 1, 2]);
+            space.write("a", 3, Bytes::from("d")).await.unwrap();
+            assert_eq!(cached_addresses(&space), [1, 2, 3], "byte limit evicts 0");
+            space.write("a", 4, Bytes::from("ee")).await.unwrap();
+            assert_eq!(cached_addresses(&space), [2, 3, 4], "entry limit evicts 1");
+            assert_eq!(space.cache.borrow().value_bytes, 5);
+        });
+    }
+
     #[test]
     fn per_entry_limit_bypasses_large_values_without_evicting_small_ones() {
         block_on(async {
             let backing = CountingSpace::default();
-            let mut space = CachingWriteOnceSpace::new_with_entry_limit(backing.clone(), 16, 32, 4);
+            let limits = WriteOnceCacheLimits {
+                max_entries: 16,
+                max_value_bytes: 32,
+                max_entry_value_bytes: 4,
+            };
+            let mut space = CachingWriteOnceSpace::new_with_entry_limit(backing.clone(), limits);
             space.write("a", 0, Bytes::from("aa")).await.unwrap();
             space.write("a", 1, Bytes::from("bb")).await.unwrap();
             space.write("a", 2, Bytes::from("large")).await.unwrap();
@@ -523,8 +594,13 @@ mod tests {
                 "values exactly at the entry limit should be cached"
             );
 
-            let mut disabled =
-                CachingWriteOnceSpace::new_with_entry_limit(backing.clone(), 16, 32, 0);
+            let mut disabled = CachingWriteOnceSpace::new_with_entry_limit(
+                backing.clone(),
+                WriteOnceCacheLimits {
+                    max_entry_value_bytes: 0,
+                    ..limits
+                },
+            );
             disabled.write("b", 0, Bytes::new()).await.unwrap();
             assert_eq!(disabled.read("b", 0).await.unwrap(), Some(Bytes::new()));
             assert_eq!(
