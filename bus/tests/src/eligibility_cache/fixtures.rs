@@ -28,13 +28,15 @@ pub trait EligibilityCacheTestFixture:
 {
     fn lookup_controller(&self) -> ControlledEligibilityLookup;
     fn create_with_config(&self, capacity: NonZeroUsize, ttl: Duration) -> Self::Impl;
-    /// Like `create_with_config`, with each request starting a sweep of the
-    /// decisions `policy` selects unless one is running.
+    /// Like `create_with_config`, with cached decisions refreshed in sweeps of
+    /// the decisions `policy` selects, the next starting on a request or after
+    /// `interval`.
     fn create_with_refresh(
         &self,
         capacity: NonZeroUsize,
         ttl: Duration,
         policy: RefreshPolicy,
+        interval: Duration,
     ) -> Self::Impl;
 }
 
@@ -197,10 +199,11 @@ impl EligibilityCacheTestFixture for ControlledCachingEligibilityGateFixture {
         capacity: NonZeroUsize,
         ttl: Duration,
         policy: RefreshPolicy,
+        interval: Duration,
     ) -> Self::Impl {
         Rc::new(
             CachingRequestGate::new(self.inner.gate(), self.inner.env.clone(), capacity, ttl)
-                .with_refresh(policy),
+                .with_refresh(policy, interval),
         )
     }
 }

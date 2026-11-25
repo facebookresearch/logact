@@ -8,6 +8,7 @@
 //! A [`RequestGate`] that remembers an eligibility gate's decisions.
 
 use std::cell::Cell;
+use std::cell::OnceCell;
 use std::cell::RefCell;
 use std::fmt;
 use std::num::NonZeroUsize;
@@ -16,6 +17,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures::FutureExt;
+use futures::StreamExt;
+use futures::channel::mpsc;
+use futures::channel::mpsc::UnboundedReceiver;
+use futures::channel::mpsc::UnboundedSender;
 use lru::LruCache;
 
 use super::caller_unixname;
@@ -112,8 +118,10 @@ impl std::error::Error for CachedDenial {
 /// replaces one from a later request. This is the retention the contract
 /// permits.
 ///
-/// With [`Self::with_refresh`], each request starts a refresh sweep by a
-/// [`RefreshPolicy`] unless one is running. A refresh that decides replaces the
+/// With [`Self::with_refresh`], the first request starts a refresh sweep by a
+/// [`RefreshPolicy`], and each later sweep starts on the next request or the
+/// end of the refresh interval after the previous sweep, whichever comes first;
+/// only one sweep runs at a time. A refresh that decides replaces the
 /// caller's decision and restarts its `ttl` from the refresh's start; an
 /// unavailable one changes nothing, so the decision still expires on time.
 /// Refreshes never add or promote decisions, skip an entry that expired before
@@ -121,8 +129,21 @@ impl std::error::Error for CachedDenial {
 /// its lookup unchanged.
 pub struct CachingRequestGate<G, E> {
     cache: Rc<Cache<G, E>>,
-    refresh: Option<RefreshPolicy>,
-    sweeping: Rc<Cell<bool>>,
+    refresh: Option<Refresh>,
+    sweeper: OnceCell<Sweeper>,
+}
+
+#[derive(Clone, Copy)]
+struct Refresh {
+    policy: RefreshPolicy,
+    interval: Duration,
+}
+
+/// The gate's handle on its sweeper task. Dropping it ends the task once it
+/// is between sweeps.
+struct Sweeper {
+    idle: Rc<Cell<bool>>,
+    wake: UnboundedSender<()>,
 }
 
 struct Cache<G, E> {
@@ -138,7 +159,7 @@ impl<G, E> CachingRequestGate<G, E> {
         Self {
             cache: Rc::new(Cache::new(inner, env, capacity, ttl)),
             refresh: None,
-            sweeping: Rc::new(Cell::new(false)),
+            sweeper: OnceCell::new(),
         }
     }
 }
@@ -157,28 +178,36 @@ impl<G: RequestGate + 'static, E: Environment + 'static> RequestGate for Caching
 }
 
 impl<G, E> CachingRequestGate<G, E> {
-    /// Lets each request start a refresh sweep by `policy` unless one is
-    /// running.
-    pub fn with_refresh(mut self, policy: RefreshPolicy) -> Self {
-        self.refresh = Some(policy);
+    /// Refreshes cached decisions in sweeps by `policy`. The first request
+    /// starts a sweeper task that runs one sweep at a time; after each sweep
+    /// it starts the next on the next request or once `interval` has passed,
+    /// whichever comes first. The task keeps the cache alive until the gate is
+    /// dropped and its sweep in progress, if any, finishes.
+    pub fn with_refresh(mut self, policy: RefreshPolicy, interval: Duration) -> Self {
+        self.refresh = Some(Refresh { policy, interval });
         self
     }
 }
 
 impl<G: RequestGate + 'static, E: Environment + 'static> CachingRequestGate<G, E> {
     fn start_sweep(&self) {
-        let Some(policy) = self.refresh else {
+        let Some(refresh) = self.refresh else {
             return;
         };
-        if self.sweeping.replace(true) {
-            return;
-        }
-        let cache = self.cache.clone();
-        let sweeping = self.sweeping.clone();
-        self.cache.env.spawn_local(async move {
-            cache.sweep(policy).await;
-            sweeping.set(false);
+        let mut started = false;
+        let sweeper = self.sweeper.get_or_init(|| {
+            started = true;
+            let idle = Rc::new(Cell::new(false));
+            let (wake, wakes) = mpsc::unbounded();
+            let cache = self.cache.clone();
+            self.cache
+                .env
+                .spawn_local(cache.run_sweeper(refresh, idle.clone(), wakes));
+            Sweeper { idle, wake }
         });
+        if !started && sweeper.idle.replace(false) {
+            let _ = sweeper.wake.unbounded_send(());
+        }
     }
 }
 
@@ -241,6 +270,29 @@ impl<G: RequestGate, E: Environment> RequestGate for Cache<G, E> {
 }
 
 impl<G: RequestGate + 'static, E: Environment + 'static> Cache<G, E> {
+    /// Runs sweeps until the gate drops its [`Sweeper`]. Between sweeps it is
+    /// `idle` and waits for a wake from a request or for the refresh interval,
+    /// whichever comes first.
+    async fn run_sweeper(
+        self: Rc<Self>,
+        Refresh { policy, interval }: Refresh,
+        idle: Rc<Cell<bool>>,
+        mut wakes: UnboundedReceiver<()>,
+    ) {
+        loop {
+            self.sweep(policy).await;
+            idle.set(true);
+            futures::select_biased! {
+                wake = wakes.next() => {
+                    if wake.is_none() {
+                        return;
+                    }
+                }
+                () = self.env.sleep(interval).fuse() => idle.set(false),
+            }
+        }
+    }
+
     /// Snapshots the decisions `policy` chooses and refreshes them one at a
     /// time.
     async fn sweep(&self, policy: RefreshPolicy) {

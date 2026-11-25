@@ -27,6 +27,8 @@ mod defs {
     const TTL: Duration = Duration::from_secs(300);
     const POLICY: RefreshPolicy = RefreshPolicy::ScanOrder;
     const SETTLE: Duration = Duration::from_secs(1);
+    /// Long enough that no scenario reaches it unless it sets its own.
+    const INTERVAL: Duration = Duration::from_secs(365 * 24 * 3600);
 
     #[derive(Debug, thiserror::Error)]
     #[error("GK unavailable")]
@@ -283,7 +285,7 @@ mod defs {
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
-        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY, INTERVAL);
         let inner = fixture.lookup_controller();
         anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
         anyhow::ensure!(!lookup(&service, &inner, "bob", Ok(false)).await?);
@@ -320,7 +322,7 @@ mod defs {
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
-        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY, INTERVAL);
         let inner = fixture.lookup_controller();
         anyhow::ensure!(!lookup(&service, &inner, "bob", Ok(false)).await?);
         anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
@@ -353,7 +355,7 @@ mod defs {
         let env = fixture.get_env();
         let inner = fixture.lookup_controller();
         for result in [Ok(true), Err(TypedLookupError.into())] {
-            let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+            let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY, INTERVAL);
             anyhow::ensure!(lookup(&service, &inner, "bob", Ok(true)).await?);
             anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
             inner.wait_for_lookup("alice").await;
@@ -384,7 +386,7 @@ mod defs {
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
-        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY, INTERVAL);
         let inner = fixture.lookup_controller();
         anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
         anyhow::ensure!(lookup(&service, &inner, "bob", Ok(true)).await?);
@@ -421,7 +423,7 @@ mod defs {
         let env = fixture.get_env();
         let inner = fixture.lookup_controller();
         for result in [Ok(true), Err(TypedLookupError.into())] {
-            let service = fixture.create_with_refresh(CAPACITY, SETTLE * 10, POLICY);
+            let service = fixture.create_with_refresh(CAPACITY, SETTLE * 10, POLICY, INTERVAL);
             anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
             inner.wait_for_lookup("alice").await;
             env.sleep(SETTLE * 10).await;
@@ -440,6 +442,61 @@ mod defs {
         Ok(())
     }
 
+    /// Without requests, the next sweep starts once the interval has passed
+    /// since the previous one ended, and a dropped gate starts no more.
+    #[scenario(sim_only)]
+    pub async fn run_sweeps_start_after_their_interval<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let interval = SETTLE * 10;
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY, interval);
+        let inner = fixture.lookup_controller();
+        anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+        inner.wait_for_lookup("alice").await;
+        env.sleep(SETTLE * 5).await;
+        inner.answer("alice", Ok(true));
+
+        env.sleep(interval - SETTLE).await;
+        anyhow::ensure!(
+            inner.waiting() == 0,
+            "a sweep started before the interval after the previous one ended"
+        );
+        refreshed(&inner, "alice", Ok(true)).await;
+
+        drop(service);
+        env.sleep(interval * 2).await;
+        anyhow::ensure!(inner.waiting() == 0, "a dropped gate kept sweeping");
+        Ok(())
+    }
+
+    /// A request between sweeps starts the next one before the interval, and a
+    /// request during a sweep neither starts a second one alongside it nor
+    /// another after it.
+    #[scenario(sim_only)]
+    pub async fn run_requests_start_sweeps_before_their_interval<F: EligibilityCacheTestFixture>(
+        fixture: &F,
+    ) -> Result<()> {
+        let env = fixture.get_env();
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY, INTERVAL);
+        let inner = fixture.lookup_controller();
+        anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
+        inner.wait_for_lookup("alice").await;
+        request(&service)?;
+        env.sleep(SETTLE).await;
+        anyhow::ensure!(inner.waiting() == 1, "two sweeps ran at once");
+        inner.answer("alice", Ok(true));
+        env.sleep(SETTLE).await;
+        anyhow::ensure!(
+            inner.waiting() == 0,
+            "a request during a sweep started another after it"
+        );
+
+        request(&service)?;
+        refreshed(&inner, "alice", Ok(true)).await;
+        Ok(())
+    }
+
     /// A sweep running when its gate is dropped finishes its snapshot and
     /// releases the cache, and no other sweep starts.
     #[scenario(sim_only)]
@@ -447,7 +504,7 @@ mod defs {
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
-        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY, INTERVAL);
         let inner = fixture.lookup_controller();
         anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
         anyhow::ensure!(lookup(&service, &inner, "bob", Ok(true)).await?);
@@ -468,7 +525,7 @@ mod defs {
         fixture: &F,
     ) -> Result<()> {
         let env = fixture.get_env();
-        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY);
+        let service = fixture.create_with_refresh(CAPACITY, TTL, POLICY, INTERVAL);
         let inner = fixture.lookup_controller();
         anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
         refreshed(&inner, "alice", Err(TypedLookupError.into())).await;
@@ -509,7 +566,7 @@ mod defs {
         env.sleep(SETTLE).await;
         anyhow::ensure!(inner.waiting() == 0, "a cache without refresh refreshed");
 
-        let service = fixture.create_with_refresh(CAPACITY, SETTLE, POLICY);
+        let service = fixture.create_with_refresh(CAPACITY, SETTLE, POLICY, INTERVAL);
         anyhow::ensure!(lookup(&service, &inner, "alice", Ok(true)).await?);
         refreshed(&inner, "alice", Err(TypedLookupError.into())).await;
         env.sleep(SETTLE * 2).await;
